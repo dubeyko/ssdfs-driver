@@ -1,0 +1,743 @@
+From 15d831cea9bc4c087eb783caa6c48d47429e23c8 Mon Sep 17 00:00:00 2001
+From: Viacheslav Dubeyko <slava@dubeyko.com>
+Date: Mon, 2 Feb 2026 21:24:29 -0800
+Subject: [PATCH v2 44/79] ssdfs: introduce b-tree object
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SSDFS file system is using the logical segment, logical extent
+concepts, and the "Physical" Erase Blocks (PEB) migration scheme.
+Generally speaking, these techniques provide the opportunity
+to exclude completely the wandering tree issue and to decrease
+significantly the write amplification. SSDFS file system introduces
+the technique of storing the data on the basis of logical extent
+that describes this data’s position by means of segment ID and
+logical block ID. Finally, PEBs migration technique guarantee that
+data will be described by the same logical extent until the direct
+change of segment ID or logical block ID. As a result, it means that
+logical extent will be the same if data is sitting in the same logical
+segment. The responsibility of PEBs migration technique is to implement
+the continuous migration of data between PEBs inside of the logical
+segment for the case of data updates. Generally speaking, SSDFS file
+system’s internal techniques guarantee that COW policy will not update
+the content of b-tree. But content of b-tree will be updated only by
+regular operations of end-user with the file system.
+
+SSDFS file system uses b-tree architecture for metadata representation
+(for example, inodes tree, extents tree, dentries tree, xattr tree)
+because it provides the compact way of reserving the metadata space
+without the necessity to use the excessive overprovisioning of metadata
+reservation (for example, in the case of plain table or array).
+
+The b-tree provides the efficient technique of items lookup, especially,
+for the case of aged or sparse b-tree that is capable to contain
+the mixture of used and deleted (or freed) items. Such b-tree’s feature
+could be very useful for the case of extent invalidation, for example.
+Also SSDFS file system aggregates the b-tree’s root node in the superblock
+(for example, inodes tree case) or in the inode (for example, extents tree
+case). As a result, it means that an empty b-tree will contain only
+the root node without the necessity to reserve any b-tree’s node on the
+file system’s volume. Moreover, if a b-tree needs to contain only several
+items (two items, for example) then the root node’s space can be used to
+store these items inline without the necessity to create the full-featured
+b-tree’s node. As a result, SSDFS uses b-trees with the goal to achieve
+the compact representation of metadata, the flexible way to expend or
+to shrink the b-tree’s space capacity, and the efficient mechanism of
+items’ lookup.
+
+SSDFS file system uses a hybrid b-tree architecture with the goal
+to eliminate the index nodes’ side effect. The hybrid b-tree operates
+by three node types: (1) index node, (2) hybrid node, (3) leaf node.
+Generally speaking, the peculiarity of hybrid node is the mixture
+as index as data records into one node. Hybrid b-tree starts with root
+node that is capable to keep the two index records or two data records
+inline (if size of data record is equal or lesser than size of index
+record). If the b-tree needs to contain more than two items then it should
+be added the first hybrid node into the b-tree. The root level of
+b-tree is able to contain only two nodes because the root node is capable
+to store only two index records. Generally speaking, the initial goal of
+hybrid node is to store the data records in the presence of reserved
+index area.
+
+Generalized b-tree functionality implements API:
+(1) create - create empty b-tree object
+(2) destroy - destroy b-tree object
+(3) flush - flush dirty b-tree object
+(4) find_item - find item in b-tree hierarchy
+(5) find_range - find range of items in b-tree hierarchy
+(6) allocate_item - allocate item in existing b-tree's node
+(7) allocate_range - allocate range of items in existing b-tree's node
+(8) add_item - add item into b-tree
+(9) add_range - add range of items into b-tree
+(10) change_item - change existing item in b-tree
+(11) delete_item - delete item from b-tree
+(12) delete_range - delete range of items from b-tree
+(13) delete_all - delete all items from b-tree
+
+Signed-off-by: Viacheslav Dubeyko <slava@dubeyko.com>
+---
+ fs/ssdfs/btree.h        | 219 +++++++++++++++++++++
+ fs/ssdfs/btree_search.h | 424 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 643 insertions(+)
+ create mode 100644 fs/ssdfs/btree.h
+ create mode 100644 fs/ssdfs/btree_search.h
+
+diff --git a/fs/ssdfs/btree.h b/fs/ssdfs/btree.h
+new file mode 100644
+index 000000000000..ee1d7eec581b
+--- /dev/null
++++ b/fs/ssdfs/btree.h
+@@ -0,0 +1,219 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/btree.h - btree declarations.
++ *
++ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
++ *              http://www.hgst.com/
++ * Copyright (c) 2014-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ *
++ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
++ *
++ * Created by HGST, San Jose Research Center, Storage Architecture Group
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cyril Guyot
++ *                  Zvonimir Bandic
++ */
++
++#ifndef _SSDFS_BTREE_H
++#define _SSDFS_BTREE_H
++
++struct ssdfs_btree;
++
++/*
++ * struct ssdfs_btree_descriptor_operations - btree descriptor operations
++ * @init: initialize btree object by descriptor
++ * @flush: save btree descriptor into superblock
++ */
++struct ssdfs_btree_descriptor_operations {
++	int (*init)(struct ssdfs_fs_info *fsi,
++		    struct ssdfs_btree *tree);
++	int (*flush)(struct ssdfs_btree *tree);
++};
++
++/*
++ * struct ssdfs_btree_operations - btree operations specialization
++ * @create_root_node: specialization of root node creation
++ * @create_node: specialization of node's construction operation
++ * @init_node: specialization of node's init operation
++ * @destroy_node: specialization of node's destroy operation
++ * @add_node: specialization of adding into the tree a new empty node
++ * @delete_node: specialization of deletion a node from the tree
++ * @pre_flush_root_node: specialized flush preparation of root node
++ * @flush_root_node: specialized method of root node flushing
++ * @pre_flush_node: specialized flush preparation of common node
++ * @flush_node: specialized method of common node flushing
++ */
++struct ssdfs_btree_operations {
++	int (*create_root_node)(struct ssdfs_fs_info *fsi,
++				struct ssdfs_btree_node *node);
++	int (*create_node)(struct ssdfs_btree_node *node);
++	int (*init_node)(struct ssdfs_btree_node *node);
++	void (*destroy_node)(struct ssdfs_btree_node *node);
++	int (*add_node)(struct ssdfs_btree_node *node);
++	int (*delete_node)(struct ssdfs_btree_node *node);
++	int (*pre_flush_root_node)(struct ssdfs_btree_node *node);
++	int (*flush_root_node)(struct ssdfs_btree_node *node);
++	int (*pre_flush_node)(struct ssdfs_btree_node *node);
++	int (*flush_node)(struct ssdfs_btree_node *node);
++};
++
++/*
++ * struct ssdfs_btree - generic btree
++ * @type: btree type
++ * @owner_ino: inode identification number of btree owner
++ * @node_size: size of the node in bytes
++ * @pages_per_node: physical pages per node
++ * @node_ptr_size: size in bytes of pointer on btree node
++ * @index_size: size in bytes of btree's index
++ * @item_size: default size of item in bytes
++ * @min_item_size: min size of item in bytes
++ * @max_item_size: max possible size of item in bytes
++ * @index_area_min_size: minimal size in bytes of index area in btree node
++ * @create_cno: btree's create checkpoint
++ * @state: btree state
++ * @flags: btree flags
++ * @height: current height of the tree
++ * @lock: btree's lock
++ * @nodes_lock: radix tree lock
++ * @upper_node_id: last allocated node id
++ * @nodes: nodes' radix tree
++ * @fsi: pointer on shared file system object
++ *
++ * Btree nodes are organized by radix tree.
++ * Another good point about radix tree is
++ * supporting of knowledge about dirty items.
++ */
++struct ssdfs_btree {
++	/* static data */
++	u8 type;
++	u64 owner_ino;
++	u32 node_size;
++	u8 pages_per_node;
++	u8 node_ptr_size;
++	u16 index_size;
++	u16 item_size;
++	u8 min_item_size;
++	u16 max_item_size;
++	u16 index_area_min_size;
++	u64 create_cno;
++
++	/* operation specializations */
++	const struct ssdfs_btree_descriptor_operations *desc_ops;
++	const struct ssdfs_btree_operations *btree_ops;
++
++	/* mutable data */
++	atomic_t state;
++	atomic_t flags;
++	atomic_t height;
++
++	struct rw_semaphore lock;
++
++	spinlock_t nodes_lock;
++	u32 upper_node_id;
++	struct radix_tree_root nodes;
++
++	struct ssdfs_fs_info *fsi;
++};
++
++/* Btree object states */
++enum {
++	SSDFS_BTREE_UNKNOWN_STATE,
++	SSDFS_BTREE_CREATED,
++	SSDFS_BTREE_DIRTY,
++	SSDFS_BTREE_STATE_MAX
++};
++
++/* Radix tree tags */
++#define SSDFS_BTREE_NODE_DIRTY_TAG	PAGECACHE_TAG_DIRTY
++#define SSDFS_BTREE_NODE_TOWRITE_TAG	PAGECACHE_TAG_TOWRITE
++
++/*
++ * Btree API
++ */
++int ssdfs_btree_create(struct ssdfs_fs_info *fsi,
++		    u64 owner_ino,
++		    const struct ssdfs_btree_descriptor_operations *desc_ops,
++		    const struct ssdfs_btree_operations *btree_ops,
++		    struct ssdfs_btree *tree);
++void ssdfs_btree_destroy(struct ssdfs_btree *tree);
++int ssdfs_btree_flush(struct ssdfs_btree *tree);
++
++int ssdfs_btree_find_item(struct ssdfs_btree *tree,
++			  struct ssdfs_btree_search *search);
++int ssdfs_btree_find_range(struct ssdfs_btree *tree,
++			   struct ssdfs_btree_search *search);
++bool is_ssdfs_btree_empty(struct ssdfs_btree *tree);
++int ssdfs_btree_allocate_item(struct ssdfs_btree *tree,
++			      struct ssdfs_btree_search *search);
++int ssdfs_btree_allocate_range(struct ssdfs_btree *tree,
++				struct ssdfs_btree_search *search);
++int ssdfs_btree_add_item(struct ssdfs_btree *tree,
++			 struct ssdfs_btree_search *search);
++int ssdfs_btree_add_range(struct ssdfs_btree *tree,
++			  struct ssdfs_btree_search *search);
++int ssdfs_btree_change_item(struct ssdfs_btree *tree,
++			    struct ssdfs_btree_search *search);
++int ssdfs_btree_delete_item(struct ssdfs_btree *tree,
++			    struct ssdfs_btree_search *search);
++int ssdfs_btree_delete_range(struct ssdfs_btree *tree,
++			     struct ssdfs_btree_search *search);
++int ssdfs_btree_delete_all(struct ssdfs_btree *tree);
++
++/*
++ * Internal Btree API
++ */
++bool need_migrate_generic2inline_btree(struct ssdfs_btree *tree,
++					int items_threshold);
++int ssdfs_btree_desc_init(struct ssdfs_fs_info *fsi,
++			  struct ssdfs_btree *tree,
++			  struct ssdfs_btree_descriptor *desc,
++			  u8 min_item_size,
++			  u16 max_item_size);
++int ssdfs_btree_desc_flush(struct ssdfs_btree *tree,
++			   struct ssdfs_btree_descriptor *desc);
++struct ssdfs_btree_node *
++ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
++				    struct ssdfs_btree_node *parent,
++				    u64 hash);
++int ssdfs_btree_update_parent_node_pointer(struct ssdfs_btree *tree,
++					   struct ssdfs_btree_node *parent);
++int ssdfs_btree_add_node(struct ssdfs_btree *tree,
++			 struct ssdfs_btree_search *search);
++int ssdfs_btree_insert_node(struct ssdfs_btree *tree,
++			    struct ssdfs_btree_search *search);
++int ssdfs_btree_delete_node(struct ssdfs_btree *tree,
++			    struct ssdfs_btree_search *search);
++int ssdfs_btree_get_head_range(struct ssdfs_btree *tree,
++				u32 expected_len,
++				struct ssdfs_btree_search *search);
++int ssdfs_btree_extract_range(struct ssdfs_btree *tree,
++				u16 start_index, u16 count,
++				struct ssdfs_btree_search *search);
++int ssdfs_btree_destroy_node_range(struct ssdfs_btree *tree,
++				   u64 start_hash);
++struct ssdfs_btree_node *
++__ssdfs_btree_read_node(struct ssdfs_btree *tree,
++			struct ssdfs_btree_node *parent,
++			struct ssdfs_btree_index_key *node_index,
++			u8 node_type, u32 node_id);
++int ssdfs_btree_radix_tree_find(struct ssdfs_btree *tree,
++				unsigned long node_id,
++				struct ssdfs_btree_node **node);
++int ssdfs_btree_synchronize_root_node(struct ssdfs_btree *tree,
++				struct ssdfs_btree_inline_root_node *root);
++int ssdfs_btree_get_next_hash(struct ssdfs_btree *tree,
++			      struct ssdfs_btree_search *search,
++			      u64 *next_hash);
++
++void ssdfs_debug_show_btree_node_indexes(struct ssdfs_btree *tree,
++					 struct ssdfs_btree_node *parent);
++void ssdfs_check_btree_consistency(struct ssdfs_btree *tree);
++void ssdfs_debug_btree_object(struct ssdfs_btree *tree);
++
++#endif /* _SSDFS_BTREE_H */
+diff --git a/fs/ssdfs/btree_search.h b/fs/ssdfs/btree_search.h
+new file mode 100644
+index 000000000000..c13fb9c6ce0d
+--- /dev/null
++++ b/fs/ssdfs/btree_search.h
+@@ -0,0 +1,424 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/btree_search.h - btree search object declarations.
++ *
++ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
++ *              http://www.hgst.com/
++ * Copyright (c) 2014-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ *
++ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
++ *
++ * Created by HGST, San Jose Research Center, Storage Architecture Group
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cyril Guyot
++ *                  Zvonimir Bandic
++ */
++
++#ifndef _SSDFS_BTREE_SEARCH_H
++#define _SSDFS_BTREE_SEARCH_H
++
++/* Search request types */
++enum {
++	SSDFS_BTREE_SEARCH_UNKNOWN_TYPE,
++	SSDFS_BTREE_SEARCH_FIND_ITEM,
++	SSDFS_BTREE_SEARCH_FIND_RANGE,
++	SSDFS_BTREE_SEARCH_ALLOCATE_ITEM,
++	SSDFS_BTREE_SEARCH_ALLOCATE_RANGE,
++	SSDFS_BTREE_SEARCH_ADD_ITEM,
++	SSDFS_BTREE_SEARCH_ADD_RANGE,
++	SSDFS_BTREE_SEARCH_CHANGE_ITEM,
++	SSDFS_BTREE_SEARCH_MOVE_ITEM,
++	SSDFS_BTREE_SEARCH_DELETE_ITEM,
++	SSDFS_BTREE_SEARCH_DELETE_RANGE,
++	SSDFS_BTREE_SEARCH_DELETE_ALL,
++	SSDFS_BTREE_SEARCH_INVALIDATE_TAIL,
++	SSDFS_BTREE_SEARCH_TYPE_MAX
++};
++
++/*
++ * struct ssdfs_peb_timestamps - PEB timestamps
++ * @peb_id: PEB ID
++ * @create_time: PEB's create timestamp
++ * @last_log_time: PEB's last log create timestamp
++ */
++struct ssdfs_peb_timestamps {
++	u64 peb_id;
++	u64 create_time;
++	u64 last_log_time;
++};
++
++/*
++ * struct ssdfs_btree_search_hash - btree search hash
++ * @name: name of the searching object
++ * @name_len: length of the name in bytes
++ * @uuid: UUID of the searching object
++ * @hash: hash value
++ * @ino: inode ID
++ * @fingerprint: fingerprint value
++ * @peb2time: PEB timestamps
++ */
++struct ssdfs_btree_search_hash {
++	const char *name;
++	size_t name_len;
++	u8 *uuid;
++	u64 hash;
++	u64 ino;
++	struct ssdfs_fingerprint *fingerprint;
++	struct ssdfs_peb_timestamps *peb2time;
++};
++
++/*
++ * struct ssdfs_btree_search_request - btree search request
++ * @type: request type
++ * @flags: request flags
++ * @start: starting hash value
++ * @end: ending hash value
++ * @count: range of hashes length in the request
++ */
++struct ssdfs_btree_search_request {
++	int type;
++#define SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE		(1 << 0)
++#define SSDFS_BTREE_SEARCH_HAS_VALID_COUNT		(1 << 1)
++#define SSDFS_BTREE_SEARCH_HAS_VALID_NAME		(1 << 2)
++#define SSDFS_BTREE_SEARCH_HAS_VALID_INO		(1 << 3)
++#define SSDFS_BTREE_SEARCH_NOT_INVALIDATE		(1 << 4)
++#define SSDFS_BTREE_SEARCH_HAS_VALID_UUID		(1 << 5)
++#define SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT	(1 << 6)
++#define SSDFS_BTREE_SEARCH_INCREMENT_REF_COUNT		(1 << 7)
++#define SSDFS_BTREE_SEARCH_DECREMENT_REF_COUNT		(1 << 8)
++#define SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM	(1 << 9)
++#define SSDFS_BTREE_SEARCH_DONT_EXTRACT_RECORD		(1 << 10)
++#define SSDFS_BTREE_SEARCH_HAS_PEB2TIME_PAIR		(1 << 11)
++#define SSDFS_BTREE_SEARCH_DONT_DELETE_BTREE_NODE	(1 << 12)
++#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x1FFF
++	u32 flags;
++
++	struct ssdfs_btree_search_hash start;
++	struct ssdfs_btree_search_hash end;
++	unsigned int count;
++};
++
++/* Node descriptor possible states */
++enum {
++	SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY,
++	SSDFS_BTREE_SEARCH_ROOT_NODE_DESC,
++	SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC,
++	SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC,
++	SSDFS_BTREE_SEARCH_NODE_DESC_STATE_MAX
++};
++
++/*
++ * struct ssdfs_btree_search_node_desc - btree node descriptor
++ * @state: descriptor state
++ * @id: node ID number
++ * @height: node height
++ * @found_index: index of child node
++ * @parent: last parent node
++ * @child: last child node
++ */
++struct ssdfs_btree_search_node_desc {
++	int state;
++
++	u32 id;
++	u8 height;
++
++	struct ssdfs_btree_index_key found_index;
++	struct ssdfs_btree_node *parent;
++	struct ssdfs_btree_node *child;
++};
++
++/* Search result possible states */
++enum {
++	SSDFS_BTREE_SEARCH_UNKNOWN_RESULT,
++	SSDFS_BTREE_SEARCH_FAILURE,
++	SSDFS_BTREE_SEARCH_EMPTY_RESULT,
++	SSDFS_BTREE_SEARCH_VALID_ITEM,
++	SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND,
++	SSDFS_BTREE_SEARCH_OUT_OF_RANGE,
++	SSDFS_BTREE_SEARCH_OBSOLETE_RESULT,
++	SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE,
++	SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE,
++	SSDFS_BTREE_SEARCH_PLEASE_MOVE_BUF_CONTENT,
++	SSDFS_BTREE_SEARCH_RESULT_STATE_MAX
++};
++
++/* Search result buffer possible states */
++enum {
++	SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE,
++	SSDFS_BTREE_SEARCH_INLINE_BUFFER,
++	SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER,
++	SSDFS_BTREE_SEARCH_BUFFER_STATE_MAX
++};
++
++/*
++ * struct ssdfs_lookup_descriptor - lookup descriptor
++ * @index: index of item in the lookup1 table
++ * @desc: descriptor of lookup1 table's item
++ */
++struct ssdfs_lookup_descriptor {
++	u16 index;
++	struct ssdfs_shdict_ltbl1_item desc;
++};
++
++/*
++ * struct ssdfs_strings_range_descriptor - strings range descriptor
++ * @index: index of item in the lookup2 table
++ * @desc: descriptor of lookup2 table's item
++ */
++struct ssdfs_strings_range_descriptor {
++	u16 index;
++	struct ssdfs_shdict_ltbl2_item desc;
++};
++
++/*
++ * struct ssdfs_string_descriptor - string descriptor
++ * @index: index of item in the hash table
++ * @desc: descriptor of hash table's item
++ */
++struct ssdfs_string_descriptor {
++	u16 index;
++	struct ssdfs_shdict_htbl_item desc;
++};
++
++/*
++ * struct ssdfs_string_table_index - string table indexes
++ * @lookup1_index: index in lookup1 table
++ * @lookup2_index: index in lookup2 table
++ * @hash_index: index in hash table
++ *
++ * Search operation defines lookup, strings_range, prefix,
++ * left_name, and right_name. This information contains
++ * potential position to store the string. However,
++ * the final position to insert string and indexes can
++ * be defined during the insert operation. This field
++ * keeps the knowledge of finally used indexes to store
++ * the string and lookup1, lookup2, hash indexes.
++ */
++struct ssdfs_string_table_index {
++	u16 lookup1_index;
++	u16 lookup2_index;
++	u16 hash_index;
++};
++
++/*
++ * struct ssdfs_name_string - name string
++ * @hash: name hash
++ * @lookup: lookup item descriptor
++ * @strings_range: range of strings descriptor
++ * @prefix: prefix descriptor
++ * @left_name: left name descriptor
++ * @right_name: right name descriptor
++ * @placement: stored indexes descriptor
++ * @len: name length
++ * @str: name buffer
++ */
++struct ssdfs_name_string {
++	u64 hash;
++	struct ssdfs_lookup_descriptor lookup;
++	struct ssdfs_strings_range_descriptor strings_range;
++	struct ssdfs_string_descriptor prefix;
++	struct ssdfs_string_descriptor left_name;
++	struct ssdfs_string_descriptor right_name;
++
++	struct ssdfs_string_table_index placement;
++
++	size_t len;
++	unsigned char str[SSDFS_MAX_NAME_LEN];
++};
++
++/*
++ * struct ssdfs_btree_search_buffer - buffer descriptor
++ * @state: state of the buffer
++ * @size: size of the buffer in bytes
++ * @item_size: size of one item in bytes
++ * @items_count: items count in buffer
++ * @place.ptr: pointer on buffer
++ * @place.ltbl2_items: pointer on buffer with lookup2 table's items
++ * @place.htbl_items: pointer on buffer with hash table's items
++ * @place.name: pointer on buffer with name descriptor(s)
++ * @place.name_range: pointer on buffer with names range
++ */
++struct ssdfs_btree_search_buffer {
++	int state;
++	size_t size;
++
++	size_t item_size;
++	u32 items_count;
++
++	union {
++		void *ptr;
++		struct ssdfs_shdict_ltbl2_item *ltbl2_items;
++		struct ssdfs_shdict_htbl_item *htbl_items;
++		struct ssdfs_name_string *name;
++		struct ssdfs_name_string_range *name_range;
++	} place;
++};
++
++/*
++ * struct ssdfs_name_string_range - name string range
++ * @lookup1: lookup1 item descriptor
++ * @lookup2_table.index: index of first item in the lookup2 table
++ * @lookup2_table.buf: lookup2 table's buffer
++ * @hash_table.index: index of first item in the hash table
++ * @hash_table.buf: hash table's buffer
++ * @strings.buf: buffer with strings
++ * @placement: final destination of storing range
++ */
++struct ssdfs_name_string_range {
++	struct ssdfs_lookup_descriptor lookup1;
++
++	struct {
++		u16 index;
++		struct ssdfs_btree_search_buffer buf;
++	} lookup2_table;
++
++	struct {
++		u16 index;
++		struct ssdfs_btree_search_buffer buf;
++	} hash_table;
++
++	struct {
++		struct ssdfs_btree_search_buffer buf;
++	} strings;
++
++	struct ssdfs_string_table_index placement;
++};
++
++/*
++ * struct ssdfs_btree_search_result - btree search result
++ * @state: result state
++ * @err: result error code
++ * @flags: result's flags
++ * @start_index: starting found item index
++ * @count: count of found items
++ * @search_cno: checkpoint of search activity
++ * @name_buf: name(s) buffer
++ * @range_buf: buffer with names range
++ * @raw_buf: raw buffer with item(s)
++ */
++struct ssdfs_btree_search_result {
++	int state;
++	int err;
++
++#define SSDFS_BTREE_SEARCH_RESULT_HAS_NAME		(1 << 0)
++#define SSDFS_BTREE_SEARCH_RESULT_HAS_RANGE		(1 << 1)
++#define SSDFS_BTREE_SEARCH_RESULT_HAS_RAW_DATA		(1 << 2)
++#define SSDFS_BTREE_SEARCH_RESULT_FLAGS_MASK		0x7
++	u32 flags;
++
++	u16 start_index;
++	u16 count;
++
++	u64 search_cno;
++
++	struct ssdfs_btree_search_buffer name_buf;
++	struct ssdfs_btree_search_buffer range_buf;
++	struct ssdfs_btree_search_buffer raw_buf;
++};
++
++/* Position check results */
++enum {
++	SSDFS_CORRECT_POSITION,
++	SSDFS_SEARCH_LEFT_DIRECTION,
++	SSDFS_SEARCH_RIGHT_DIRECTION,
++	SSDFS_CHECK_POSITION_FAILURE
++};
++
++/*
++ * struct ssdfs_btree_search - btree search
++ * @request: search request
++ * @node: btree node descriptor
++ * @result: search result
++ * @raw.fork: raw fork buffer
++ * @raw.inode: raw inode buffer
++ * @raw.dentry.header: raw directory entry header
++ * @raw.xattr.header: raw xattr entry header
++ * @raw.shared_extent: shared extent buffer
++ * @raw.snapshot: raw snapshot info buffer
++ * @raw.peb2time: raw PEB2time set
++ * @raw.invalidated_extent: invalidated extent buffer
++ * @name.string: name string
++ * @name.range: range of names
++ */
++struct ssdfs_btree_search {
++	struct ssdfs_btree_search_request request;
++	struct ssdfs_btree_search_node_desc node;
++	struct ssdfs_btree_search_result result;
++	union ssdfs_btree_search_raw_data {
++		struct ssdfs_raw_fork fork;
++		struct ssdfs_inode inode;
++		struct ssdfs_raw_dentry {
++			struct ssdfs_dir_entry header;
++		} dentry;
++		struct ssdfs_raw_xattr {
++			struct ssdfs_xattr_entry header;
++		} xattr;
++		struct ssdfs_shared_extent shared_extent;
++		struct ssdfs_snapshot snapshot;
++		struct ssdfs_peb2time_set peb2time;
++		struct ssdfs_raw_extent invalidated_extent;
++	} raw;
++	struct {
++		struct ssdfs_name_string string;
++		struct ssdfs_name_string_range range;
++	} name;
++};
++
++/* Btree height's classification */
++enum {
++	SSDFS_BTREE_PARENT2LEAF_HEIGHT		= 1,
++	SSDFS_BTREE_PARENT2HYBRID_HEIGHT	= 2,
++	SSDFS_BTREE_PARENT2INDEX_HEIGHT		= 3,
++};
++
++/*
++ * Inline functions
++ */
++
++static inline
++bool is_btree_search_contains_new_item(struct ssdfs_btree_search *search)
++{
++	return search->request.flags &
++			SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM;
++}
++
++/*
++ * Btree search object API
++ */
++struct ssdfs_btree_search *ssdfs_btree_search_alloc(void);
++void ssdfs_btree_search_free(struct ssdfs_btree_search *search);
++void ssdfs_btree_search_init(struct ssdfs_btree_search *search);
++bool need_initialize_btree_search(struct ssdfs_btree_search *search);
++bool is_btree_search_request_valid(struct ssdfs_btree_search *search);
++bool is_btree_index_search_request_valid(struct ssdfs_btree_search *search,
++					 u32 prev_node_id,
++					 u8 prev_node_height);
++bool is_btree_leaf_node_found(struct ssdfs_btree_search *search);
++bool is_btree_search_node_desc_consistent(struct ssdfs_btree_search *search);
++void ssdfs_btree_search_define_parent_node(struct ssdfs_btree_search *search,
++					   struct ssdfs_btree_node *parent);
++void ssdfs_btree_search_define_child_node(struct ssdfs_btree_search *search,
++					  struct ssdfs_btree_node *child);
++void ssdfs_btree_search_forget_parent_node(struct ssdfs_btree_search *search);
++void ssdfs_btree_search_forget_child_node(struct ssdfs_btree_search *search);
++int ssdfs_btree_search_alloc_result_buf(struct ssdfs_btree_search *search,
++					size_t buf_size);
++void ssdfs_btree_search_free_result_buf(struct ssdfs_btree_search *search);
++int ssdfs_btree_search_alloc_result_name(struct ssdfs_btree_search *search,
++					 size_t string_size);
++void ssdfs_btree_search_free_result_name(struct ssdfs_btree_search *search);
++int ssdfs_btree_search_alloc_result_name_range(struct ssdfs_btree_search *search,
++						size_t ltbl2_size,
++						size_t htbl_size,
++						size_t str_buf_size);
++void ssdfs_btree_search_free_result_name_range(struct ssdfs_btree_search *search);
++
++void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search);
++
++#endif /* _SSDFS_BTREE_SEARCH_H */
+-- 
+2.34.1
+

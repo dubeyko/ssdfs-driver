@@ -1,0 +1,6010 @@
+From e91fa598e974b964240c7ce3c73dfc0273f36859 Mon Sep 17 00:00:00 2001
+From: Viacheslav Dubeyko <slava@dubeyko.com>
+Date: Tue, 3 Feb 2026 17:42:28 -0800
+Subject: [PATCH v2 74/79] ssdfs: introduce Kunit-based unit-tests
+
+This patch introduces Kunit-based unit-tests.
+
+Signed-off-by: Viacheslav Dubeyko <slava@dubeyko.com>
+---
+ fs/ssdfs/.kunitconfig         |    9 +
+ fs/ssdfs/block_bitmap_test.c  | 2380 +++++++++++++++++++++++++++++++++
+ fs/ssdfs/compr_lzo_test.c     |  570 ++++++++
+ fs/ssdfs/compr_zlib_test.c    |  401 ++++++
+ fs/ssdfs/compression_test.c   |  310 +++++
+ fs/ssdfs/dynamic_array_test.c |  660 +++++++++
+ fs/ssdfs/folio_array_test.c   | 1107 +++++++++++++++
+ fs/ssdfs/folio_vector_test.c  |  495 +++++++
+ 8 files changed, 5932 insertions(+)
+ create mode 100644 fs/ssdfs/.kunitconfig
+ create mode 100644 fs/ssdfs/block_bitmap_test.c
+ create mode 100644 fs/ssdfs/compr_lzo_test.c
+ create mode 100644 fs/ssdfs/compr_zlib_test.c
+ create mode 100644 fs/ssdfs/compression_test.c
+ create mode 100644 fs/ssdfs/dynamic_array_test.c
+ create mode 100644 fs/ssdfs/folio_array_test.c
+ create mode 100644 fs/ssdfs/folio_vector_test.c
+
+diff --git a/fs/ssdfs/.kunitconfig b/fs/ssdfs/.kunitconfig
+new file mode 100644
+index 000000000000..5ab868335799
+--- /dev/null
++++ b/fs/ssdfs/.kunitconfig
+@@ -0,0 +1,9 @@
++CONFIG_KUNIT=y
++CONFIG_BLOCK=y
++CONFIG_MISC_FILESYSTEMS=y
++CONFIG_BLK_DEV_ZONED=y
++CONFIG_SSDFS=y
++CONFIG_SSDFS_BLOCK_DEVICE=y
++CONFIG_SSDFS_ZLIB=y
++CONFIG_SSDFS_LZO=y
++CONFIG_SSDFS_KUNIT_TEST=y
+diff --git a/fs/ssdfs/block_bitmap_test.c b/fs/ssdfs/block_bitmap_test.c
+new file mode 100644
+index 000000000000..c8f7ba5aeb46
+--- /dev/null
++++ b/fs/ssdfs/block_bitmap_test.c
+@@ -0,0 +1,2380 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++/*
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/block_bitmap_test.c - KUnit tests for block bitmap implementation.
++ *
++ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <kunit/test.h>
++#include <linux/slab.h>
++#include <linux/pagemap.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "block_bitmap.h"
++
++/*
++ * Test helper functions
++ */
++static struct ssdfs_fs_info *test_create_fs_info(void)
++{
++	struct ssdfs_fs_info *fsi;
++
++	fsi = kzalloc(sizeof(struct ssdfs_fs_info), GFP_KERNEL);
++	if (!fsi)
++		return NULL;
++
++	fsi->pagesize = PAGE_SIZE;
++	fsi->log_pagesize = PAGE_SHIFT;
++	return fsi;
++}
++
++static void test_free_fs_info(struct ssdfs_fs_info *fsi)
++{
++	if (fsi)
++		kfree(fsi);
++}
++
++/*
++ * Test helper functions
++ */
++static struct folio *test_alloc_folio(unsigned int order)
++{
++	struct folio *folio;
++
++	folio = folio_alloc(GFP_KERNEL, order);
++	if (folio)
++		folio_get(folio);
++
++	return folio;
++}
++
++/*
++ * Test cases for ssdfs_block_bmap_create()
++ */
++static void test_block_bmap_create_valid_params(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	if (err == 0) {
++		KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_initialized(&bmap));
++		KUNIT_EXPECT_EQ(test, 64, ssdfs_block_bmap_get_pages_capacity(&bmap));
++		KUNIT_EXPECT_EQ(test, 64, ssdfs_block_bmap_get_allocation_pool(&bmap));
++		KUNIT_EXPECT_EQ(test, 64, ssdfs_block_bmap_get_free_pages(&bmap));
++		KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_used_pages(&bmap));
++		KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++		ssdfs_block_bmap_destroy(&bmap);
++	}
++
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_create_null_params(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	/* Test with NULL fs_info */
++	err = ssdfs_block_bmap_create(NULL, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test with NULL block bitmap */
++	err = ssdfs_block_bmap_create(fsi, NULL, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_create_zero_capacity(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 0, 0,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for block state checking
++ */
++static void test_block_bmap_state_checking(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test state checking for valid block indices */
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 0));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 32));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 63));
++
++	/* Test invalid states */
++	KUNIT_EXPECT_FALSE(test, is_block_valid(&bmap, 0));
++	KUNIT_EXPECT_FALSE(test, is_block_invalid(&bmap, 0));
++	KUNIT_EXPECT_FALSE(test, is_block_pre_allocated(&bmap, 0));
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for block allocation
++ */
++static void test_block_bmap_allocation(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test allocating a single block */
++	len = 1;
++	err = ssdfs_block_bmap_allocate(&bmap, 0, &len, &range);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 1, len);
++	KUNIT_EXPECT_EQ(test, 0, range.start);
++	KUNIT_EXPECT_EQ(test, 1, range.len);
++
++	/* Verify allocation worked */
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 0));
++	KUNIT_EXPECT_EQ(test, 63, ssdfs_block_bmap_get_free_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 1, ssdfs_block_bmap_get_used_pages(&bmap));
++
++	/* Test allocating multiple blocks */
++	len = 5;
++	err = ssdfs_block_bmap_allocate(&bmap, 1, &len, &range);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 5, len);
++	KUNIT_EXPECT_EQ(test, 1, range.start);
++	KUNIT_EXPECT_EQ(test, 5, range.len);
++
++	/* Verify multiple allocation */
++	KUNIT_EXPECT_EQ(test, 58, ssdfs_block_bmap_get_free_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 6, ssdfs_block_bmap_get_used_pages(&bmap));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for block pre-allocation
++ */
++static void test_block_bmap_pre_allocation(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test pre-allocating blocks */
++	len = 3;
++	err = ssdfs_block_bmap_pre_allocate(&bmap, 10, &len, &range);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 3, len);
++	KUNIT_EXPECT_EQ(test, 10, range.start);
++	KUNIT_EXPECT_EQ(test, 3, range.len);
++
++	/* Verify pre-allocation state */
++	KUNIT_EXPECT_TRUE(test, is_block_pre_allocated(&bmap, 10));
++	KUNIT_EXPECT_TRUE(test, is_block_pre_allocated(&bmap, 11));
++	KUNIT_EXPECT_TRUE(test, is_block_pre_allocated(&bmap, 12));
++	KUNIT_EXPECT_FALSE(test, is_block_pre_allocated(&bmap, 13));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for block invalidation
++ */
++static void test_block_bmap_invalidation(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* First allocate some blocks */
++	len = 4;
++	err = ssdfs_block_bmap_allocate(&bmap, 20, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Verify allocation */
++	KUNIT_EXPECT_EQ(test, 4, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	/* Now invalidate some blocks */
++	range.start = 20;
++	range.len = 2;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify invalidation */
++	KUNIT_EXPECT_TRUE(test, is_block_invalid(&bmap, 20));
++	KUNIT_EXPECT_TRUE(test, is_block_invalid(&bmap, 21));
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 22));
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 23));
++
++	KUNIT_EXPECT_EQ(test, 2, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 2, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for metadata block operations
++ */
++static void test_block_bmap_metadata_operations(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	u32 freed_items;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test reserving metadata pages */
++	err = ssdfs_block_bmap_reserve_metadata_pages(&bmap, 5);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 5, ssdfs_block_bmap_get_metadata_pages(&bmap));
++
++	/* Test freeing metadata pages */
++	err = ssdfs_block_bmap_free_metadata_pages(&bmap, 2, &freed_items);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 2, freed_items);
++	KUNIT_EXPECT_EQ(test, 3, ssdfs_block_bmap_get_metadata_pages(&bmap));
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for block state utilities
++ */
++static void test_block_state_utilities(struct kunit *test)
++{
++	u8 byte_val;
++
++	/* Test BLK_BMAP_BYTE_CONTAINS_STATE function */
++	byte_val = SSDFS_FREE_STATES_BYTE;
++	KUNIT_EXPECT_TRUE(test,
++			  BLK_BMAP_BYTE_CONTAINS_STATE(&byte_val,
++							SSDFS_BLK_FREE));
++	KUNIT_EXPECT_FALSE(test,
++			   BLK_BMAP_BYTE_CONTAINS_STATE(&byte_val,
++							SSDFS_BLK_VALID));
++
++	byte_val = SSDFS_VALID_STATES_BYTE;
++	KUNIT_EXPECT_TRUE(test,
++			  BLK_BMAP_BYTE_CONTAINS_STATE(&byte_val,
++							SSDFS_BLK_VALID));
++	KUNIT_EXPECT_FALSE(test,
++			   BLK_BMAP_BYTE_CONTAINS_STATE(&byte_val,
++							SSDFS_BLK_FREE));
++
++	byte_val = SSDFS_PRE_ALLOC_STATES_BYTE;
++	KUNIT_EXPECT_TRUE(test,
++			  BLK_BMAP_BYTE_CONTAINS_STATE(&byte_val,
++						SSDFS_BLK_PRE_ALLOCATED));
++	KUNIT_EXPECT_FALSE(test,
++			   BLK_BMAP_BYTE_CONTAINS_STATE(&byte_val,
++							SSDFS_BLK_FREE));
++
++	byte_val = SSDFS_INVALID_STATES_BYTE;
++	KUNIT_EXPECT_TRUE(test,
++			  BLK_BMAP_BYTE_CONTAINS_STATE(&byte_val,
++							SSDFS_BLK_INVALID));
++	KUNIT_EXPECT_FALSE(test,
++			   BLK_BMAP_BYTE_CONTAINS_STATE(&byte_val,
++							SSDFS_BLK_FREE));
++}
++
++/*
++ * Test cases for block bitmap flags
++ */
++static void test_block_bmap_flags(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test initialization flag */
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_initialized(&bmap));
++
++	/* Test dirty state management */
++	KUNIT_EXPECT_FALSE(test, ssdfs_block_bmap_dirtied(&bmap));
++	ssdfs_block_bmap_set_dirty_state(&bmap);
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_dirtied(&bmap));
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	KUNIT_EXPECT_FALSE(test, ssdfs_block_bmap_dirtied(&bmap));
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for garbage collection
++ */
++static void test_block_bmap_collect_garbage_valid_blocks(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range, collected_range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* First allocate some blocks to create valid blocks */
++	len = 8;
++	err = ssdfs_block_bmap_allocate(&bmap, 10, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 8, len);
++
++	/* Also allocate some non-contiguous blocks */
++	len = 4;
++	err = ssdfs_block_bmap_allocate(&bmap, 20, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test collecting valid blocks */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 10, 15,
++					       SSDFS_BLK_VALID,
++					       &collected_range);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Should find the first range of valid blocks */
++	KUNIT_EXPECT_EQ(test, 10, collected_range.start);
++	KUNIT_EXPECT_LE(test, collected_range.len, 15);
++	KUNIT_EXPECT_GT(test, collected_range.len, 0);
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_collect_garbage_pre_allocated_blocks(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range, collected_range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Pre-allocate some blocks */
++	len = 6;
++	err = ssdfs_block_bmap_pre_allocate(&bmap, 15, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test collecting pre-allocated blocks */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 10, 20,
++					       SSDFS_BLK_PRE_ALLOCATED,
++					       &collected_range);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Should find the pre-allocated blocks */
++	KUNIT_EXPECT_EQ(test, 15, collected_range.start);
++	KUNIT_EXPECT_EQ(test, 6, collected_range.len);
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_collect_garbage_no_blocks_found(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range collected_range;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Try to collect valid blocks when all blocks are free */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 0, 64,
++					       SSDFS_BLK_VALID,
++					       &collected_range);
++	KUNIT_EXPECT_EQ(test, -ENODATA, err);
++
++	/* Try to collect pre-allocated blocks when none exist */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 0, 64,
++					       SSDFS_BLK_PRE_ALLOCATED,
++					       &collected_range);
++	KUNIT_EXPECT_EQ(test, -ENODATA, err);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_collect_garbage_invalid_params(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range collected_range;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test with NULL bitmap */
++	err = ssdfs_block_bmap_collect_garbage(NULL, 0, 10,
++					       SSDFS_BLK_VALID,
++					       &collected_range);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test with NULL range */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 0, 10,
++					       SSDFS_BLK_VALID,
++					       NULL);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test with invalid block state */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 0, 10,
++					       SSDFS_BLK_INVALID,
++					       &collected_range);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	/* Test with invalid block state (free) */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 0, 10,
++					       SSDFS_BLK_FREE,
++					       &collected_range);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	/* Test with start beyond capacity */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 70, 10,
++					       SSDFS_BLK_VALID,
++					       &collected_range);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_collect_garbage_boundary_conditions(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range, collected_range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Allocate blocks at the end of the bitmap */
++	len = 4;
++	err = ssdfs_block_bmap_allocate(&bmap, 60, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test collecting from near the end */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 60, 10,
++					       SSDFS_BLK_VALID,
++					       &collected_range);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 60, collected_range.start);
++	KUNIT_EXPECT_EQ(test, 4, collected_range.len);
++
++	/* Test with max_len larger than remaining capacity */
++	err = ssdfs_block_bmap_collect_garbage(&bmap, 60, 100,
++					       SSDFS_BLK_VALID,
++					       &collected_range);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 60, collected_range.start);
++	KUNIT_EXPECT_LE(test, collected_range.len, 4);
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for block bitmap cleaning
++ */
++static void test_block_bmap_clean_same_capacity(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* First dirty the bitmap with some allocations */
++	len = 5;
++	err = ssdfs_block_bmap_allocate(&bmap, 10, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	len = 3;
++	err = ssdfs_block_bmap_pre_allocate(&bmap, 20, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Add some metadata blocks */
++	err = ssdfs_block_bmap_reserve_metadata_pages(&bmap, 7);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Verify bitmap is dirty */
++	KUNIT_EXPECT_EQ(test, 8, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 7, ssdfs_block_bmap_get_metadata_pages(&bmap));
++	KUNIT_EXPECT_LT(test, ssdfs_block_bmap_get_free_pages(&bmap), 64);
++
++	/* Clean the bitmap with same capacity */
++	err = ssdfs_block_bmap_clean(&bmap, 64);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify all blocks are now free */
++	KUNIT_EXPECT_EQ(test, 64, ssdfs_block_bmap_get_free_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_metadata_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 64, ssdfs_block_bmap_get_allocation_pool(&bmap));
++
++	/* Verify all blocks are actually free */
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 0));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 10));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 20));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 63));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_clean_expanded_capacity(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 32, 32,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Allocate some blocks */
++	len = 5;
++	err = ssdfs_block_bmap_allocate(&bmap, 5, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Verify initial state */
++	KUNIT_EXPECT_EQ(test, 32, ssdfs_block_bmap_get_pages_capacity(&bmap));
++	KUNIT_EXPECT_EQ(test, 27, ssdfs_block_bmap_get_free_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 5, ssdfs_block_bmap_get_used_pages(&bmap));
++
++	/* Clean with expanded capacity */
++	err = ssdfs_block_bmap_clean(&bmap, 128);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify new capacity and all blocks are free */
++	KUNIT_EXPECT_EQ(test, 128, ssdfs_block_bmap_get_pages_capacity(&bmap));
++	KUNIT_EXPECT_EQ(test, 128, ssdfs_block_bmap_get_allocation_pool(&bmap));
++	KUNIT_EXPECT_EQ(test, 128, ssdfs_block_bmap_get_free_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_metadata_pages(&bmap));
++
++	/* Verify blocks in the expanded range are free */
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 0));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 31));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 64));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 127));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_clean_invalid_params(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test with NULL bitmap */
++	err = ssdfs_block_bmap_clean(NULL, 64);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test with shrinking capacity (should fail) */
++	err = ssdfs_block_bmap_clean(&bmap, 32);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	/* Verify bitmap state hasn't changed */
++	KUNIT_EXPECT_EQ(test, 64, ssdfs_block_bmap_get_pages_capacity(&bmap));
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_clean_with_invalid_blocks(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Allocate some blocks and then invalidate them */
++	len = 8;
++	err = ssdfs_block_bmap_allocate(&bmap, 10, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Invalidate some of the allocated blocks */
++	range.start = 12;
++	range.len = 4;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Verify we have both valid and invalid blocks */
++	KUNIT_EXPECT_EQ(test, 4, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 4, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	/* Clean the bitmap */
++	err = ssdfs_block_bmap_clean(&bmap, 64);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify all blocks are now free, including previously invalid ones */
++	KUNIT_EXPECT_EQ(test, 64, ssdfs_block_bmap_get_free_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	/* Verify specific blocks that were invalid are now free */
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 12));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 13));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 14));
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 15));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_clean_reset_search_cache(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Do some operations that will populate search cache */
++	len = 5;
++	err = ssdfs_block_bmap_allocate(&bmap, 20, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	len = 3;
++	err = ssdfs_block_bmap_pre_allocate(&bmap, 30, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Clean the bitmap */
++	err = ssdfs_block_bmap_clean(&bmap, 64);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* After cleaning, we should be able to allocate from the beginning */
++	len = 10;
++	err = ssdfs_block_bmap_allocate(&bmap, 0, &len, &range);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 0, range.start);
++	KUNIT_EXPECT_EQ(test, 10, range.len);
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for invalid to clean conversion
++ */
++static void test_block_bmap_invalid2clean_single_range(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int invalid_pages;
++	int i, j;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* First allocate some blocks */
++	len = 8;
++	err = ssdfs_block_bmap_allocate(&bmap, 10, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Invalidate some of the allocated blocks */
++	range.start = 12;
++	range.len = 4;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Verify we have invalid blocks */
++	KUNIT_EXPECT_EQ(test, 4, ssdfs_block_bmap_get_invalid_pages(&bmap));
++	KUNIT_EXPECT_TRUE(test, is_block_invalid(&bmap, 12));
++	KUNIT_EXPECT_TRUE(test, is_block_invalid(&bmap, 13));
++	KUNIT_EXPECT_TRUE(test, is_block_invalid(&bmap, 14));
++	KUNIT_EXPECT_TRUE(test, is_block_invalid(&bmap, 15));
++
++	/* Convert invalid block to clean */
++	invalid_pages = ssdfs_block_bmap_get_invalid_pages(&bmap);
++
++	for (i = 0; i < invalid_pages; i++) {
++		err = ssdfs_block_bmap_invalid2clean(&bmap);
++		KUNIT_EXPECT_EQ(test, 0, err);
++
++		/* Verify block is now free */
++		KUNIT_EXPECT_LT(test,
++				ssdfs_block_bmap_get_invalid_pages(&bmap),
++				invalid_pages);
++
++		for (j = 0; j < (i + 1); j++)
++			KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 12 + j));
++
++		for (j = i + 1; j < invalid_pages; j++)
++			KUNIT_EXPECT_TRUE(test, is_block_invalid(&bmap, 12 + j));
++
++		invalid_pages = ssdfs_block_bmap_get_invalid_pages(&bmap);
++	}
++
++	/* Other blocks should remain in their original state */
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 10));
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 11));
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 16));
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 17));
++
++	/* Verify bitmap is marked as dirty */
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_dirtied(&bmap));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_invalid2clean_multiple_ranges(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++	int initial_invalid, remaining_invalid;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Allocate multiple ranges and invalidate them */
++	len = 3;
++	err = ssdfs_block_bmap_allocate(&bmap, 5, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	len = 4;
++	err = ssdfs_block_bmap_allocate(&bmap, 15, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	len = 2;
++	err = ssdfs_block_bmap_allocate(&bmap, 25, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Invalidate the first range */
++	range.start = 5;
++	range.len = 3;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Invalidate part of the second range */
++	range.start = 16;
++	range.len = 2;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	initial_invalid = ssdfs_block_bmap_get_invalid_pages(&bmap);
++	KUNIT_EXPECT_EQ(test, 5, initial_invalid);
++
++	/* Convert invalid blocks to clean (should convert first range found) */
++	err = ssdfs_block_bmap_invalid2clean(&bmap);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Should have reduced invalid count */
++	remaining_invalid = ssdfs_block_bmap_get_invalid_pages(&bmap);
++	KUNIT_EXPECT_LT(test, remaining_invalid, initial_invalid);
++	KUNIT_EXPECT_GE(test, remaining_invalid, 0);
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_invalid2clean_no_invalid_blocks(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Allocate some blocks but don't invalidate any */
++	len = 5;
++	err = ssdfs_block_bmap_allocate(&bmap, 10, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Verify no invalid blocks exist */
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	/* Try to convert invalid blocks when none exist */
++	err = ssdfs_block_bmap_invalid2clean(&bmap);
++	KUNIT_EXPECT_EQ(test, -ENODATA, err);
++
++	/* Verify state hasn't changed */
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 5, ssdfs_block_bmap_get_used_pages(&bmap));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_invalid2clean_empty_bitmap(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Try to convert invalid blocks on empty bitmap */
++	err = ssdfs_block_bmap_invalid2clean(&bmap);
++	KUNIT_EXPECT_EQ(test, -ENODATA, err);
++
++	/* Verify state remains clean */
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 64, ssdfs_block_bmap_get_free_pages(&bmap));
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_invalid2clean_invalid_params(struct kunit *test)
++{
++	int err;
++
++	/* Test with NULL bitmap */
++	err = ssdfs_block_bmap_invalid2clean(NULL);
++	KUNIT_EXPECT_NE(test, 0, err);
++}
++
++static void test_block_bmap_invalid2clean_full_conversion(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int invalid_count;
++	int i;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 32, 32,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Allocate and invalidate a large contiguous range */
++	len = 16;
++	err = ssdfs_block_bmap_allocate(&bmap, 8, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Invalidate all allocated blocks */
++	range.start = 8;
++	range.len = 16;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	invalid_count = ssdfs_block_bmap_get_invalid_pages(&bmap);
++	KUNIT_EXPECT_EQ(test, 16, invalid_count);
++
++	/* Convert all invalid blocks to clean */
++	for (i = 0; i < invalid_count; i++) {
++		err = ssdfs_block_bmap_invalid2clean(&bmap);
++		KUNIT_EXPECT_EQ(test, 0, err);
++	}
++
++	/* All invalid blocks should now be free */
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 32, ssdfs_block_bmap_get_free_pages(&bmap));
++
++	/* Verify all blocks in the range are free */
++	for (int i = 8; i < 24; i++) {
++		KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, i));
++	}
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_invalid2clean_partial_range(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int i;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Create a mixed state: some valid, some invalid blocks */
++	len = 10;
++	err = ssdfs_block_bmap_allocate(&bmap, 20, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Invalidate only middle portion */
++	range.start = 23;
++	range.len = 4;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Initial state verification */
++	KUNIT_EXPECT_EQ(test, 6, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 4, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	/* Convert invalid blocks */
++	for (i = 0; i < range.len; i++) {
++		err = ssdfs_block_bmap_invalid2clean(&bmap);
++		KUNIT_EXPECT_EQ(test, 0, err);
++	}
++
++	/* Verify partial conversion */
++	KUNIT_EXPECT_EQ(test, 6, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	/* Check individual block states */
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 20));  /* Still valid */
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 21));  /* Still valid */
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 22));  /* Still valid */
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 23));   /* Converted to free */
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 24));   /* Converted to free */
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 25));   /* Converted to free */
++	KUNIT_EXPECT_TRUE(test, is_block_free(&bmap, 26));   /* Converted to free */
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 27));  /* Still valid */
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 28));  /* Still valid */
++	KUNIT_EXPECT_TRUE(test, is_block_valid(&bmap, 29));  /* Still valid */
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for block bitmap snapshot operations
++ */
++static void test_block_bmap_snapshot_basic(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector snapshot;
++	struct ssdfs_block_bmap_range range;
++	u32 last_free_page, metadata_blks, invalid_blks;
++	size_t items_capacity, bytes_count;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Initialize snapshot vector */
++	err = ssdfs_folio_vector_create(&snapshot, 0, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Add some operations to make the bitmap interesting */
++	len = 5;
++	err = ssdfs_block_bmap_allocate(&bmap, 10, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_block_bmap_reserve_metadata_pages(&bmap, 3);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Make bitmap dirty first */
++	ssdfs_block_bmap_set_dirty_state(&bmap);
++
++	/* Take snapshot */
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify snapshot metadata */
++	KUNIT_EXPECT_EQ(test, 64, items_capacity);
++	KUNIT_EXPECT_EQ(test, 3, metadata_blks);
++	KUNIT_EXPECT_EQ(test, 0, invalid_blks);
++	KUNIT_EXPECT_LE(test, last_free_page, items_capacity);
++
++	/* Verify bitmap is no longer dirty after snapshot */
++	KUNIT_EXPECT_FALSE(test, ssdfs_block_bmap_dirtied(&bmap));
++
++	/* Verify snapshot has content */
++	KUNIT_EXPECT_GT(test, ssdfs_folio_vector_count(&snapshot), 0);
++
++	/* Clean up snapshot */
++	ssdfs_block_bmap_forget_snapshot(&snapshot);
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_snapshot_with_invalid_blocks(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector snapshot;
++	struct ssdfs_block_bmap_range range;
++	u32 last_free_page, metadata_blks, invalid_blks;
++	size_t items_capacity, bytes_count;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&snapshot, 0, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Create a complex state with valid and invalid blocks */
++	len = 8;
++	err = ssdfs_block_bmap_allocate(&bmap, 15, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Invalidate some blocks */
++	range.start = 17;
++	range.len = 3;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_block_bmap_reserve_metadata_pages(&bmap, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	ssdfs_block_bmap_set_dirty_state(&bmap);
++
++	/* Take snapshot */
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify snapshot captures invalid blocks */
++	KUNIT_EXPECT_EQ(test, 3, invalid_blks);
++	KUNIT_EXPECT_EQ(test, 2, metadata_blks);
++	KUNIT_EXPECT_EQ(test, 64, items_capacity);
++
++	/* Clean up */
++	ssdfs_block_bmap_forget_snapshot(&snapshot);
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_snapshot_empty_bitmap(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector snapshot;
++	u32 last_free_page, metadata_blks, invalid_blks;
++	size_t items_capacity, bytes_count;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 32, 32,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&snapshot, 0, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Take snapshot of empty bitmap */
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify empty state */
++	KUNIT_EXPECT_EQ(test, 0, metadata_blks);
++	KUNIT_EXPECT_EQ(test, 0, invalid_blks);
++	KUNIT_EXPECT_EQ(test, 32, items_capacity);
++	KUNIT_EXPECT_LE(test, last_free_page, items_capacity);
++
++	/* Clean up */
++	ssdfs_block_bmap_forget_snapshot(&snapshot);
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_snapshot_invalid_params(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector snapshot;
++	u32 last_free_page, metadata_blks, invalid_blks;
++	size_t items_capacity, bytes_count;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&snapshot, 0, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test with NULL bitmap */
++	err = ssdfs_block_bmap_snapshot(NULL, &snapshot,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test with NULL snapshot */
++	err = ssdfs_block_bmap_snapshot(&bmap, NULL,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test with NULL output parameters */
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot,
++					NULL, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot,
++					&last_free_page, NULL,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, NULL,
++					&bytes_count);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					NULL);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Clean up */
++	ssdfs_folio_vector_destroy(&snapshot);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_forget_snapshot_basic(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector snapshot;
++	struct ssdfs_block_bmap_range range;
++	u32 last_free_page, metadata_blks, invalid_blks;
++	size_t items_capacity, bytes_count;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&snapshot, 0, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Add some content to bitmap */
++	len = 4;
++	err = ssdfs_block_bmap_allocate(&bmap, 5, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Take snapshot */
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Verify snapshot has content */
++	KUNIT_EXPECT_GT(test, ssdfs_folio_vector_count(&snapshot), 0);
++
++	/* Forget snapshot - should clean up resources */
++	ssdfs_block_bmap_forget_snapshot(&snapshot);
++
++	/* After forget, snapshot should be empty */
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_folio_vector_count(&snapshot));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++
++	ssdfs_folio_vector_destroy(&snapshot);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_forget_snapshot_null_param(struct kunit *test)
++{
++	/* Test with NULL snapshot - should not crash */
++	ssdfs_block_bmap_forget_snapshot(NULL);
++	/* If we reach here, the test passed */
++	KUNIT_EXPECT_TRUE(test, true);
++}
++
++static void test_block_bmap_snapshot_multiple_cycles(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector snapshot1, snapshot2;
++	struct ssdfs_block_bmap_range range;
++	u32 last_free_page, metadata_blks, invalid_blks;
++	size_t items_capacity, bytes_count;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&snapshot1, 0, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&snapshot2, 0, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* First state - allocate some blocks */
++	len = 3;
++	err = ssdfs_block_bmap_allocate(&bmap, 10, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	ssdfs_block_bmap_set_dirty_state(&bmap);
++
++	/* Take first snapshot */
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot1,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Modify bitmap further */
++	len = 2;
++	err = ssdfs_block_bmap_allocate(&bmap, 20, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	ssdfs_block_bmap_set_dirty_state(&bmap);
++
++	/* Take second snapshot */
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot2,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Both snapshots should be valid */
++	KUNIT_EXPECT_GT(test, ssdfs_folio_vector_count(&snapshot1), 0);
++	KUNIT_EXPECT_GT(test, ssdfs_folio_vector_count(&snapshot2), 0);
++
++	/* Clean up snapshots */
++	ssdfs_block_bmap_forget_snapshot(&snapshot1);
++	ssdfs_block_bmap_forget_snapshot(&snapshot2);
++
++	ssdfs_folio_vector_destroy(&snapshot1);
++	ssdfs_folio_vector_destroy(&snapshot2);
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_snapshot_consistency_check(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector snapshot;
++	struct ssdfs_block_bmap_range range;
++	u32 last_free_page, metadata_blks, invalid_blks;
++	size_t items_capacity, bytes_count;
++	u32 len;
++	int err;
++	int original_used, original_invalid, original_metadata;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&snapshot, 0, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Create a complex bitmap state */
++	len = 6;
++	err = ssdfs_block_bmap_allocate(&bmap, 8, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	range.start = 10;
++	range.len = 2;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_block_bmap_reserve_metadata_pages(&bmap, 4);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Record original state */
++	original_used = ssdfs_block_bmap_get_used_pages(&bmap);
++	original_invalid = ssdfs_block_bmap_get_invalid_pages(&bmap);
++	original_metadata = ssdfs_block_bmap_get_metadata_pages(&bmap);
++
++	ssdfs_block_bmap_set_dirty_state(&bmap);
++
++	/* Take snapshot */
++	err = ssdfs_block_bmap_snapshot(&bmap, &snapshot,
++					&last_free_page, &metadata_blks,
++					&invalid_blks, &items_capacity,
++					&bytes_count);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify snapshot data matches bitmap state */
++	KUNIT_EXPECT_EQ(test, original_metadata, metadata_blks);
++	KUNIT_EXPECT_EQ(test, original_invalid, invalid_blks);
++
++	/* Clean up */
++	ssdfs_block_bmap_forget_snapshot(&snapshot);
++	ssdfs_folio_vector_destroy(&snapshot);
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for block bitmap initialization
++ */
++static void test_block_bmap_init_basic(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector source;
++	u8 flags = 0;
++	u32 last_free_blk = 32;
++	u32 metadata_blks = 5;
++	u32 invalid_blks = 3;
++	u32 bmap_bytes = 64; /* arbitrary size for test */
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	/* Create bitmap first (with INIT flag to avoid full initialization) */
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_INIT,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Create source folio vector with some content */
++	err = ssdfs_folio_vector_create(&source, 0, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Add at least one folio to make it non-empty */
++	err = ssdfs_folio_vector_add(&source, test_alloc_folio(0));
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Now initialize the bitmap */
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify initialization succeeded */
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_initialized(&bmap));
++	KUNIT_EXPECT_EQ(test, metadata_blks, ssdfs_block_bmap_get_metadata_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, invalid_blks, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	/* Clean up */
++	ssdfs_folio_vector_release(&source);
++	ssdfs_folio_vector_destroy(&source);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_init_inflated_flag(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector source;
++	u8 flags = SSDFS_INFLATED_BLK_BMAP;
++	u32 last_free_blk = 128;  /* Larger than initial capacity */
++	u32 metadata_blks = 10;
++	u32 invalid_blks = 5;
++	u32 bmap_bytes = 128;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	/* Create bitmap with smaller initial capacity */
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_INIT,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&source, 0, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_add(&source, test_alloc_folio(0));
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Initialize with inflated flag */
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify capacity was expanded */
++	KUNIT_EXPECT_GE(test, ssdfs_block_bmap_get_pages_capacity(&bmap), last_free_blk);
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_initialized(&bmap));
++
++	/* Clean up */
++	ssdfs_folio_vector_release(&source);
++	ssdfs_folio_vector_destroy(&source);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_init_invalid_params(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector source, empty_source;
++	u8 flags = 0;
++	u32 last_free_blk = 32;
++	u32 metadata_blks = 5;
++	u32 invalid_blks = 3;
++	u32 bmap_bytes = 64;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_INIT,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&source, 0, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_add(&source, test_alloc_folio(0));
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&empty_source, 0, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test with NULL bitmap */
++	err = ssdfs_block_bmap_init(NULL, &source, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test with NULL source */
++	err = ssdfs_block_bmap_init(&bmap, NULL, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test with empty source folio vector */
++	err = ssdfs_block_bmap_init(&bmap, &empty_source, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	/* Test with last_free_blk beyond capacity */
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    1000, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	/* Test with metadata_blks beyond allocation pool */
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    last_free_blk, 1000,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	/* Test with invalid_blks beyond allocation pool */
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    last_free_blk, metadata_blks,
++				    1000, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	/* Clean up */
++	ssdfs_folio_vector_release(&source);
++	ssdfs_folio_vector_destroy(&source);
++	ssdfs_folio_vector_destroy(&empty_source);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_init_already_initialized(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector source;
++	u8 flags = 0;
++	u32 last_free_blk = 32;
++	u32 metadata_blks = 5;
++	u32 invalid_blks = 3;
++	u32 bmap_bytes = 64;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	/* Create and fully initialize bitmap first */
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&source, 0, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_add(&source, test_alloc_folio(0));
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Bitmap should already be initialized and clean */
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_initialized(&bmap));
++	KUNIT_EXPECT_FALSE(test, ssdfs_block_bmap_dirtied(&bmap));
++
++	/* Try to initialize again - should succeed for clean initialized bitmap */
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Now make it dirty and try again */
++	ssdfs_block_bmap_set_dirty_state(&bmap);
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_dirtied(&bmap));
++
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, -ERANGE, err);
++
++	/* Clean up */
++	ssdfs_folio_vector_release(&source);
++	ssdfs_folio_vector_destroy(&source);
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_init_boundary_values(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector source;
++	u8 flags = 0;
++	u32 capacity = 64;
++	u32 last_free_blk;
++	u32 metadata_blks;
++	u32 invalid_blks = 0;
++	u32 bmap_bytes = 64;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, capacity, capacity,
++				      SSDFS_BLK_BMAP_INIT,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&source, 0, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_add(&source, test_alloc_folio(0));
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test with maximum valid values */
++	last_free_blk = capacity; /* At capacity */
++	metadata_blks = last_free_blk; /* Max metadata */
++
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_initialized(&bmap));
++	KUNIT_EXPECT_EQ(test, metadata_blks,
++			ssdfs_block_bmap_get_metadata_pages(&bmap));
++
++	/* Clean up */
++	ssdfs_folio_vector_release(&source);
++	ssdfs_folio_vector_destroy(&source);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_init_zero_values(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector source;
++	u8 flags = 0;
++	u32 last_free_blk = 0;
++	u32 metadata_blks = 0;
++	u32 invalid_blks = 0;
++	u32 bmap_bytes = 64;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_INIT,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&source, 0, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_add(&source, test_alloc_folio(0));
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test with all zero values */
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_initialized(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_metadata_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	/* Clean up */
++	ssdfs_folio_vector_release(&source);
++	ssdfs_folio_vector_destroy(&source);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_init_state_consistency(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_folio_vector source;
++	u8 flags = 0;
++	u32 last_free_blk = 20;
++	u32 metadata_blks = 8;
++	u32 invalid_blks = 4;
++	u32 bmap_bytes = 64;
++	int err;
++	int used_pages_before, used_pages_after;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_INIT,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_create(&source, 0, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_vector_add(&source, test_alloc_folio(0));
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Record state before initialization */
++	used_pages_before = ssdfs_block_bmap_get_used_pages(&bmap);
++
++	/* Initialize bitmap */
++	err = ssdfs_block_bmap_init(&bmap, &source, flags,
++				    last_free_blk, metadata_blks,
++				    invalid_blks, bmap_bytes);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify state after initialization */
++	used_pages_after = ssdfs_block_bmap_get_used_pages(&bmap);
++
++	KUNIT_EXPECT_TRUE(test, ssdfs_block_bmap_initialized(&bmap));
++	KUNIT_EXPECT_EQ(test, metadata_blks, ssdfs_block_bmap_get_metadata_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, invalid_blks, ssdfs_block_bmap_get_invalid_pages(&bmap));
++
++	/* Used blocks should be calculated based on actual bitmap content */
++	KUNIT_EXPECT_GE(test, used_pages_after, 0);
++
++	/* Clean up */
++	ssdfs_folio_vector_release(&source);
++	ssdfs_folio_vector_destroy(&source);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for block bitmap inflation
++ */
++static void test_block_bmap_inflate_basic(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 used_blocks = 47;
++	u32 metadata_blocks = 3;
++	u32 free_items = 32;
++	u32 len;
++	int original_capacity, new_capacity;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Add some used blocks first */
++	len = used_blocks;
++	err = ssdfs_block_bmap_allocate(&bmap, 5, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_block_bmap_reserve_metadata_pages(&bmap, metadata_blocks);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Record original capacity */
++	original_capacity = ssdfs_block_bmap_get_pages_capacity(&bmap);
++
++	/* Inflate bitmap */
++	err = ssdfs_block_bmap_inflate(&bmap, free_items);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify capacity increased */
++	new_capacity = ssdfs_block_bmap_get_pages_capacity(&bmap);
++	KUNIT_EXPECT_GT(test, new_capacity, original_capacity);
++
++	/* Verify allocation pool increased */
++	KUNIT_EXPECT_EQ(test, new_capacity,
++			ssdfs_block_bmap_get_allocation_pool(&bmap));
++
++	/* Verify used and metadata blocks remain the same */
++	KUNIT_EXPECT_EQ(test,
++			used_blocks, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, metadata_blocks,
++			ssdfs_block_bmap_get_metadata_pages(&bmap));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_inflate_with_invalid_blocks(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 free_items = 50;
++	u32 len;
++	int original_capacity, new_capacity;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Create a complex state with used, invalid, and metadata blocks */
++	len = 8;
++	err = ssdfs_block_bmap_allocate(&bmap, 10, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Invalidate some blocks */
++	range.start = 12;
++	range.len = 4;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_block_bmap_reserve_metadata_pages(&bmap, 6);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	original_capacity = ssdfs_block_bmap_get_pages_capacity(&bmap);
++
++	/* Inflate bitmap */
++	err = ssdfs_block_bmap_inflate(&bmap, free_items);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify capacity is the same */
++	new_capacity = ssdfs_block_bmap_get_pages_capacity(&bmap);
++	KUNIT_EXPECT_EQ(test, new_capacity, original_capacity);
++
++	/* Verify all block counts remain accurate */
++	KUNIT_EXPECT_EQ(test, 4, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 4, ssdfs_block_bmap_get_invalid_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, 6, ssdfs_block_bmap_get_metadata_pages(&bmap));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_inflate_zero_free_items(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	u32 free_items = 0;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Try to inflate with zero free items */
++	err = ssdfs_block_bmap_inflate(&bmap, free_items);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_inflate_invalid_params(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	u32 free_items = 25;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test with NULL bitmap */
++	err = ssdfs_block_bmap_inflate(NULL, free_items);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_inflate_uninitialized_bitmap(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	u32 free_items = 30;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	/* Create bitmap but don't fully initialize it */
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_INIT,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Should not be initialized yet */
++	KUNIT_EXPECT_FALSE(test, ssdfs_block_bmap_initialized(&bmap));
++
++	/* Try to inflate uninitialized bitmap */
++	err = ssdfs_block_bmap_inflate(&bmap, free_items);
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_inflate_large_increase(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 free_items = 17567; /* Large increase */
++	int original_capacity, new_capacity;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 32, 32,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	original_capacity = ssdfs_block_bmap_get_pages_capacity(&bmap);
++
++	/* Add some used blocks first */
++	len = 32;
++	err = ssdfs_block_bmap_allocate(&bmap, 0, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Inflate by large amount */
++	err = ssdfs_block_bmap_inflate(&bmap, free_items);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	new_capacity = ssdfs_block_bmap_get_pages_capacity(&bmap);
++
++	/* Verify significant capacity increase */
++	KUNIT_EXPECT_GE(test, new_capacity, original_capacity + free_items);
++	KUNIT_EXPECT_GT(test, new_capacity, original_capacity * 2);
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_inflate_full_bitmap(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 free_items = 40;
++	u32 len;
++	int original_capacity, new_capacity;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Fill most of the bitmap */
++	len = 50;
++	err = ssdfs_block_bmap_allocate(&bmap, 0, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_block_bmap_reserve_metadata_pages(&bmap, 10);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	original_capacity = ssdfs_block_bmap_get_pages_capacity(&bmap);
++
++	/* Should have minimal free space */
++	KUNIT_EXPECT_LT(test, ssdfs_block_bmap_get_free_pages(&bmap), 10);
++
++	/* Inflate the bitmap */
++	err = ssdfs_block_bmap_inflate(&bmap, free_items);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	new_capacity = ssdfs_block_bmap_get_pages_capacity(&bmap);
++
++	/* Verify capacity increased appropriately */
++	KUNIT_EXPECT_GT(test, new_capacity, original_capacity);
++	KUNIT_EXPECT_GE(test, ssdfs_block_bmap_get_free_pages(&bmap), free_items);
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++static void test_block_bmap_inflate_capacity_calculation(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 free_items = 15;
++	u32 len;
++	int original_used, original_invalid, original_metadata;
++	int new_capacity;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Create specific state for capacity calculation test */
++	len = 12;
++	err = ssdfs_block_bmap_allocate(&bmap, 8, &len, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	range.start = 10;
++	range.len = 5;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_block_bmap_reserve_metadata_pages(&bmap, 7);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Record current state */
++	original_used = ssdfs_block_bmap_get_used_pages(&bmap);
++	original_invalid = ssdfs_block_bmap_get_invalid_pages(&bmap);
++	original_metadata = ssdfs_block_bmap_get_metadata_pages(&bmap);
++
++	/* Inflate */
++	err = ssdfs_block_bmap_inflate(&bmap, free_items);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	new_capacity = ssdfs_block_bmap_get_pages_capacity(&bmap);
++
++	/* Verify new capacity formula: used_space + free_items */
++	/* used_space = metadata_items + used_blks + invalid_blks */
++	KUNIT_EXPECT_GE(test, new_capacity,
++			original_used + original_invalid + original_metadata + free_items);
++
++	/* Verify state consistency after inflation */
++	KUNIT_EXPECT_EQ(test, original_used, ssdfs_block_bmap_get_used_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, original_invalid, ssdfs_block_bmap_get_invalid_pages(&bmap));
++	KUNIT_EXPECT_EQ(test, original_metadata, ssdfs_block_bmap_get_metadata_pages(&bmap));
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test cases for edge cases and error conditions
++ */
++static void test_block_bmap_edge_cases(struct kunit *test)
++{
++	struct ssdfs_fs_info *fsi;
++	struct ssdfs_block_bmap bmap;
++	struct ssdfs_block_bmap_range range;
++	u32 len;
++	int err;
++
++	fsi = test_create_fs_info();
++	KUNIT_ASSERT_NOT_NULL(test, fsi);
++
++	err = ssdfs_block_bmap_create(fsi, &bmap, 64, 64,
++				      SSDFS_BLK_BMAP_CREATE,
++				      SSDFS_BLK_FREE);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test allocation beyond capacity */
++	len = 70;  /* More than capacity */
++	err = ssdfs_block_bmap_allocate(&bmap, 0, &len, &range);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test allocation at invalid start position */
++	len = 1;
++	err = ssdfs_block_bmap_allocate(&bmap, 70, &len, &range);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	/* Test invalidating non-allocated blocks */
++	range.start = 50;
++	range.len = 5;
++	err = ssdfs_block_bmap_invalidate(&bmap, &range);
++	KUNIT_EXPECT_NE(test, 0, err);
++
++	ssdfs_block_bmap_clear_dirty_state(&bmap);
++	ssdfs_block_bmap_destroy(&bmap);
++	test_free_fs_info(fsi);
++}
++
++/*
++ * Test suite definition
++ */
++static struct kunit_case ssdfs_block_bitmap_test_cases[] = {
++	KUNIT_CASE(test_block_bmap_create_valid_params),
++	KUNIT_CASE(test_block_bmap_create_null_params),
++	KUNIT_CASE(test_block_bmap_create_zero_capacity),
++	KUNIT_CASE(test_block_bmap_state_checking),
++	KUNIT_CASE(test_block_bmap_allocation),
++	KUNIT_CASE(test_block_bmap_pre_allocation),
++	KUNIT_CASE(test_block_bmap_invalidation),
++	KUNIT_CASE(test_block_bmap_metadata_operations),
++	KUNIT_CASE(test_block_state_utilities),
++	KUNIT_CASE(test_block_bmap_flags),
++	KUNIT_CASE(test_block_bmap_collect_garbage_valid_blocks),
++	KUNIT_CASE(test_block_bmap_collect_garbage_pre_allocated_blocks),
++	KUNIT_CASE(test_block_bmap_collect_garbage_no_blocks_found),
++	KUNIT_CASE(test_block_bmap_collect_garbage_invalid_params),
++	KUNIT_CASE(test_block_bmap_collect_garbage_boundary_conditions),
++	KUNIT_CASE(test_block_bmap_clean_same_capacity),
++	KUNIT_CASE(test_block_bmap_clean_expanded_capacity),
++	KUNIT_CASE(test_block_bmap_clean_invalid_params),
++	KUNIT_CASE(test_block_bmap_clean_with_invalid_blocks),
++	KUNIT_CASE(test_block_bmap_clean_reset_search_cache),
++	KUNIT_CASE(test_block_bmap_invalid2clean_single_range),
++	KUNIT_CASE(test_block_bmap_invalid2clean_multiple_ranges),
++	KUNIT_CASE(test_block_bmap_invalid2clean_no_invalid_blocks),
++	KUNIT_CASE(test_block_bmap_invalid2clean_empty_bitmap),
++	KUNIT_CASE(test_block_bmap_invalid2clean_invalid_params),
++	KUNIT_CASE(test_block_bmap_invalid2clean_full_conversion),
++	KUNIT_CASE(test_block_bmap_invalid2clean_partial_range),
++	KUNIT_CASE(test_block_bmap_snapshot_basic),
++	KUNIT_CASE(test_block_bmap_snapshot_with_invalid_blocks),
++	KUNIT_CASE(test_block_bmap_snapshot_empty_bitmap),
++	KUNIT_CASE(test_block_bmap_snapshot_invalid_params),
++	KUNIT_CASE(test_block_bmap_forget_snapshot_basic),
++	KUNIT_CASE(test_block_bmap_forget_snapshot_null_param),
++	KUNIT_CASE(test_block_bmap_snapshot_multiple_cycles),
++	KUNIT_CASE(test_block_bmap_snapshot_consistency_check),
++	KUNIT_CASE(test_block_bmap_init_basic),
++	KUNIT_CASE(test_block_bmap_init_inflated_flag),
++	KUNIT_CASE(test_block_bmap_init_invalid_params),
++	KUNIT_CASE(test_block_bmap_init_already_initialized),
++	KUNIT_CASE(test_block_bmap_init_boundary_values),
++	KUNIT_CASE(test_block_bmap_init_zero_values),
++	KUNIT_CASE(test_block_bmap_init_state_consistency),
++	KUNIT_CASE(test_block_bmap_inflate_basic),
++	KUNIT_CASE(test_block_bmap_inflate_with_invalid_blocks),
++	KUNIT_CASE(test_block_bmap_inflate_zero_free_items),
++	KUNIT_CASE(test_block_bmap_inflate_invalid_params),
++	KUNIT_CASE(test_block_bmap_inflate_uninitialized_bitmap),
++	KUNIT_CASE(test_block_bmap_inflate_large_increase),
++	KUNIT_CASE(test_block_bmap_inflate_full_bitmap),
++	KUNIT_CASE(test_block_bmap_inflate_capacity_calculation),
++	KUNIT_CASE(test_block_bmap_edge_cases),
++	{}
++};
++
++static struct kunit_suite ssdfs_block_bitmap_test_suite = {
++	.name = "ssdfs-block-bitmap",
++	.test_cases = ssdfs_block_bitmap_test_cases,
++};
++
++kunit_test_suite(ssdfs_block_bitmap_test_suite);
++
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_AUTHOR("Viacheslav Dubeyko <slava@dubeyko.com>");
++MODULE_DESCRIPTION("KUnit test for SSDFS block bitmap");
++MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
+diff --git a/fs/ssdfs/compr_lzo_test.c b/fs/ssdfs/compr_lzo_test.c
+new file mode 100644
+index 000000000000..a864c20a0a49
+--- /dev/null
++++ b/fs/ssdfs/compr_lzo_test.c
+@@ -0,0 +1,570 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++/*
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/compr_lzo_test.c - KUnit tests for LZO compression.
++ *
++ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <kunit/test.h>
++#include <linux/slab.h>
++#include <linux/vmalloc.h>
++#include <linux/random.h>
++#include <linux/lzo.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "compression.h"
++
++/*
++ * Test data patterns
++ */
++static void fill_test_pattern(unsigned char *data, size_t size, int pattern)
++{
++	size_t i;
++
++	switch (pattern) {
++	case 0: /* zeros */
++		memset(data, 0, size);
++		break;
++	case 1: /* ones */
++		memset(data, 0xFF, size);
++		break;
++	case 2: /* alternating pattern */
++		for (i = 0; i < size; i++)
++			data[i] = (i % 2) ? 0x00 : 0xFF;
++		break;
++	case 3: /* sequential pattern */
++		for (i = 0; i < size; i++)
++			data[i] = (unsigned char)(i % 256);
++		break;
++	case 4: /* highly repetitive */
++		for (i = 0; i < size; i++)
++			data[i] = (unsigned char)(i % 4);
++		break;
++	case 5: /* moderately repetitive */
++		for (i = 0; i < size; i++)
++			data[i] = (unsigned char)(i % 16);
++		break;
++	case 6: /* random data */
++		get_random_bytes(data, size);
++		break;
++	default:
++		memset(data, 0xBB, size);
++		break;
++	}
++}
++
++/*
++ * Test LZO initialization and cleanup
++ */
++static void test_lzo_init_exit(struct kunit *test)
++{
++	int err;
++
++	/* Test LZO initialization */
++	err = ssdfs_lzo_init();
++	KUNIT_EXPECT_EQ(test, err, 0);
++
++	/* Verify LZO compressor is registered */
++	KUNIT_EXPECT_NOT_NULL(test, ssdfs_compressors[SSDFS_COMPR_LZO]);
++	if (ssdfs_compressors[SSDFS_COMPR_LZO]) {
++		KUNIT_EXPECT_STREQ(test, ssdfs_compressors[SSDFS_COMPR_LZO]->name, "lzo");
++		KUNIT_EXPECT_EQ(test, ssdfs_compressors[SSDFS_COMPR_LZO]->type, SSDFS_COMPR_LZO);
++		KUNIT_EXPECT_NOT_NULL(test, ssdfs_compressors[SSDFS_COMPR_LZO]->compr_ops);
++	}
++
++	/* Test LZO cleanup */
++	ssdfs_lzo_exit();
++
++	/* Verify LZO compressor is unregistered */
++	KUNIT_EXPECT_NULL(test, ssdfs_compressors[SSDFS_COMPR_LZO]);
++}
++
++/*
++ * Test LZO workspace allocation and deallocation
++ */
++static void test_lzo_workspace_alloc_free(struct kunit *test)
++{
++	struct list_head *workspace;
++	const struct ssdfs_compress_ops *ops;
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	ops = ssdfs_compressors[SSDFS_COMPR_LZO]->compr_ops;
++	KUNIT_ASSERT_NOT_NULL(test, ops);
++	KUNIT_ASSERT_NOT_NULL(test, ops->alloc_workspace);
++	KUNIT_ASSERT_NOT_NULL(test, ops->free_workspace);
++
++	/* Test workspace allocation */
++	workspace = ops->alloc_workspace();
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, workspace);
++
++	/* Test workspace deallocation */
++	if (!IS_ERR_OR_NULL(workspace))
++		ops->free_workspace(workspace);
++
++	/* Cleanup */
++	ssdfs_lzo_exit();
++}
++
++/*
++ * Test LZO compression with different data patterns
++ */
++static void test_lzo_compress_zeros(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	/* Fill with zeros (highly compressible) */
++	fill_test_pattern(data_in, PAGE_SIZE, 0);
++
++	err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, 0);
++	KUNIT_EXPECT_EQ(test, srclen, PAGE_SIZE);
++	KUNIT_EXPECT_LT(test, destlen, PAGE_SIZE); /* Should compress well */
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	ssdfs_lzo_exit();
++}
++
++static void test_lzo_compress_ones(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	/* Fill with ones (highly compressible) */
++	fill_test_pattern(data_in, PAGE_SIZE, 1);
++
++	err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, 0);
++	KUNIT_EXPECT_EQ(test, srclen, PAGE_SIZE);
++	KUNIT_EXPECT_LT(test, destlen, PAGE_SIZE); /* Should compress well */
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	ssdfs_lzo_exit();
++}
++
++static void test_lzo_compress_repetitive(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	/* Fill with highly repetitive pattern */
++	fill_test_pattern(data_in, PAGE_SIZE, 4);
++
++	err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, 0);
++	KUNIT_EXPECT_EQ(test, srclen, PAGE_SIZE);
++	KUNIT_EXPECT_LT(test, destlen, PAGE_SIZE); /* Should compress well */
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	ssdfs_lzo_exit();
++}
++
++static void test_lzo_compress_random(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	/* Fill with random data (may not compress well) */
++	fill_test_pattern(data_in, PAGE_SIZE, 6);
++
++	err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_out,
++			     &srclen, &destlen);
++	/* Random data may not compress, so -E2BIG is acceptable */
++	KUNIT_EXPECT_TRUE(test, err == 0 || err == -E2BIG);
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	ssdfs_lzo_exit();
++}
++
++static void test_lzo_compress_small_buffer(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = 32; /* Very small buffer */
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	fill_test_pattern(data_in, PAGE_SIZE, 3);
++
++	err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, -E2BIG); /* Should fail due to small buffer */
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	ssdfs_lzo_exit();
++}
++
++/*
++ * Test LZO decompression
++ */
++static void test_lzo_decompress_valid_data(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out, *data_decompressed;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	size_t compressed_size;
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_decompressed = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_decompressed);
++
++	/* Fill with compressible data */
++	fill_test_pattern(data_in, PAGE_SIZE, 0);
++
++	/* Compress first */
++	err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_ASSERT_EQ(test, err, 0);
++	compressed_size = destlen;
++
++	/* Now decompress */
++	err = ssdfs_decompress(SSDFS_COMPR_LZO, cdata_out, data_decompressed,
++			       compressed_size, PAGE_SIZE);
++	KUNIT_EXPECT_EQ(test, err, 0);
++
++	/* Verify data integrity */
++	KUNIT_EXPECT_MEMEQ(test, data_in, data_decompressed, PAGE_SIZE);
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	kvfree(data_decompressed);
++	ssdfs_lzo_exit();
++}
++
++static void test_lzo_decompress_alternating_pattern(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out, *data_decompressed;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	size_t compressed_size;
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_decompressed = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_decompressed);
++
++	/* Fill with alternating pattern */
++	fill_test_pattern(data_in, PAGE_SIZE, 2);
++
++	/* Compress first */
++	err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_ASSERT_EQ(test, err, 0);
++	compressed_size = destlen;
++
++	/* Now decompress */
++	err = ssdfs_decompress(SSDFS_COMPR_LZO, cdata_out, data_decompressed,
++			       compressed_size, PAGE_SIZE);
++	KUNIT_EXPECT_EQ(test, err, 0);
++
++	/* Verify data integrity */
++	KUNIT_EXPECT_MEMEQ(test, data_in, data_decompressed, PAGE_SIZE);
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	kvfree(data_decompressed);
++	ssdfs_lzo_exit();
++}
++
++static void test_lzo_decompress_corrupted_data(struct kunit *test)
++{
++	unsigned char *cdata_in, *data_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	cdata_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_out);
++
++	/* Fill with random data (not valid compressed data) */
++	fill_test_pattern(cdata_in, PAGE_SIZE, 6);
++
++	err = ssdfs_decompress(SSDFS_COMPR_LZO, cdata_in, data_out,
++			       srclen, destlen);
++	KUNIT_EXPECT_NE(test, err, 0); /* Should fail */
++
++	kvfree(cdata_in);
++	kvfree(data_out);
++	ssdfs_lzo_exit();
++}
++
++static void test_lzo_decompress_wrong_size(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out, *data_decompressed;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	size_t compressed_size;
++	int err;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_decompressed = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_decompressed);
++
++	/* Fill and compress */
++	fill_test_pattern(data_in, PAGE_SIZE, 1);
++	err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_ASSERT_EQ(test, err, 0);
++	compressed_size = destlen;
++
++	/* Try to decompress with wrong expected size */
++	err = ssdfs_decompress(SSDFS_COMPR_LZO, cdata_out, data_decompressed,
++			       compressed_size, PAGE_SIZE / 2);
++	KUNIT_EXPECT_NE(test, err, 0); /* Should fail */
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	kvfree(data_decompressed);
++	ssdfs_lzo_exit();
++}
++
++/*
++ * Test multiple compression/decompression cycles
++ */
++static void test_lzo_multiple_cycles(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_tmp, *data_out;
++	size_t srclen, destlen, compressed_size;
++	int err, i;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_tmp = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_tmp);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_out);
++
++	/* Test multiple patterns */
++	for (i = 0; i < 6; i++) {
++		srclen = PAGE_SIZE;
++		destlen = PAGE_SIZE;
++
++		fill_test_pattern(data_in, PAGE_SIZE, i);
++
++		/* Compress */
++		err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_tmp,
++				     &srclen, &destlen);
++		if (err == -E2BIG)
++			continue; /* Skip non-compressible data */
++
++		KUNIT_EXPECT_EQ(test, err, 0);
++		compressed_size = destlen;
++
++		/* Decompress */
++		err = ssdfs_decompress(SSDFS_COMPR_LZO, cdata_tmp, data_out,
++				       compressed_size, PAGE_SIZE);
++		KUNIT_EXPECT_EQ(test, err, 0);
++
++		/* Verify data integrity */
++		KUNIT_EXPECT_MEMEQ(test, data_in, data_out, PAGE_SIZE);
++	}
++
++	kvfree(data_in);
++	kvfree(cdata_tmp);
++	kvfree(data_out);
++	ssdfs_lzo_exit();
++}
++
++/*
++ * Test compression of different data sizes
++ */
++static void test_lzo_different_sizes(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out, *data_decompressed;
++	size_t test_sizes[] = {512, 1024, 2048, PAGE_SIZE};
++	size_t srclen, destlen, compressed_size;
++	int err, i;
++
++	/* Initialize LZO */
++	err = ssdfs_lzo_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_decompressed = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_decompressed);
++
++	for (i = 0; i < ARRAY_SIZE(test_sizes); i++) {
++		size_t size = test_sizes[i];
++
++		srclen = size;
++		destlen = PAGE_SIZE;
++
++		/* Fill with compressible pattern */
++		fill_test_pattern(data_in, size, 0);
++
++		/* Compress */
++		err = ssdfs_compress(SSDFS_COMPR_LZO, data_in, cdata_out,
++				     &srclen, &destlen);
++		KUNIT_EXPECT_EQ(test, err, 0);
++		KUNIT_EXPECT_EQ(test, srclen, size);
++		compressed_size = destlen;
++
++		/* Decompress */
++		err = ssdfs_decompress(SSDFS_COMPR_LZO, cdata_out, data_decompressed,
++				       compressed_size, size);
++		KUNIT_EXPECT_EQ(test, err, 0);
++
++		/* Verify data integrity */
++		KUNIT_EXPECT_MEMEQ(test, data_in, data_decompressed, size);
++	}
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	kvfree(data_decompressed);
++	ssdfs_lzo_exit();
++}
++
++/*
++ * KUnit test suite definition
++ */
++static struct kunit_case ssdfs_compr_lzo_test_cases[] = {
++	KUNIT_CASE(test_lzo_init_exit),
++	KUNIT_CASE(test_lzo_workspace_alloc_free),
++	KUNIT_CASE(test_lzo_compress_zeros),
++	KUNIT_CASE(test_lzo_compress_ones),
++	KUNIT_CASE(test_lzo_compress_repetitive),
++	KUNIT_CASE(test_lzo_compress_random),
++	KUNIT_CASE(test_lzo_compress_small_buffer),
++	KUNIT_CASE(test_lzo_decompress_valid_data),
++	KUNIT_CASE(test_lzo_decompress_alternating_pattern),
++	KUNIT_CASE(test_lzo_decompress_corrupted_data),
++	KUNIT_CASE(test_lzo_decompress_wrong_size),
++	KUNIT_CASE(test_lzo_multiple_cycles),
++	KUNIT_CASE(test_lzo_different_sizes),
++	{}
++};
++
++static int ssdfs_compr_lzo_test_init(struct kunit *test)
++{
++	/* Initialize compression subsystem */
++	return ssdfs_compressors_init();
++}
++
++static void ssdfs_compr_lzo_test_exit(struct kunit *test)
++{
++	/* Cleanup compression subsystem */
++	ssdfs_compressors_exit();
++}
++
++static struct kunit_suite ssdfs_compr_lzo_test_suite = {
++	.name = "ssdfs-compr-lzo",
++	.init = ssdfs_compr_lzo_test_init,
++	.exit = ssdfs_compr_lzo_test_exit,
++	.test_cases = ssdfs_compr_lzo_test_cases,
++};
++
++kunit_test_suite(ssdfs_compr_lzo_test_suite);
++
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_AUTHOR("Viacheslav Dubeyko <slava@dubeyko.com>");
++MODULE_DESCRIPTION("KUnit tests for SSDFS LZO compression");
++MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
+diff --git a/fs/ssdfs/compr_zlib_test.c b/fs/ssdfs/compr_zlib_test.c
+new file mode 100644
+index 000000000000..21de9833ebf3
+--- /dev/null
++++ b/fs/ssdfs/compr_zlib_test.c
+@@ -0,0 +1,401 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++/*
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/compr_zlib_test.c - KUnit tests for ZLIB compression.
++ *
++ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <kunit/test.h>
++#include <linux/slab.h>
++#include <linux/vmalloc.h>
++#include <linux/random.h>
++#include <linux/zlib.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "compression.h"
++
++/*
++ * Test data patterns
++ */
++static void fill_test_pattern(unsigned char *data, size_t size, int pattern)
++{
++	size_t i;
++
++	switch (pattern) {
++	case 0: /* zeros */
++		memset(data, 0, size);
++		break;
++	case 1: /* ones */
++		memset(data, 0xFF, size);
++		break;
++	case 2: /* alternating bytes */
++		for (i = 0; i < size; i++)
++			data[i] = (i % 2) ? 0xAA : 0x55;
++		break;
++	case 3: /* sequential pattern */
++		for (i = 0; i < size; i++)
++			data[i] = (unsigned char)(i % 256);
++		break;
++	case 4: /* highly compressible */
++		for (i = 0; i < size; i++)
++			data[i] = (unsigned char)(i % 8);
++		break;
++	case 5: /* random data */
++		get_random_bytes(data, size);
++		break;
++	default:
++		memset(data, 0xCC, size);
++		break;
++	}
++}
++
++/*
++ * Test ZLIB initialization and cleanup
++ */
++static void test_zlib_init_exit(struct kunit *test)
++{
++	int err;
++
++	/* Test ZLIB initialization */
++	err = ssdfs_zlib_init();
++	KUNIT_EXPECT_EQ(test, err, 0);
++
++	/* Verify ZLIB compressor is registered */
++	KUNIT_EXPECT_NOT_NULL(test, ssdfs_compressors[SSDFS_COMPR_ZLIB]);
++	if (ssdfs_compressors[SSDFS_COMPR_ZLIB]) {
++		KUNIT_EXPECT_STREQ(test, ssdfs_compressors[SSDFS_COMPR_ZLIB]->name, "zlib");
++		KUNIT_EXPECT_EQ(test, ssdfs_compressors[SSDFS_COMPR_ZLIB]->type, SSDFS_COMPR_ZLIB);
++		KUNIT_EXPECT_NOT_NULL(test, ssdfs_compressors[SSDFS_COMPR_ZLIB]->compr_ops);
++	}
++
++	/* Test ZLIB cleanup */
++	ssdfs_zlib_exit();
++
++	/* Verify ZLIB compressor is unregistered */
++	KUNIT_EXPECT_NULL(test, ssdfs_compressors[SSDFS_COMPR_ZLIB]);
++}
++
++/*
++ * Test ZLIB workspace allocation and deallocation
++ */
++static void test_zlib_workspace_alloc_free(struct kunit *test)
++{
++	struct list_head *workspace;
++	const struct ssdfs_compress_ops *ops;
++	int err;
++
++	/* Initialize ZLIB */
++	err = ssdfs_zlib_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	ops = ssdfs_compressors[SSDFS_COMPR_ZLIB]->compr_ops;
++	KUNIT_ASSERT_NOT_NULL(test, ops);
++	KUNIT_ASSERT_NOT_NULL(test, ops->alloc_workspace);
++	KUNIT_ASSERT_NOT_NULL(test, ops->free_workspace);
++
++	/* Test workspace allocation */
++	workspace = ops->alloc_workspace();
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, workspace);
++
++	/* Test workspace deallocation */
++	if (!IS_ERR_OR_NULL(workspace))
++		ops->free_workspace(workspace);
++
++	/* Cleanup */
++	ssdfs_zlib_exit();
++}
++
++/*
++ * Test ZLIB compression with different data patterns
++ */
++static void test_zlib_compress_zeros(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	/* Initialize ZLIB */
++	err = ssdfs_zlib_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	/* Fill with zeros (highly compressible) */
++	fill_test_pattern(data_in, PAGE_SIZE, 0);
++
++	err = ssdfs_compress(SSDFS_COMPR_ZLIB, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, 0);
++	KUNIT_EXPECT_EQ(test, srclen, PAGE_SIZE);
++	KUNIT_EXPECT_LT(test, destlen, PAGE_SIZE); /* Should compress well */
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	ssdfs_zlib_exit();
++}
++
++static void test_zlib_compress_compressible(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	/* Initialize ZLIB */
++	err = ssdfs_zlib_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	/* Fill with highly compressible pattern */
++	fill_test_pattern(data_in, PAGE_SIZE, 4);
++
++	err = ssdfs_compress(SSDFS_COMPR_ZLIB, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, 0);
++	KUNIT_EXPECT_EQ(test, srclen, PAGE_SIZE);
++	KUNIT_EXPECT_LT(test, destlen, PAGE_SIZE); /* Should compress well */
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	ssdfs_zlib_exit();
++}
++
++static void test_zlib_compress_random(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	/* Initialize ZLIB */
++	err = ssdfs_zlib_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	/* Fill with random data (may not compress well) */
++	fill_test_pattern(data_in, PAGE_SIZE, 5);
++
++	err = ssdfs_compress(SSDFS_COMPR_ZLIB, data_in, cdata_out,
++			     &srclen, &destlen);
++	/* Random data may not compress, so -E2BIG is acceptable */
++	KUNIT_EXPECT_TRUE(test, err == 0 || err == -E2BIG);
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	ssdfs_zlib_exit();
++}
++
++static void test_zlib_compress_small_buffer(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = 16; /* Very small buffer */
++	int err;
++
++	/* Initialize ZLIB */
++	err = ssdfs_zlib_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	fill_test_pattern(data_in, PAGE_SIZE, 1);
++
++	err = ssdfs_compress(SSDFS_COMPR_ZLIB, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, -E2BIG); /* Should fail due to small buffer */
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	ssdfs_zlib_exit();
++}
++
++/*
++ * Test ZLIB decompression
++ */
++static void test_zlib_decompress_valid_data(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out, *data_decompressed;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	size_t compressed_size;
++	int err;
++
++	/* Initialize ZLIB */
++	err = ssdfs_zlib_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_decompressed = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_decompressed);
++
++	/* Fill with compressible data */
++	fill_test_pattern(data_in, PAGE_SIZE, 0);
++
++	/* Compress first */
++	err = ssdfs_compress(SSDFS_COMPR_ZLIB, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_ASSERT_EQ(test, err, 0);
++	compressed_size = destlen;
++
++	/* Now decompress */
++	err = ssdfs_decompress(SSDFS_COMPR_ZLIB, cdata_out, data_decompressed,
++			       compressed_size, PAGE_SIZE);
++	KUNIT_EXPECT_EQ(test, err, 0);
++
++	/* Verify data integrity */
++	KUNIT_EXPECT_MEMEQ(test, data_in, data_decompressed, PAGE_SIZE);
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++	kvfree(data_decompressed);
++	ssdfs_zlib_exit();
++}
++
++static void test_zlib_decompress_corrupted_data(struct kunit *test)
++{
++	unsigned char *cdata_in, *data_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	/* Initialize ZLIB */
++	err = ssdfs_zlib_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	cdata_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_out);
++
++	/* Fill with random data (not valid compressed data) */
++	fill_test_pattern(cdata_in, PAGE_SIZE, 5);
++
++	err = ssdfs_decompress(SSDFS_COMPR_ZLIB, cdata_in, data_out,
++			       srclen, destlen);
++	KUNIT_EXPECT_NE(test, err, 0); /* Should fail */
++
++	kvfree(cdata_in);
++	kvfree(data_out);
++	ssdfs_zlib_exit();
++}
++
++/*
++ * Test multiple compression/decompression cycles
++ */
++static void test_zlib_multiple_cycles(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_tmp, *data_out;
++	size_t srclen, destlen, compressed_size;
++	int err, i;
++
++	/* Initialize ZLIB */
++	err = ssdfs_zlib_init();
++	KUNIT_ASSERT_EQ(test, err, 0);
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_tmp = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_tmp);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_out);
++
++	/* Test multiple patterns */
++	for (i = 0; i < 5; i++) {
++		srclen = PAGE_SIZE;
++		destlen = PAGE_SIZE;
++
++		fill_test_pattern(data_in, PAGE_SIZE, i);
++
++		/* Compress */
++		err = ssdfs_compress(SSDFS_COMPR_ZLIB, data_in, cdata_tmp,
++				     &srclen, &destlen);
++		if (err == -E2BIG)
++			continue; /* Skip non-compressible data */
++
++		KUNIT_EXPECT_EQ(test, err, 0);
++		compressed_size = destlen;
++
++		/* Decompress */
++		err = ssdfs_decompress(SSDFS_COMPR_ZLIB, cdata_tmp, data_out,
++				       compressed_size, PAGE_SIZE);
++		KUNIT_EXPECT_EQ(test, err, 0);
++
++		/* Verify data integrity */
++		KUNIT_EXPECT_MEMEQ(test, data_in, data_out, PAGE_SIZE);
++	}
++
++	kvfree(data_in);
++	kvfree(cdata_tmp);
++	kvfree(data_out);
++	ssdfs_zlib_exit();
++}
++
++/*
++ * KUnit test suite definition
++ */
++static struct kunit_case ssdfs_compr_zlib_test_cases[] = {
++	KUNIT_CASE(test_zlib_init_exit),
++	KUNIT_CASE(test_zlib_workspace_alloc_free),
++	KUNIT_CASE(test_zlib_compress_zeros),
++	KUNIT_CASE(test_zlib_compress_compressible),
++	KUNIT_CASE(test_zlib_compress_random),
++	KUNIT_CASE(test_zlib_compress_small_buffer),
++	KUNIT_CASE(test_zlib_decompress_valid_data),
++	KUNIT_CASE(test_zlib_decompress_corrupted_data),
++	KUNIT_CASE(test_zlib_multiple_cycles),
++	{}
++};
++
++static int ssdfs_compr_zlib_test_init(struct kunit *test)
++{
++	/* Initialize compression subsystem */
++	return ssdfs_compressors_init();
++}
++
++static void ssdfs_compr_zlib_test_exit(struct kunit *test)
++{
++	/* Cleanup compression subsystem */
++	ssdfs_compressors_exit();
++}
++
++static struct kunit_suite ssdfs_compr_zlib_test_suite = {
++	.name = "ssdfs-compr-zlib",
++	.init = ssdfs_compr_zlib_test_init,
++	.exit = ssdfs_compr_zlib_test_exit,
++	.test_cases = ssdfs_compr_zlib_test_cases,
++};
++
++kunit_test_suite(ssdfs_compr_zlib_test_suite);
++
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_AUTHOR("Viacheslav Dubeyko <slava@dubeyko.com>");
++MODULE_DESCRIPTION("KUnit tests for SSDFS ZLIB compression");
++MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
+diff --git a/fs/ssdfs/compression_test.c b/fs/ssdfs/compression_test.c
+new file mode 100644
+index 000000000000..a3c3c7993928
+--- /dev/null
++++ b/fs/ssdfs/compression_test.c
+@@ -0,0 +1,310 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++/*
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/compression_test.c - KUnit tests for compression functionality.
++ *
++ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <kunit/test.h>
++#include <linux/slab.h>
++#include <linux/pagemap.h>
++#include <linux/vmalloc.h>
++#include <linux/random.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "compression.h"
++
++/*
++ * Test data helper functions
++ */
++static void fill_test_data(unsigned char *data, size_t size, int pattern)
++{
++	size_t i;
++
++	switch (pattern) {
++	case 0: /* zeros */
++		memset(data, 0, size);
++		break;
++	case 1: /* repeating pattern */
++		for (i = 0; i < size; i++)
++			data[i] = (unsigned char)(i % 256);
++		break;
++	case 2: /* highly compressible */
++		for (i = 0; i < size; i++)
++			data[i] = (unsigned char)(i % 4);
++		break;
++	case 3: /* random data */
++		get_random_bytes(data, size);
++		break;
++	default:
++		memset(data, 0xAA, size);
++		break;
++	}
++}
++
++static struct page *create_test_page(int pattern)
++{
++	struct page *page;
++	unsigned char *kaddr;
++
++	page = alloc_page(GFP_KERNEL);
++	if (!page)
++		return NULL;
++
++	kaddr = kmap_local_page(page);
++	fill_test_data(kaddr, PAGE_SIZE, pattern);
++	kunmap_local(kaddr);
++
++	return page;
++}
++
++/*
++ * Test cases for compression algorithms registry
++ */
++static void test_register_unregister_compressor(struct kunit *test)
++{
++	struct ssdfs_compressor test_compr = {
++		.type = SSDFS_COMPR_NONE,
++		.name = "test",
++		.compr_ops = NULL,
++	};
++	int err;
++
++	/* Test register */
++	err = ssdfs_register_compressor(&test_compr);
++	KUNIT_EXPECT_EQ(test, err, 0);
++	KUNIT_EXPECT_PTR_EQ(test, ssdfs_compressors[SSDFS_COMPR_NONE], &test_compr);
++
++	/* Test unregister */
++	err = ssdfs_unregister_compressor(&test_compr);
++	KUNIT_EXPECT_EQ(test, err, 0);
++	KUNIT_EXPECT_PTR_EQ(test, ssdfs_compressors[SSDFS_COMPR_NONE], NULL);
++}
++
++/*
++ * Test cases for compression capability checking
++ */
++static void test_can_compress_data_zeros(struct kunit *test)
++{
++	struct page *page;
++	bool result;
++
++	page = create_test_page(0); /* zeros */
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, page);
++
++	result = ssdfs_can_compress_data(page, PAGE_SIZE);
++	KUNIT_EXPECT_TRUE(test, result);
++
++	__free_page(page);
++}
++
++static void test_can_compress_data_compressible(struct kunit *test)
++{
++	struct page *page;
++	bool result;
++
++	page = create_test_page(2); /* highly compressible */
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, page);
++
++	result = ssdfs_can_compress_data(page, PAGE_SIZE);
++	KUNIT_EXPECT_TRUE(test, result);
++
++	__free_page(page);
++}
++
++static void test_can_compress_data_random(struct kunit *test)
++{
++	struct page *page;
++	bool result;
++
++	page = create_test_page(3); /* random data */
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, page);
++
++	result = ssdfs_can_compress_data(page, PAGE_SIZE);
++	KUNIT_EXPECT_FALSE(test, result);
++
++	__free_page(page);
++}
++
++static void test_can_compress_data_invalid_size(struct kunit *test)
++{
++	struct page *page;
++	bool result;
++
++	page = create_test_page(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, page);
++
++	result = ssdfs_can_compress_data(page, 0);
++	KUNIT_EXPECT_TRUE(test, result);
++
++	__free_page(page);
++}
++
++/*
++ * Test cases for NONE compression
++ */
++static void test_none_compress_valid_input(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	fill_test_data(data_in, PAGE_SIZE, 1);
++
++	err = ssdfs_compress(SSDFS_COMPR_NONE, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, 0);
++	KUNIT_EXPECT_EQ(test, srclen, PAGE_SIZE);
++	KUNIT_EXPECT_EQ(test, destlen, PAGE_SIZE);
++	KUNIT_EXPECT_MEMEQ(test, data_in, cdata_out, PAGE_SIZE);
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++}
++
++static void test_none_compress_small_dest_buffer(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE / 2;
++	int err;
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE / 2, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	fill_test_data(data_in, PAGE_SIZE, 1);
++
++	err = ssdfs_compress(SSDFS_COMPR_NONE, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, -E2BIG);
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++}
++
++/*
++ * Test cases for compression/decompression with invalid types
++ */
++static void test_compress_invalid_type(struct kunit *test)
++{
++	unsigned char *data_in, *cdata_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	data_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	cdata_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_out);
++
++	/* Test with invalid compression type */
++	err = ssdfs_compress(SSDFS_COMPR_TYPES_CNT, data_in, cdata_out,
++			     &srclen, &destlen);
++	KUNIT_EXPECT_EQ(test, err, -EOPNOTSUPP);
++
++	kvfree(data_in);
++	kvfree(cdata_out);
++}
++
++static void test_decompress_invalid_type(struct kunit *test)
++{
++	unsigned char *cdata_in, *data_out;
++	size_t srclen = PAGE_SIZE;
++	size_t destlen = PAGE_SIZE;
++	int err;
++
++	cdata_in = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	data_out = kvzalloc(PAGE_SIZE, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, cdata_in);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, data_out);
++
++	/* Test with invalid compression type */
++	err = ssdfs_decompress(SSDFS_COMPR_TYPES_CNT, cdata_in, data_out,
++			       srclen, destlen);
++	KUNIT_EXPECT_EQ(test, err, -EOPNOTSUPP);
++
++	kvfree(cdata_in);
++	kvfree(data_out);
++}
++
++/*
++ * Test cases for compression subsystem initialization
++ */
++static void test_compressors_init_exit(struct kunit *test)
++{
++	int err;
++
++	/* Test initialization */
++	err = ssdfs_compressors_init();
++	KUNIT_EXPECT_EQ(test, err, 0);
++
++	/* Verify that compressors are registered */
++	KUNIT_EXPECT_NOT_NULL(test, ssdfs_compressors[SSDFS_COMPR_NONE]);
++
++	/* Test cleanup */
++	ssdfs_compressors_exit();
++
++	/* After exit, none compressor should be unregistered */
++	KUNIT_EXPECT_NULL(test, ssdfs_compressors[SSDFS_COMPR_NONE]);
++}
++
++/*
++ * KUnit test suite definition
++ */
++static struct kunit_case ssdfs_compression_test_cases[] = {
++	KUNIT_CASE(test_register_unregister_compressor),
++	KUNIT_CASE(test_can_compress_data_zeros),
++	KUNIT_CASE(test_can_compress_data_compressible),
++	KUNIT_CASE(test_can_compress_data_random),
++	KUNIT_CASE(test_can_compress_data_invalid_size),
++	KUNIT_CASE(test_none_compress_valid_input),
++	KUNIT_CASE(test_none_compress_small_dest_buffer),
++	KUNIT_CASE(test_compress_invalid_type),
++	KUNIT_CASE(test_decompress_invalid_type),
++	KUNIT_CASE(test_compressors_init_exit),
++	{}
++};
++
++static int ssdfs_compression_test_init(struct kunit *test)
++{
++	/* Initialize compression subsystem for testing */
++	return ssdfs_compressors_init();
++}
++
++static void ssdfs_compression_test_exit(struct kunit *test)
++{
++	/* Cleanup compression subsystem */
++	ssdfs_compressors_exit();
++}
++
++static struct kunit_suite ssdfs_compression_test_suite = {
++	.name = "ssdfs-compression",
++	.init = ssdfs_compression_test_init,
++	.exit = ssdfs_compression_test_exit,
++	.test_cases = ssdfs_compression_test_cases,
++};
++
++kunit_test_suite(ssdfs_compression_test_suite);
++
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_AUTHOR("Viacheslav Dubeyko <slava@dubeyko.com>");
++MODULE_DESCRIPTION("KUnit tests for SSDFS compression functionality");
++MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
+diff --git a/fs/ssdfs/dynamic_array_test.c b/fs/ssdfs/dynamic_array_test.c
+new file mode 100644
+index 000000000000..1d879bab3a48
+--- /dev/null
++++ b/fs/ssdfs/dynamic_array_test.c
+@@ -0,0 +1,660 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++/*
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/dynamic_array_test.c - KUnit tests for dynamic array implementation.
++ *
++ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <kunit/test.h>
++#include <linux/slab.h>
++#include <linux/pagemap.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "dynamic_array.h"
++
++/*
++ * Test helper structures and functions
++ */
++struct test_item {
++	u32 value1;
++	u32 value2;
++	u64 value3;
++};
++
++#define TEST_PATTERN 0xAB
++#define TEST_CAPACITY 100
++#define SMALL_CAPACITY 10
++#define LARGE_CAPACITY 2000
++
++static void init_test_item(struct test_item *item, u32 index)
++{
++	item->value1 = index;
++	item->value2 = index * 2;
++	item->value3 = index * 3;
++}
++
++static bool verify_test_item(struct test_item *item, u32 index)
++{
++	return (item->value1 == index &&
++		item->value2 == index * 2 &&
++		item->value3 == index * 3);
++}
++
++/*
++ * Test cases for ssdfs_dynamic_array_create()
++ */
++static void test_dynamic_array_create_valid_small(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER, array.state);
++	KUNIT_EXPECT_EQ(test, SMALL_CAPACITY, array.capacity);
++	KUNIT_EXPECT_EQ(test, 0, array.items_count);
++	KUNIT_EXPECT_EQ(test, sizeof(struct test_item), array.item_size);
++	KUNIT_EXPECT_GT(test, array.bytes_count, 0);
++	KUNIT_EXPECT_EQ(test, TEST_PATTERN, array.alloc_pattern);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.buf);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_create_valid_large(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, LARGE_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC, array.state);
++	KUNIT_EXPECT_EQ(test, LARGE_CAPACITY, array.capacity);
++	KUNIT_EXPECT_EQ(test, 0, array.items_count);
++	KUNIT_EXPECT_EQ(test, sizeof(struct test_item), array.item_size);
++	KUNIT_EXPECT_GT(test, array.bytes_count, 0);
++	KUNIT_EXPECT_EQ(test, TEST_PATTERN, array.alloc_pattern);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_create_zero_capacity(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, 0,
++					 sizeof(struct test_item), TEST_PATTERN);
++
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT, array.state);
++}
++
++static void test_dynamic_array_create_zero_item_size(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, TEST_CAPACITY, 0, TEST_PATTERN);
++
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT, array.state);
++}
++
++static void test_dynamic_array_create_large_item_size(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, TEST_CAPACITY,
++					 PAGE_SIZE + 1, TEST_PATTERN);
++
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT, array.state);
++}
++
++/*
++ * Test cases for ssdfs_dynamic_array_destroy()
++ */
++static void test_dynamic_array_destroy_buffer(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++
++	KUNIT_EXPECT_EQ(test, SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT, array.state);
++	KUNIT_EXPECT_EQ(test, 0, array.capacity);
++	KUNIT_EXPECT_EQ(test, 0, array.items_count);
++	KUNIT_EXPECT_EQ(test, 0, array.item_size);
++	KUNIT_EXPECT_EQ(test, 0, array.bytes_count);
++}
++
++static void test_dynamic_array_destroy_folio_vec(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, LARGE_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++
++	KUNIT_EXPECT_EQ(test, SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT, array.state);
++	KUNIT_EXPECT_EQ(test, 0, array.capacity);
++	KUNIT_EXPECT_EQ(test, 0, array.items_count);
++	KUNIT_EXPECT_EQ(test, 0, array.item_size);
++	KUNIT_EXPECT_EQ(test, 0, array.bytes_count);
++}
++
++/*
++ * Test cases for ssdfs_dynamic_array_get_locked() and ssdfs_dynamic_array_release()
++ */
++static void test_dynamic_array_get_release_buffer(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item *item;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	item = ssdfs_dynamic_array_get_locked(&array, 0);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, item);
++	KUNIT_EXPECT_EQ(test, 1, array.items_count);
++
++	/* Test release for buffer storage (should be no-op) */
++	err = ssdfs_dynamic_array_release(&array, 0, item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_get_release_folio_vec(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item *item;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, LARGE_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	item = ssdfs_dynamic_array_get_locked(&array, 0);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, item);
++	KUNIT_EXPECT_EQ(test, 1, array.items_count);
++
++	err = ssdfs_dynamic_array_release(&array, 0, item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_get_out_of_range(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item *item;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	item = ssdfs_dynamic_array_get_locked(&array, SMALL_CAPACITY);
++	KUNIT_EXPECT_TRUE(test, IS_ERR(item));
++	KUNIT_EXPECT_EQ(test, -ERANGE, PTR_ERR(item));
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_dynamic_array_set()
++ */
++static void test_dynamic_array_set_buffer(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item, *retrieved_item;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	init_test_item(&item, 5);
++
++	err = ssdfs_dynamic_array_set(&array, 5, &item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 6, array.items_count);
++
++	retrieved_item = ssdfs_dynamic_array_get_locked(&array, 5);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, retrieved_item);
++	KUNIT_EXPECT_TRUE(test, verify_test_item(retrieved_item, 5));
++
++	err = ssdfs_dynamic_array_release(&array, 5, retrieved_item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_set_folio_vec(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item, *retrieved_item;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, LARGE_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	init_test_item(&item, 100);
++
++	err = ssdfs_dynamic_array_set(&array, 100, &item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 101, array.items_count);
++
++	retrieved_item = ssdfs_dynamic_array_get_locked(&array, 100);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, retrieved_item);
++	KUNIT_EXPECT_TRUE(test, verify_test_item(retrieved_item, 100));
++
++	err = ssdfs_dynamic_array_release(&array, 100, retrieved_item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_set_out_of_range(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	init_test_item(&item, 0);
++
++	err = ssdfs_dynamic_array_set(&array, SMALL_CAPACITY, &item);
++	KUNIT_EXPECT_EQ(test, -ERANGE, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_dynamic_array_get_content_locked()
++ */
++static void test_dynamic_array_get_content_locked_buffer(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item, *content;
++	u32 items_count;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Set some items */
++	for (int i = 0; i < 5; i++) {
++		init_test_item(&item, i);
++		err = ssdfs_dynamic_array_set(&array, i, &item);
++		KUNIT_ASSERT_EQ(test, 0, err);
++	}
++
++	content = ssdfs_dynamic_array_get_content_locked(&array, 2, &items_count);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, content);
++	KUNIT_EXPECT_EQ(test, 3, items_count); /* items from index 2 to end */
++	KUNIT_EXPECT_TRUE(test, verify_test_item(&content[0], 2));
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_get_content_locked_folio_vec(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item, *content;
++	u32 items_count;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, LARGE_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Set some items across folio boundaries */
++	for (int i = 0; i < 300; i++) {
++		init_test_item(&item, i);
++		err = ssdfs_dynamic_array_set(&array, i, &item);
++		KUNIT_ASSERT_EQ(test, 0, err);
++	}
++
++	content = ssdfs_dynamic_array_get_content_locked(&array, 100, &items_count);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, content);
++	KUNIT_EXPECT_GT(test, items_count, 0);
++	KUNIT_EXPECT_TRUE(test, verify_test_item(&content[0], 100));
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_dynamic_array_copy_content()
++ */
++static void test_dynamic_array_copy_content_buffer(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item, *copy_buf;
++	size_t buf_size;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Set some items */
++	for (int i = 0; i < 5; i++) {
++		init_test_item(&item, i);
++		err = ssdfs_dynamic_array_set(&array, i, &item);
++		KUNIT_ASSERT_EQ(test, 0, err);
++	}
++
++	buf_size = 5 * sizeof(struct test_item);
++	copy_buf = kzalloc(buf_size, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, copy_buf);
++
++	err = ssdfs_dynamic_array_copy_content(&array, copy_buf, buf_size);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify copied content */
++	for (int i = 0; i < 5; i++) {
++		KUNIT_EXPECT_TRUE(test, verify_test_item(&copy_buf[i], i));
++	}
++
++	kfree(copy_buf);
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_copy_content_folio_vec(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item, *copy_buf;
++	size_t buf_size;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, LARGE_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Set some items */
++	for (int i = 0; i < 10; i++) {
++		init_test_item(&item, i);
++		err = ssdfs_dynamic_array_set(&array, i, &item);
++		KUNIT_ASSERT_EQ(test, 0, err);
++	}
++
++	buf_size = 10 * sizeof(struct test_item);
++	copy_buf = kzalloc(buf_size, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, copy_buf);
++
++	err = ssdfs_dynamic_array_copy_content(&array, copy_buf, buf_size);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify copied content */
++	for (int i = 0; i < 10; i++) {
++		KUNIT_EXPECT_TRUE(test, verify_test_item(&copy_buf[i], i));
++	}
++
++	kfree(copy_buf);
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_dynamic_array_shift_content_right()
++ */
++static void test_dynamic_array_shift_content_right_buffer(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item, *retrieved_item;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Set some items */
++	for (int i = 0; i < 5; i++) {
++		init_test_item(&item, i);
++		err = ssdfs_dynamic_array_set(&array, i, &item);
++		KUNIT_ASSERT_EQ(test, 0, err);
++	}
++
++	/* Shift content right by 2 positions starting from index 2 */
++	err = ssdfs_dynamic_array_shift_content_right(&array, 2, 2);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 7, array.items_count);
++
++	/* Verify shifted content */
++	retrieved_item = ssdfs_dynamic_array_get_locked(&array, 4);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, retrieved_item);
++	KUNIT_EXPECT_TRUE(test, verify_test_item(retrieved_item, 2));
++	err = ssdfs_dynamic_array_release(&array, 4, retrieved_item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	retrieved_item = ssdfs_dynamic_array_get_locked(&array, 6);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, retrieved_item);
++	KUNIT_EXPECT_TRUE(test, verify_test_item(retrieved_item, 4));
++	err = ssdfs_dynamic_array_release(&array, 6, retrieved_item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_shift_content_right_folio_vec(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item, *retrieved_item;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, LARGE_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Set some items across folio boundaries */
++	for (int i = 0; i < 10; i++) {
++		init_test_item(&item, i);
++		err = ssdfs_dynamic_array_set(&array, i, &item);
++		KUNIT_ASSERT_EQ(test, 0, err);
++	}
++
++	/* Shift content right by 3 positions starting from index 3 */
++	err = ssdfs_dynamic_array_shift_content_right(&array, 3, 3);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 13, array.items_count);
++
++	/* Verify shifted content */
++	retrieved_item = ssdfs_dynamic_array_get_locked(&array, 6);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, retrieved_item);
++	KUNIT_EXPECT_TRUE(test, verify_test_item(retrieved_item, 3));
++	err = ssdfs_dynamic_array_release(&array, 6, retrieved_item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_shift_out_of_capacity(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Fill array to capacity */
++	for (int i = 0; i < SMALL_CAPACITY; i++) {
++		init_test_item(&item, i);
++		err = ssdfs_dynamic_array_set(&array, i, &item);
++		KUNIT_ASSERT_EQ(test, 0, err);
++	}
++
++	/* Try to shift with shift value that would exceed capacity */
++	err = ssdfs_dynamic_array_shift_content_right(&array, 5, 10);
++	KUNIT_EXPECT_EQ(test, -ERANGE, err);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++/*
++ * Test cases for inline functions
++ */
++static void test_dynamic_array_allocated_bytes(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_EQ(test, array.bytes_count,
++			ssdfs_dynamic_array_allocated_bytes(&array));
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static void test_dynamic_array_items_count(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	int err;
++
++	err = ssdfs_dynamic_array_create(&array, SMALL_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_GT(test, ssdfs_dynamic_array_items_count(&array), 0);
++
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++/*
++ * Complex integration test cases
++ */
++static void test_dynamic_array_complex_operations(struct kunit *test)
++{
++	struct ssdfs_dynamic_array array;
++	struct test_item item, *retrieved_item, *copy_buf;
++	size_t buf_size;
++	int err;
++
++	/* Create array */
++	err = ssdfs_dynamic_array_create(&array, TEST_CAPACITY,
++					 sizeof(struct test_item), TEST_PATTERN);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Set some initial items */
++	for (int i = 0; i < 10; i++) {
++		init_test_item(&item, i);
++		err = ssdfs_dynamic_array_set(&array, i, &item);
++		KUNIT_ASSERT_EQ(test, 0, err);
++	}
++
++	/* Shift content to make room for insertion */
++	err = ssdfs_dynamic_array_shift_content_right(&array, 5, 2);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Insert new items in the gap */
++	init_test_item(&item, 100);
++	err = ssdfs_dynamic_array_set(&array, 5, &item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	init_test_item(&item, 101);
++	err = ssdfs_dynamic_array_set(&array, 6, &item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify the complex structure */
++	retrieved_item = ssdfs_dynamic_array_get_locked(&array, 5);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, retrieved_item);
++	KUNIT_EXPECT_TRUE(test, verify_test_item(retrieved_item, 100));
++	err = ssdfs_dynamic_array_release(&array, 5, retrieved_item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	retrieved_item = ssdfs_dynamic_array_get_locked(&array, 7);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, retrieved_item);
++	KUNIT_EXPECT_TRUE(test, verify_test_item(retrieved_item, 5));
++	err = ssdfs_dynamic_array_release(&array, 7, retrieved_item);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Copy the entire content */
++	buf_size = array.items_count * sizeof(struct test_item);
++	copy_buf = kzalloc(buf_size, GFP_KERNEL);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, copy_buf);
++
++	err = ssdfs_dynamic_array_copy_content(&array, copy_buf, buf_size);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Verify some key positions in the copy */
++	KUNIT_EXPECT_TRUE(test, verify_test_item(&copy_buf[5], 100));
++	KUNIT_EXPECT_TRUE(test, verify_test_item(&copy_buf[6], 101));
++	KUNIT_EXPECT_TRUE(test, verify_test_item(&copy_buf[7], 5));
++
++	kfree(copy_buf);
++	ssdfs_dynamic_array_destroy(&array);
++}
++
++static struct kunit_case dynamic_array_test_cases[] = {
++	KUNIT_CASE(test_dynamic_array_create_valid_small),
++	KUNIT_CASE(test_dynamic_array_create_valid_large),
++	KUNIT_CASE(test_dynamic_array_create_zero_capacity),
++	KUNIT_CASE(test_dynamic_array_create_zero_item_size),
++	KUNIT_CASE(test_dynamic_array_create_large_item_size),
++	KUNIT_CASE(test_dynamic_array_destroy_buffer),
++	KUNIT_CASE(test_dynamic_array_destroy_folio_vec),
++	KUNIT_CASE(test_dynamic_array_get_release_buffer),
++	KUNIT_CASE(test_dynamic_array_get_release_folio_vec),
++	KUNIT_CASE(test_dynamic_array_get_out_of_range),
++	KUNIT_CASE(test_dynamic_array_set_buffer),
++	KUNIT_CASE(test_dynamic_array_set_folio_vec),
++	KUNIT_CASE(test_dynamic_array_set_out_of_range),
++	KUNIT_CASE(test_dynamic_array_get_content_locked_buffer),
++	KUNIT_CASE(test_dynamic_array_get_content_locked_folio_vec),
++	KUNIT_CASE(test_dynamic_array_copy_content_buffer),
++	KUNIT_CASE(test_dynamic_array_copy_content_folio_vec),
++	KUNIT_CASE(test_dynamic_array_shift_content_right_buffer),
++	KUNIT_CASE(test_dynamic_array_shift_content_right_folio_vec),
++	KUNIT_CASE(test_dynamic_array_shift_out_of_capacity),
++	KUNIT_CASE(test_dynamic_array_allocated_bytes),
++	KUNIT_CASE(test_dynamic_array_items_count),
++	KUNIT_CASE(test_dynamic_array_complex_operations),
++	{}
++};
++
++static struct kunit_suite dynamic_array_test_suite = {
++	.name = "ssdfs_dynamic_array",
++	.test_cases = dynamic_array_test_cases,
++};
++
++kunit_test_suites(&dynamic_array_test_suite);
++
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_AUTHOR("Viacheslav Dubeyko <slava@dubeyko.com>");
++MODULE_DESCRIPTION("KUnit tests for SSDFS dynamic array");
++MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
+diff --git a/fs/ssdfs/folio_array_test.c b/fs/ssdfs/folio_array_test.c
+new file mode 100644
+index 000000000000..90f3bcc571ea
+--- /dev/null
++++ b/fs/ssdfs/folio_array_test.c
+@@ -0,0 +1,1107 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++/*
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/folio_array_test.c - KUnit tests for folio array implementation.
++ *
++ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <kunit/test.h>
++#include <linux/slab.h>
++#include <linux/pagemap.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "folio_array.h"
++
++/*
++ * Test helper functions
++ */
++static struct folio *test_alloc_folio(unsigned int order)
++{
++	struct folio *folio;
++
++	folio = folio_alloc(GFP_KERNEL, order);
++	if (folio)
++		folio_get(folio);
++
++	return folio;
++}
++
++static void test_free_folio(struct folio *folio)
++{
++	if (folio) {
++		folio_put(folio);
++		folio_put(folio);
++	}
++}
++
++/*
++ * Test cases for ssdfs_create_folio_array()
++ */
++static void test_create_folio_array_valid_params(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 10);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_CREATED, atomic_read(&array.state));
++	KUNIT_EXPECT_EQ(test, 10, atomic_read(&array.folios_capacity));
++	KUNIT_EXPECT_EQ(test, 0, array.folios_count);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO, array.last_folio);
++	KUNIT_EXPECT_EQ(test, 0, array.order);
++	KUNIT_EXPECT_EQ(test, PAGE_SIZE, array.folio_size);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_create_folio_array_zero_capacity(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 0);
++
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_UNKNOWN_STATE, atomic_read(&array.state));
++}
++
++static void test_create_folio_array_large_capacity(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++	int capacity = 1000;
++
++	err = ssdfs_create_folio_array(&array, 2, capacity);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_CREATED, atomic_read(&array.state));
++	KUNIT_EXPECT_EQ(test, capacity, atomic_read(&array.folios_capacity));
++	KUNIT_EXPECT_EQ(test, 2, array.order);
++	KUNIT_EXPECT_EQ(test, PAGE_SIZE << 2, array.folio_size);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_destroy_folio_array()
++ */
++static void test_destroy_folio_array_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	ssdfs_destroy_folio_array(&array);
++
++	KUNIT_EXPECT_EQ(test, 0, atomic_read(&array.folios_capacity));
++	KUNIT_EXPECT_EQ(test, 0, array.folios_count);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO, array.last_folio);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios);
++}
++
++/*
++ * Test cases for ssdfs_reinit_folio_array()
++ */
++static void test_reinit_folio_array_expand(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++	int original_capacity = 5;
++	int new_capacity = 20;
++
++	err = ssdfs_create_folio_array(&array, 0, original_capacity);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_reinit_folio_array(new_capacity, &array);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, new_capacity, atomic_read(&array.folios_capacity));
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_reinit_folio_array_shrink(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++	int original_capacity = 20;
++	int new_capacity = 5;
++
++	err = ssdfs_create_folio_array(&array, 0, original_capacity);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_reinit_folio_array(new_capacity, &array);
++
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++	KUNIT_EXPECT_EQ(test, original_capacity, atomic_read(&array.folios_capacity));
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_reinit_folio_array_same_capacity(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++	int capacity = 10;
++
++	err = ssdfs_create_folio_array(&array, 0, capacity);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_reinit_folio_array(capacity, &array);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, capacity, atomic_read(&array.folios_capacity));
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for is_ssdfs_folio_array_empty()
++ */
++static void test_is_folio_array_empty_new_array(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_TRUE(test, is_ssdfs_folio_array_empty(&array));
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_is_folio_array_empty_with_folios(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_FALSE(test, is_ssdfs_folio_array_empty(&array));
++
++	test_free_folio(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_get_last_folio_index()
++ */
++static void test_get_last_folio_index_empty(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	unsigned long last_index;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	last_index = ssdfs_folio_array_get_last_folio_index(&array);
++
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO, last_index);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_get_last_folio_index_with_folios(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio;
++	unsigned long last_index;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 10);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	last_index = ssdfs_folio_array_get_last_folio_index(&array);
++
++	KUNIT_EXPECT_EQ(test, 5, last_index);
++
++	test_free_folio(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_add_folio()
++ */
++static void test_add_folio_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 2);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 1, array.folios_count);
++	KUNIT_EXPECT_EQ(test, 2, array.last_folio);
++	KUNIT_EXPECT_PTR_EQ(test, folio, array.folios[2]);
++
++	test_free_folio(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_add_folio_duplicate(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio1, *folio2;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio1 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++
++	folio2 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++
++	err = ssdfs_folio_array_add_folio(&array, folio1, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_add_folio(&array, folio2, 0);
++
++	KUNIT_EXPECT_EQ(test, -EEXIST, err);
++
++	test_free_folio(folio1);
++	test_free_folio(folio2);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_add_folio_out_of_range(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 10);
++
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	test_free_folio(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_allocate_folio_locked()
++ */
++static void test_allocate_folio_locked_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = ssdfs_folio_array_allocate_folio_locked(&array, 1);
++
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, folio);
++	KUNIT_EXPECT_EQ(test, 1, array.folios_count);
++	KUNIT_EXPECT_EQ(test, 1, array.last_folio);
++	KUNIT_EXPECT_PTR_EQ(test, folio, array.folios[1]);
++	KUNIT_EXPECT_TRUE(test, folio_test_locked(folio));
++
++	ssdfs_folio_unlock(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_allocate_folio_locked_duplicate(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio1, *folio2;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio1 = ssdfs_folio_array_allocate_folio_locked(&array, 2);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++
++	folio2 = ssdfs_folio_array_allocate_folio_locked(&array, 2);
++
++	KUNIT_EXPECT_TRUE(test, IS_ERR(folio2));
++	KUNIT_EXPECT_EQ(test, -EEXIST, PTR_ERR(folio2));
++
++	ssdfs_folio_unlock(folio1);
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_get_folio()
++ */
++static void test_get_folio_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio, *retrieved_folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 3);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	retrieved_folio = ssdfs_folio_array_get_folio(&array, 3);
++
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, retrieved_folio);
++	KUNIT_EXPECT_PTR_EQ(test, folio, retrieved_folio);
++
++	ssdfs_folio_put(retrieved_folio);
++	test_free_folio(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_get_folio_not_allocated(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = ssdfs_folio_array_get_folio(&array, 2);
++
++	KUNIT_EXPECT_TRUE(test, IS_ERR(folio));
++	KUNIT_EXPECT_EQ(test, -ENOENT, PTR_ERR(folio));
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_get_folio_out_of_range(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = ssdfs_folio_array_get_folio(&array, 10);
++
++	KUNIT_EXPECT_TRUE(test, IS_ERR(folio));
++	KUNIT_EXPECT_EQ(test, -EINVAL, PTR_ERR(folio));
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_get_folio_locked()
++ */
++static void test_get_folio_locked_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio, *locked_folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 1);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	locked_folio = ssdfs_folio_array_get_folio_locked(&array, 1);
++
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, locked_folio);
++	KUNIT_EXPECT_PTR_EQ(test, folio, locked_folio);
++	KUNIT_EXPECT_TRUE(test, folio_test_locked(locked_folio));
++
++	ssdfs_folio_unlock(locked_folio);
++	ssdfs_folio_put(locked_folio);
++	test_free_folio(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_grab_folio()
++ */
++static void test_grab_folio_existing(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio, *grabbed_folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	grabbed_folio = ssdfs_folio_array_grab_folio(&array, 0);
++
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, grabbed_folio);
++	KUNIT_EXPECT_PTR_EQ(test, folio, grabbed_folio);
++	KUNIT_EXPECT_TRUE(test, folio_test_locked(grabbed_folio));
++
++	ssdfs_folio_unlock(grabbed_folio);
++	ssdfs_folio_put(grabbed_folio);
++	test_free_folio(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_grab_folio_new(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *grabbed_folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	grabbed_folio = ssdfs_folio_array_grab_folio(&array, 2);
++
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, grabbed_folio);
++	KUNIT_EXPECT_EQ(test, 1, array.folios_count);
++	KUNIT_EXPECT_EQ(test, 2, array.last_folio);
++	KUNIT_EXPECT_PTR_EQ(test, grabbed_folio, array.folios[2]);
++	KUNIT_EXPECT_TRUE(test, folio_test_locked(grabbed_folio));
++
++	ssdfs_folio_unlock(grabbed_folio);
++	ssdfs_folio_put(grabbed_folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_set_folio_dirty()
++ */
++static void test_set_folio_dirty_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 1);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_set_folio_dirty(&array, 1);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_DIRTY, atomic_read(&array.state));
++	KUNIT_EXPECT_TRUE(test, folio_test_dirty(folio));
++
++	err = ssdfs_folio_array_clear_dirty_folio(&array, 1);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	test_free_folio(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_set_folio_dirty_not_allocated(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_set_folio_dirty(&array, 3);
++
++	KUNIT_EXPECT_EQ(test, -ENOENT, err);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_clear_dirty_folio()
++ */
++static void test_clear_dirty_folio_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 1);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_set_folio_dirty(&array, 1);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_clear_dirty_folio(&array, 1);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_CREATED, atomic_read(&array.state));
++	KUNIT_EXPECT_FALSE(test, folio_test_dirty(folio));
++
++	test_free_folio(folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_clear_dirty_range()
++ */
++static void test_clear_dirty_range_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio1, *folio2, *folio3;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 10);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio1 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++	folio2 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++	folio3 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio3);
++
++	err = ssdfs_folio_array_add_folio(&array, folio1, 1);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_add_folio(&array, folio2, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_add_folio(&array, folio3, 3);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_set_folio_dirty(&array, 1);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_set_folio_dirty(&array, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_set_folio_dirty(&array, 3);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_clear_dirty_range(&array, 1, 2);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_FALSE(test, folio_test_dirty(folio1));
++	KUNIT_EXPECT_FALSE(test, folio_test_dirty(folio2));
++	KUNIT_EXPECT_TRUE(test, folio_test_dirty(folio3));
++
++	err = ssdfs_folio_array_clear_dirty_folio(&array, 3);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_FALSE(test, folio_test_dirty(folio3));
++
++	test_free_folio(folio1);
++	test_free_folio(folio2);
++	test_free_folio(folio3);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_clear_dirty_range_invalid_range(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_clear_dirty_range(&array, 3, 1);
++
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_clear_all_dirty_folios()
++ */
++static void test_clear_all_dirty_folios_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio1, *folio2;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio1 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++	folio2 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++
++	err = ssdfs_folio_array_add_folio(&array, folio1, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_add_folio(&array, folio2, 1);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_set_folio_dirty(&array, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_set_folio_dirty(&array, 1);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_clear_all_dirty_folios(&array);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_CREATED, atomic_read(&array.state));
++	KUNIT_EXPECT_FALSE(test, folio_test_dirty(folio1));
++	KUNIT_EXPECT_FALSE(test, folio_test_dirty(folio2));
++
++	test_free_folio(folio1);
++	test_free_folio(folio2);
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_lookup_range()
++ */
++static void test_lookup_range_dirty_folios(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio1, *folio2;
++	struct folio_batch batch;
++	unsigned long start = 0;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 10);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio1 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++	folio2 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++
++	err = ssdfs_folio_array_add_folio(&array, folio1, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_add_folio(&array, folio2, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_set_folio_dirty(&array, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_set_folio_dirty(&array, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio_batch_init(&batch);
++
++	err = ssdfs_folio_array_lookup_range(&array, &start, 9,
++					     SSDFS_DIRTY_FOLIO_TAG, 10, &batch);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 2, folio_batch_count(&batch));
++	KUNIT_EXPECT_PTR_EQ(test, folio1, batch.folios[0]);
++	KUNIT_EXPECT_PTR_EQ(test, folio2, batch.folios[1]);
++
++	err = ssdfs_folio_array_clear_dirty_folio(&array, 2);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_FALSE(test, folio_test_dirty(folio1));
++
++	err = ssdfs_folio_array_clear_dirty_folio(&array, 5);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_FALSE(test, folio_test_dirty(folio2));
++
++	ssdfs_folio_batch_release(&batch);
++	test_free_folio(folio1);
++	test_free_folio(folio2);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_lookup_range_no_dirty_folios(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio_batch batch;
++	unsigned long start = 0;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio_batch_init(&batch);
++
++	err = ssdfs_folio_array_lookup_range(&array, &start, 4,
++					     SSDFS_DIRTY_FOLIO_TAG, 10, &batch);
++
++	KUNIT_EXPECT_EQ(test, -ENOENT, err);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_delete_folio()
++ */
++static void test_delete_folio_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio, *deleted_folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_array_add_folio(&array, folio, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	deleted_folio = ssdfs_folio_array_delete_folio(&array, 2);
++
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, deleted_folio);
++	KUNIT_EXPECT_PTR_EQ(test, folio, deleted_folio);
++	KUNIT_EXPECT_EQ(test, 0, array.folios_count);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO, array.last_folio);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[2]);
++
++	ssdfs_folio_free(deleted_folio);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_delete_folio_not_allocated(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *deleted_folio;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	deleted_folio = ssdfs_folio_array_delete_folio(&array, 3);
++
++	KUNIT_EXPECT_TRUE(test, IS_ERR(deleted_folio));
++	KUNIT_EXPECT_EQ(test, -ENOENT, PTR_ERR(deleted_folio));
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_release_folios()
++ */
++static void test_release_folios_valid_range(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio1, *folio2, *folio3;
++	unsigned long start = 1;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 10);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio1 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++	folio2 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++	folio3 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio3);
++
++	err = ssdfs_folio_array_add_folio(&array, folio1, 1);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_add_folio(&array, folio2, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_add_folio(&array, folio3, 4);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_release_folios(&array, &start, 2);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 1, array.folios_count);
++	KUNIT_EXPECT_EQ(test, 4, array.last_folio);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[1]);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[2]);
++	KUNIT_EXPECT_PTR_EQ(test, folio3, array.folios[4]);
++
++	test_free_folio(folio3);
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_release_folios_invalid_range(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	unsigned long start = 5;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_release_folios(&array, &start, 2);
++
++	KUNIT_EXPECT_EQ(test, -EINVAL, err);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_release_all_folios()
++ */
++static void test_release_all_folios_valid(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio1, *folio2;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio1 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++	folio2 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++
++	err = ssdfs_folio_array_add_folio(&array, folio1, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_add_folio(&array, folio2, 3);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	err = ssdfs_folio_array_release_all_folios(&array);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 0, array.folios_count);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO, array.last_folio);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[0]);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[3]);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_array_get_folios_count()
++ */
++static void test_get_folios_count_empty(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	unsigned long count;
++	int err;
++
++	err = ssdfs_create_folio_array(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	count = ssdfs_folio_array_get_folios_count(&array);
++
++	KUNIT_EXPECT_EQ(test, 0, count);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++static void test_get_folios_count_with_folios(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio1, *folio2;
++	unsigned long count;
++	int err;
++
++	/* Create a simple test that matches the working pattern */
++	err = ssdfs_create_folio_array(&array, 0, 10);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio1 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++	folio2 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++
++	/* Use same indices as the working test_release_all_folios_valid */
++	err = ssdfs_folio_array_add_folio(&array, folio1, 0);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_add_folio(&array, folio2, 3);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	count = ssdfs_folio_array_get_folios_count(&array);
++	KUNIT_EXPECT_EQ(test, 2, count);
++
++	err = ssdfs_folio_array_release_all_folios(&array);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 0, array.folios_count);
++
++	ssdfs_destroy_folio_array(&array);
++}
++
++/*
++ * Complex integration test cases
++ */
++static void test_folio_array_complex_operations(struct kunit *test)
++{
++	struct ssdfs_folio_array array;
++	struct folio *folio1, *folio2, *folio3;
++	struct folio *grabbed_folio, *deleted_folio;
++	struct folio_batch batch;
++	unsigned long start = 0;
++	int err;
++
++	/* Create array */
++	err = ssdfs_create_folio_array(&array, 0, 20);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test initial state */
++	KUNIT_EXPECT_TRUE(test, is_ssdfs_folio_array_empty(&array));
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_folio_array_get_folios_count(&array));
++
++	/* Add some folios */
++	folio1 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++	folio2 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++
++	err = ssdfs_folio_array_add_folio(&array, folio1, 3);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_add_folio(&array, folio2, 7);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Grab a new folio */
++	grabbed_folio = ssdfs_folio_array_grab_folio(&array, 10);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, grabbed_folio);
++
++	/* Check state after additions */
++	KUNIT_EXPECT_FALSE(test, is_ssdfs_folio_array_empty(&array));
++	KUNIT_EXPECT_EQ(test, 3, ssdfs_folio_array_get_folios_count(&array));
++	KUNIT_EXPECT_EQ(test, 10, ssdfs_folio_array_get_last_folio_index(&array));
++
++	ssdfs_folio_unlock(grabbed_folio);
++
++	/* Set some folios dirty */
++	err = ssdfs_folio_array_set_folio_dirty(&array, 3);
++	KUNIT_ASSERT_EQ(test, 0, err);
++	err = ssdfs_folio_array_set_folio_dirty(&array, 10);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_DIRTY, atomic_read(&array.state));
++
++	/* Lookup dirty folios */
++	folio_batch_init(&batch);
++	err = ssdfs_folio_array_lookup_range(&array, &start, 19,
++					     SSDFS_DIRTY_FOLIO_TAG, 10, &batch);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 2, folio_batch_count(&batch));
++
++	/* Clear one dirty folio */
++	err = ssdfs_folio_array_clear_dirty_folio(&array, 3);
++	KUNIT_EXPECT_EQ(test, 0, err);
++
++	/* Delete a folio */
++	deleted_folio = ssdfs_folio_array_delete_folio(&array, 7);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, deleted_folio);
++	KUNIT_EXPECT_PTR_EQ(test, folio2, deleted_folio);
++
++	ssdfs_folio_put(deleted_folio);
++	ssdfs_folio_free(deleted_folio);
++
++	/* Expand array capacity */
++	err = ssdfs_reinit_folio_array(50, &array);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 50, atomic_read(&array.folios_capacity));
++
++	/* Add one more folio after expansion */
++	folio3 = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio3);
++	err = ssdfs_folio_array_add_folio(&array, folio3, 25);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Clear all dirty folios */
++	err = ssdfs_folio_array_clear_all_dirty_folios(&array);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_CREATED, atomic_read(&array.state));
++
++	/* Release all remaining folios */
++	err = ssdfs_folio_array_release_all_folios(&array);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_TRUE(test, is_ssdfs_folio_array_empty(&array));
++
++	/* Cleanup */
++	ssdfs_destroy_folio_array(&array);
++}
++
++static struct kunit_case folio_array_test_cases[] = {
++	KUNIT_CASE(test_create_folio_array_valid_params),
++	KUNIT_CASE(test_create_folio_array_zero_capacity),
++	KUNIT_CASE(test_create_folio_array_large_capacity),
++	KUNIT_CASE(test_destroy_folio_array_valid),
++	KUNIT_CASE(test_reinit_folio_array_expand),
++	KUNIT_CASE(test_reinit_folio_array_shrink),
++	KUNIT_CASE(test_reinit_folio_array_same_capacity),
++	KUNIT_CASE(test_is_folio_array_empty_new_array),
++	KUNIT_CASE(test_is_folio_array_empty_with_folios),
++	KUNIT_CASE(test_get_last_folio_index_empty),
++	KUNIT_CASE(test_get_last_folio_index_with_folios),
++	KUNIT_CASE(test_add_folio_valid),
++	KUNIT_CASE(test_add_folio_duplicate),
++	KUNIT_CASE(test_add_folio_out_of_range),
++	KUNIT_CASE(test_allocate_folio_locked_valid),
++	KUNIT_CASE(test_allocate_folio_locked_duplicate),
++	KUNIT_CASE(test_get_folio_valid),
++	KUNIT_CASE(test_get_folio_not_allocated),
++	KUNIT_CASE(test_get_folio_out_of_range),
++	KUNIT_CASE(test_get_folio_locked_valid),
++	KUNIT_CASE(test_grab_folio_existing),
++	KUNIT_CASE(test_grab_folio_new),
++	KUNIT_CASE(test_set_folio_dirty_valid),
++	KUNIT_CASE(test_set_folio_dirty_not_allocated),
++	KUNIT_CASE(test_clear_dirty_folio_valid),
++	KUNIT_CASE(test_clear_dirty_range_valid),
++	KUNIT_CASE(test_clear_dirty_range_invalid_range),
++	KUNIT_CASE(test_clear_all_dirty_folios_valid),
++	KUNIT_CASE(test_lookup_range_dirty_folios),
++	KUNIT_CASE(test_lookup_range_no_dirty_folios),
++	KUNIT_CASE(test_delete_folio_valid),
++	KUNIT_CASE(test_delete_folio_not_allocated),
++	KUNIT_CASE(test_release_folios_valid_range),
++	KUNIT_CASE(test_release_folios_invalid_range),
++	KUNIT_CASE(test_release_all_folios_valid),
++	KUNIT_CASE(test_get_folios_count_empty),
++	KUNIT_CASE(test_get_folios_count_with_folios),
++	KUNIT_CASE(test_folio_array_complex_operations),
++	{}
++};
++
++static struct kunit_suite folio_array_test_suite = {
++	.name = "ssdfs_folio_array",
++	.test_cases = folio_array_test_cases,
++};
++
++kunit_test_suites(&folio_array_test_suite);
++
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_AUTHOR("Viacheslav Dubeyko <slava@dubeyko.com>");
++MODULE_DESCRIPTION("KUnit tests for SSDFS folio array");
++MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
+diff --git a/fs/ssdfs/folio_vector_test.c b/fs/ssdfs/folio_vector_test.c
+new file mode 100644
+index 000000000000..b12fa7464e74
+--- /dev/null
++++ b/fs/ssdfs/folio_vector_test.c
+@@ -0,0 +1,495 @@
++// SPDX-License-Identifier: BSD-3-Clause-Clear
++/*
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/folio_vector_test.c - KUnit tests for folio vector implementation.
++ *
++ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <kunit/test.h>
++#include <linux/slab.h>
++#include <linux/pagemap.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++
++/*
++ * Test helper functions
++ */
++static struct folio *test_alloc_folio(unsigned int order)
++{
++	struct folio *folio;
++
++	folio = folio_alloc(GFP_KERNEL, order);
++	if (folio)
++		folio_get(folio);
++
++	return folio;
++}
++
++static void test_free_folio(struct folio *folio)
++{
++	if (folio) {
++		folio_put(folio);
++		folio_put(folio);
++	}
++}
++
++/*
++ * Test cases for ssdfs_folio_vector_create()
++ */
++static void test_folio_vector_create_valid_params(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 10);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 0, array.count);
++	KUNIT_EXPECT_GT(test, array.capacity, 0);
++	KUNIT_EXPECT_EQ(test, 0, array.order);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++static void test_folio_vector_create_zero_capacity(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 0);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 0, array.count);
++	KUNIT_EXPECT_GT(test, array.capacity, 0);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++static void test_folio_vector_create_large_capacity(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++	u32 large_capacity = 1000000;
++
++	err = ssdfs_folio_vector_create(&array, 2, large_capacity);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 0, array.count);
++	KUNIT_EXPECT_LE(test, array.capacity, ssdfs_folio_vector_max_threshold());
++	KUNIT_EXPECT_EQ(test, 2, array.order);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_vector_init()
++ */
++static void test_folio_vector_init_valid(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	array.count = 3;
++
++	err = ssdfs_folio_vector_init(&array);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 0, array.count);
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_vector_reinit()
++ */
++static void test_folio_vector_reinit_valid(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	array.count = 3;
++
++	err = ssdfs_folio_vector_reinit(&array);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 0, array.count);
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_vector_inflate()
++ */
++static void test_folio_vector_inflate_expand(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++	u32 original_capacity;
++	u32 new_capacity = 20;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	original_capacity = array.capacity;
++
++	err = ssdfs_folio_vector_inflate(&array, new_capacity);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_GT(test, array.capacity, original_capacity);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++static void test_folio_vector_inflate_no_change(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++	u32 original_capacity;
++
++	err = ssdfs_folio_vector_create(&array, 0, 10);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	original_capacity = array.capacity;
++
++	err = ssdfs_folio_vector_inflate(&array, 5);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, original_capacity, array.capacity);
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++/*
++ * Test cases for accessor functions
++ */
++static void test_folio_vector_count(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_folio_vector_count(&array));
++
++	array.count = 3;
++	KUNIT_EXPECT_EQ(test, 3, ssdfs_folio_vector_count(&array));
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++static void test_folio_vector_space(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_EQ(test, array.capacity, ssdfs_folio_vector_space(&array));
++
++	array.count = 2;
++	KUNIT_EXPECT_EQ(test, array.capacity - 2, ssdfs_folio_vector_space(&array));
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++static void test_folio_vector_capacity(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	KUNIT_EXPECT_EQ(test, array.capacity, ssdfs_folio_vector_capacity(&array));
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_vector_add()
++ */
++static void test_folio_vector_add_valid(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = test_alloc_folio(0);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	err = ssdfs_folio_vector_add(&array, folio);
++
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_EQ(test, 1, array.count);
++	KUNIT_EXPECT_PTR_EQ(test, folio, array.folios[0]);
++
++	test_free_folio(folio);
++	ssdfs_folio_vector_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_vector_allocate()
++ */
++static void test_folio_vector_allocate_valid(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = ssdfs_folio_vector_allocate(&array);
++
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, folio);
++	KUNIT_EXPECT_EQ(test, 1, array.count);
++	KUNIT_EXPECT_PTR_EQ(test, folio, array.folios[0]);
++
++	ssdfs_folio_vector_release(&array);
++	ssdfs_folio_vector_destroy(&array);
++}
++
++static void test_folio_vector_allocate_no_space(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	struct folio *folio;
++	int err;
++	int i;
++
++	err = ssdfs_folio_vector_create(&array, 0, 2);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Fill the array to capacity */
++	for (i = 0; i < array.capacity; i++) {
++		folio = ssdfs_folio_vector_allocate(&array);
++		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++	}
++
++	/* Try to allocate one more - should fail */
++	folio = ssdfs_folio_vector_allocate(&array);
++	KUNIT_EXPECT_TRUE(test, IS_ERR(folio));
++	KUNIT_EXPECT_EQ(test, -E2BIG, PTR_ERR(folio));
++
++	ssdfs_folio_vector_release(&array);
++	ssdfs_folio_vector_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_vector_remove()
++ */
++static void test_folio_vector_remove_valid(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	struct folio *folio, *removed_folio;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = ssdfs_folio_vector_allocate(&array);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	removed_folio = ssdfs_folio_vector_remove(&array, 0);
++
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, removed_folio);
++	KUNIT_EXPECT_PTR_EQ(test, folio, removed_folio);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[0]);
++
++	test_free_folio(removed_folio);
++	ssdfs_folio_vector_destroy(&array);
++}
++
++static void test_folio_vector_remove_empty(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	struct folio *folio;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = ssdfs_folio_vector_remove(&array, 0);
++
++	KUNIT_EXPECT_TRUE(test, IS_ERR(folio));
++	KUNIT_EXPECT_EQ(test, -ENODATA, PTR_ERR(folio));
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++static void test_folio_vector_remove_out_of_range(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	struct folio *folio, *removed_folio;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio = ssdfs_folio_vector_allocate(&array);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio);
++
++	removed_folio = ssdfs_folio_vector_remove(&array, 10);
++
++	KUNIT_EXPECT_TRUE(test, IS_ERR(removed_folio));
++	KUNIT_EXPECT_EQ(test, -ENOENT, PTR_ERR(removed_folio));
++
++	ssdfs_folio_vector_release(&array);
++	ssdfs_folio_vector_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_vector_release()
++ */
++static void test_folio_vector_release_valid(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	struct folio *folio1, *folio2;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	folio1 = ssdfs_folio_vector_allocate(&array);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++
++	folio2 = ssdfs_folio_vector_allocate(&array);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++
++	KUNIT_EXPECT_EQ(test, 2, array.count);
++
++	ssdfs_folio_vector_release(&array);
++
++	KUNIT_EXPECT_EQ(test, 0, array.count);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[0]);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[1]);
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++/*
++ * Test cases for ssdfs_folio_vector_destroy()
++ */
++static void test_folio_vector_destroy_valid(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 5);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	ssdfs_folio_vector_destroy(&array);
++
++	KUNIT_EXPECT_EQ(test, 0, array.count);
++	KUNIT_EXPECT_EQ(test, 0, array.capacity);
++	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios);
++}
++
++/*
++ * Complex integration test cases
++ */
++static void test_folio_vector_multiple_operations(struct kunit *test)
++{
++	struct ssdfs_folio_vector array;
++	struct folio *folio1, *folio2, *folio3, *removed_folio;
++	int err;
++
++	err = ssdfs_folio_vector_create(&array, 0, 10);
++	KUNIT_ASSERT_EQ(test, 0, err);
++
++	/* Test initial state */
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_folio_vector_count(&array));
++	KUNIT_EXPECT_EQ(test, array.capacity, ssdfs_folio_vector_space(&array));
++
++	/* Allocate some folios */
++	folio1 = ssdfs_folio_vector_allocate(&array);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio1);
++
++	folio2 = ssdfs_folio_vector_allocate(&array);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio2);
++
++	folio3 = ssdfs_folio_vector_allocate(&array);
++	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, folio3);
++
++	/* Check state after allocation */
++	KUNIT_EXPECT_EQ(test, 3, ssdfs_folio_vector_count(&array));
++	KUNIT_EXPECT_EQ(test, array.capacity - 3, ssdfs_folio_vector_space(&array));
++
++	/* Remove middle folio */
++	removed_folio = ssdfs_folio_vector_remove(&array, 1);
++	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, removed_folio);
++	KUNIT_EXPECT_PTR_EQ(test, folio2, removed_folio);
++
++	/* Free removed folio */
++	test_free_folio(removed_folio);
++
++	/* Test inflate */
++	err = ssdfs_folio_vector_inflate(&array, 20);
++	KUNIT_EXPECT_EQ(test, 0, err);
++	KUNIT_EXPECT_GE(test, array.capacity, 20);
++
++	/* Release all folios */
++	ssdfs_folio_vector_release(&array);
++	KUNIT_EXPECT_EQ(test, 0, ssdfs_folio_vector_count(&array));
++
++	ssdfs_folio_vector_destroy(&array);
++}
++
++static struct kunit_case folio_vector_test_cases[] = {
++	KUNIT_CASE(test_folio_vector_create_valid_params),
++	KUNIT_CASE(test_folio_vector_create_zero_capacity),
++	KUNIT_CASE(test_folio_vector_create_large_capacity),
++	KUNIT_CASE(test_folio_vector_init_valid),
++	KUNIT_CASE(test_folio_vector_reinit_valid),
++	KUNIT_CASE(test_folio_vector_inflate_expand),
++	KUNIT_CASE(test_folio_vector_inflate_no_change),
++	KUNIT_CASE(test_folio_vector_count),
++	KUNIT_CASE(test_folio_vector_space),
++	KUNIT_CASE(test_folio_vector_capacity),
++	KUNIT_CASE(test_folio_vector_add_valid),
++	KUNIT_CASE(test_folio_vector_allocate_valid),
++	KUNIT_CASE(test_folio_vector_allocate_no_space),
++	KUNIT_CASE(test_folio_vector_remove_valid),
++	KUNIT_CASE(test_folio_vector_remove_empty),
++	KUNIT_CASE(test_folio_vector_remove_out_of_range),
++	KUNIT_CASE(test_folio_vector_release_valid),
++	KUNIT_CASE(test_folio_vector_destroy_valid),
++	KUNIT_CASE(test_folio_vector_multiple_operations),
++	{}
++};
++
++static struct kunit_suite folio_vector_test_suite = {
++	.name = "ssdfs_folio_vector",
++	.test_cases = folio_vector_test_cases,
++};
++
++kunit_test_suites(&folio_vector_test_suite);
++
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_AUTHOR("Viacheslav Dubeyko <slava@dubeyko.com>");
++MODULE_DESCRIPTION("KUnit tests for SSDFS folio vector");
++MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
+-- 
+2.34.1
+

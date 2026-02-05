@@ -1,0 +1,438 @@
+From 3af966778b40c8b1ae4286200205aa2a843d2070 Mon Sep 17 00:00:00 2001
+From: Viacheslav Dubeyko <slava@dubeyko.com>
+Date: Mon, 2 Feb 2026 21:13:40 -0800
+Subject: [PATCH v2 37/79] ssdfs: introduce PEB mapping queue
+
+This patch implements PEB mapping queue concept.
+
+Signed-off-by: Viacheslav Dubeyko <slava@dubeyko.com>
+---
+ fs/ssdfs/peb_mapping_queue.c | 340 +++++++++++++++++++++++++++++++++++
+ fs/ssdfs/peb_mapping_queue.h |  68 +++++++
+ 2 files changed, 408 insertions(+)
+ create mode 100644 fs/ssdfs/peb_mapping_queue.c
+ create mode 100644 fs/ssdfs/peb_mapping_queue.h
+
+diff --git a/fs/ssdfs/peb_mapping_queue.c b/fs/ssdfs/peb_mapping_queue.c
+new file mode 100644
+index 000000000000..a670c668f4a4
+--- /dev/null
++++ b/fs/ssdfs/peb_mapping_queue.c
+@@ -0,0 +1,340 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/peb_mapping_queue.c - PEB mappings queue implementation.
++ *
++ * Copyright (c) 2019-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <linux/slab.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++atomic64_t ssdfs_map_queue_folio_leaks;
++atomic64_t ssdfs_map_queue_memory_leaks;
++atomic64_t ssdfs_map_queue_cache_leaks;
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++/*
++ * void ssdfs_map_queue_cache_leaks_increment(void *kaddr)
++ * void ssdfs_map_queue_cache_leaks_decrement(void *kaddr)
++ * void *ssdfs_map_queue_kmalloc(size_t size, gfp_t flags)
++ * void *ssdfs_map_queue_kzalloc(size_t size, gfp_t flags)
++ * void *ssdfs_map_queue_kcalloc(size_t n, size_t size, gfp_t flags)
++ * void ssdfs_map_queue_kfree(void *kaddr)
++ * struct folio *ssdfs_map_queue_alloc_folio(gfp_t gfp_mask,
++ *                                           unsigned int order)
++ * struct folio *ssdfs_map_queue_add_batch_folio(struct folio_batch *batch,
++ *                                               unsigned int order)
++ * void ssdfs_map_queue_free_folio(struct folio *folio)
++ * void ssdfs_map_queue_folio_batch_release(struct folio_batch *batch)
++ */
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	SSDFS_MEMORY_LEAKS_CHECKER_FNS(map_queue)
++#else
++	SSDFS_MEMORY_ALLOCATOR_FNS(map_queue)
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++void ssdfs_map_queue_memory_leaks_init(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	atomic64_set(&ssdfs_map_queue_folio_leaks, 0);
++	atomic64_set(&ssdfs_map_queue_memory_leaks, 0);
++	atomic64_set(&ssdfs_map_queue_cache_leaks, 0);
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++void ssdfs_map_queue_check_memory_leaks(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	if (atomic64_read(&ssdfs_map_queue_folio_leaks) != 0) {
++		SSDFS_ERR("MAPPING QUEUE: "
++			  "memory leaks include %lld folios\n",
++			  atomic64_read(&ssdfs_map_queue_folio_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_map_queue_memory_leaks) != 0) {
++		SSDFS_ERR("MAPPING QUEUE: "
++			  "memory allocator suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_map_queue_memory_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_map_queue_cache_leaks) != 0) {
++		SSDFS_ERR("MAPPING QUEUE: "
++			  "caches suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_map_queue_cache_leaks));
++	}
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++static struct kmem_cache *ssdfs_peb_mapping_info_cachep;
++
++void ssdfs_zero_peb_mapping_info_cache_ptr(void)
++{
++	ssdfs_peb_mapping_info_cachep = NULL;
++}
++
++static
++void ssdfs_init_peb_mapping_info_once(void *obj)
++{
++	struct ssdfs_peb_mapping_info *pmi_obj = obj;
++
++	memset(pmi_obj, 0, sizeof(struct ssdfs_peb_mapping_info));
++}
++
++void ssdfs_shrink_peb_mapping_info_cache(void)
++{
++	if (ssdfs_peb_mapping_info_cachep)
++		kmem_cache_shrink(ssdfs_peb_mapping_info_cachep);
++}
++
++void ssdfs_destroy_peb_mapping_info_cache(void)
++{
++	if (ssdfs_peb_mapping_info_cachep)
++		kmem_cache_destroy(ssdfs_peb_mapping_info_cachep);
++}
++
++int ssdfs_init_peb_mapping_info_cache(void)
++{
++	ssdfs_peb_mapping_info_cachep =
++		kmem_cache_create("ssdfs_peb_mapping_info_cache",
++				  sizeof(struct ssdfs_peb_mapping_info), 0,
++				  SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
++				  ssdfs_init_peb_mapping_info_once);
++	if (!ssdfs_peb_mapping_info_cachep) {
++		SSDFS_ERR("unable to create PEB mapping info objects cache\n");
++		return -ENOMEM;
++	}
++
++	return 0;
++}
++
++/*
++ * ssdfs_peb_mapping_queue_init() - initialize PEB mappings queue
++ * @pmq: initialized PEB mappings queue
++ */
++void ssdfs_peb_mapping_queue_init(struct ssdfs_peb_mapping_queue *pmq)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!pmq);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	spin_lock_init(&pmq->lock);
++	INIT_LIST_HEAD(&pmq->list);
++}
++
++/*
++ * is_ssdfs_peb_mapping_queue_empty() - check that PEB mappings queue is empty
++ * @pmq: PEB mappings queue
++ */
++bool is_ssdfs_peb_mapping_queue_empty(struct ssdfs_peb_mapping_queue *pmq)
++{
++	bool is_empty;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!pmq);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	spin_lock(&pmq->lock);
++	is_empty = list_empty_careful(&pmq->list);
++	spin_unlock(&pmq->lock);
++
++	return is_empty;
++}
++
++/*
++ * ssdfs_peb_mapping_queue_add_head() - add PEB mapping at the head of queue
++ * @pmq: PEB mappings queue
++ * @pmi: PEB mapping info
++ */
++void ssdfs_peb_mapping_queue_add_head(struct ssdfs_peb_mapping_queue *pmq,
++				      struct ssdfs_peb_mapping_info *pmi)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!pmq || !pmi);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	spin_lock(&pmq->lock);
++	list_add(&pmi->list, &pmq->list);
++	spin_unlock(&pmq->lock);
++}
++
++/*
++ * ssdfs_peb_mapping_queue_add_tail() - add PEB mapping at the tail of queue
++ * @pmq: PEB mappings queue
++ * @pmi: PEB mapping info
++ */
++void ssdfs_peb_mapping_queue_add_tail(struct ssdfs_peb_mapping_queue *pmq,
++				      struct ssdfs_peb_mapping_info *pmi)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!pmq || !pmi);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	spin_lock(&pmq->lock);
++	list_add_tail(&pmi->list, &pmq->list);
++	spin_unlock(&pmq->lock);
++}
++
++/*
++ * ssdfs_peb_mapping_queue_remove_first() - get mapping and remove from queue
++ * @pmq: PEB mappings queue
++ * @pmi: first PEB mapping [out]
++ *
++ * This function get first PEB mapping in @pmq, remove it from queue
++ * and return as @pmi.
++ *
++ * RETURN:
++ * [success] - @pmi contains pointer on PEB mapping.
++ * [failure] - error code:
++ *
++ * %-ENODATA     - queue is empty.
++ * %-ENOENT      - first entry is NULL.
++ */
++int ssdfs_peb_mapping_queue_remove_first(struct ssdfs_peb_mapping_queue *pmq,
++					 struct ssdfs_peb_mapping_info **pmi)
++{
++	bool is_empty;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!pmq || !pmi);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	spin_lock(&pmq->lock);
++	is_empty = list_empty_careful(&pmq->list);
++	if (!is_empty) {
++		*pmi = list_first_entry_or_null(&pmq->list,
++						struct ssdfs_peb_mapping_info,
++						list);
++		if (!*pmi) {
++			SSDFS_WARN("first entry is NULL\n");
++			err = -ENOENT;
++		} else
++			list_del(&(*pmi)->list);
++	}
++	spin_unlock(&pmq->lock);
++
++	if (is_empty) {
++		SSDFS_WARN("PEB mappings queue is empty\n");
++		err = -ENODATA;
++	}
++
++	return err;
++}
++
++/*
++ * ssdfs_peb_mapping_queue_remove_all() - remove all PEB mappings from queue
++ * @pmq: PEB mappings queue
++ *
++ * This function removes all PEB mappings from the queue.
++ */
++void ssdfs_peb_mapping_queue_remove_all(struct ssdfs_peb_mapping_queue *pmq)
++{
++	bool is_empty;
++	LIST_HEAD(tmp_list);
++	struct list_head *this, *next;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!pmq);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	spin_lock(&pmq->lock);
++	is_empty = list_empty_careful(&pmq->list);
++	if (!is_empty)
++		list_replace_init(&pmq->list, &tmp_list);
++	spin_unlock(&pmq->lock);
++
++	if (is_empty)
++		return;
++
++	list_for_each_safe(this, next, &tmp_list) {
++		struct ssdfs_peb_mapping_info *pmi;
++
++		pmi = list_entry(this, struct ssdfs_peb_mapping_info, list);
++		list_del(&pmi->list);
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("delete PEB mapping: "
++			  "leb_id %llu, peb_id %llu, consistency %d\n",
++			  pmi->leb_id, pmi->peb_id, pmi->consistency);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		ssdfs_peb_mapping_info_free(pmi);
++	}
++}
++
++/*
++ * ssdfs_peb_mapping_info_alloc() - allocate memory for PEB mapping info object
++ */
++struct ssdfs_peb_mapping_info *ssdfs_peb_mapping_info_alloc(void)
++{
++	struct ssdfs_peb_mapping_info *ptr;
++	unsigned int nofs_flags;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!ssdfs_peb_mapping_info_cachep);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	nofs_flags = memalloc_nofs_save();
++	ptr = kmem_cache_alloc(ssdfs_peb_mapping_info_cachep, GFP_KERNEL);
++	memalloc_nofs_restore(nofs_flags);
++
++	if (!ptr) {
++		SSDFS_ERR("fail to allocate memory for PEB mapping\n");
++		return ERR_PTR(-ENOMEM);
++	}
++
++	ssdfs_map_queue_cache_leaks_increment(ptr);
++
++	return ptr;
++}
++
++/*
++ * ssdfs_peb_mapping_info_free() - free memory for PEB mapping info object
++ */
++void ssdfs_peb_mapping_info_free(struct ssdfs_peb_mapping_info *pmi)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!ssdfs_peb_mapping_info_cachep);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (!pmi)
++		return;
++
++	ssdfs_map_queue_cache_leaks_decrement(pmi);
++	kmem_cache_free(ssdfs_peb_mapping_info_cachep, pmi);
++}
++
++/*
++ * ssdfs_peb_mapping_info_init() - PEB mapping info initialization
++ * @leb_id: LEB ID
++ * @peb_id: PEB ID
++ * @consistency: consistency state in PEB mapping table cache
++ * @pmi: PEB mapping info [out]
++ */
++void ssdfs_peb_mapping_info_init(u64 leb_id, u64 peb_id, int consistency,
++				 struct ssdfs_peb_mapping_info *pmi)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!pmi);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	memset(pmi, 0, sizeof(struct ssdfs_peb_mapping_info));
++
++	INIT_LIST_HEAD(&pmi->list);
++	pmi->leb_id = leb_id;
++	pmi->peb_id = peb_id;
++	pmi->consistency = consistency;
++}
+diff --git a/fs/ssdfs/peb_mapping_queue.h b/fs/ssdfs/peb_mapping_queue.h
+new file mode 100644
+index 000000000000..c339be3320be
+--- /dev/null
++++ b/fs/ssdfs/peb_mapping_queue.h
+@@ -0,0 +1,68 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/peb_mapping_queue.h - PEB mappings queue declarations.
++ *
++ * Copyright (c) 2019-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#ifndef _SSDFS_PEB_MAPPING_QUEUE_H
++#define _SSDFS_PEB_MAPPING_QUEUE_H
++
++/*
++ * struct ssdfs_peb_mapping_queue - PEB mappings queue descriptor
++ * @lock: extents queue's lock
++ * @list: extents queue's list
++ */
++struct ssdfs_peb_mapping_queue {
++	spinlock_t lock;
++	struct list_head list;
++};
++
++/*
++ * struct ssdfs_peb_mapping_info - peb mapping info
++ * @list: extents queue list
++ * @leb_id: LEB ID
++ * @peb_id: PEB ID
++ * @consistency: consistency state in the mapping table cache
++ */
++struct ssdfs_peb_mapping_info {
++	struct list_head list;
++	u64 leb_id;
++	u64 peb_id;
++	int consistency;
++};
++
++/*
++ * PEB mappings queue API
++ */
++void ssdfs_peb_mapping_queue_init(struct ssdfs_peb_mapping_queue *pmq);
++bool is_ssdfs_peb_mapping_queue_empty(struct ssdfs_peb_mapping_queue *pmq);
++void ssdfs_peb_mapping_queue_add_tail(struct ssdfs_peb_mapping_queue *pmq,
++				      struct ssdfs_peb_mapping_info *pmi);
++void ssdfs_peb_mapping_queue_add_head(struct ssdfs_peb_mapping_queue *pmq,
++				      struct ssdfs_peb_mapping_info *pmi);
++int ssdfs_peb_mapping_queue_remove_first(struct ssdfs_peb_mapping_queue *pmq,
++					 struct ssdfs_peb_mapping_info **pmi);
++void ssdfs_peb_mapping_queue_remove_all(struct ssdfs_peb_mapping_queue *pmq);
++
++/*
++ * PEB mapping info's API
++ */
++void ssdfs_zero_peb_mapping_info_cache_ptr(void);
++int ssdfs_init_peb_mapping_info_cache(void);
++void ssdfs_shrink_peb_mapping_info_cache(void);
++void ssdfs_destroy_peb_mapping_info_cache(void);
++
++struct ssdfs_peb_mapping_info *ssdfs_peb_mapping_info_alloc(void);
++void ssdfs_peb_mapping_info_free(struct ssdfs_peb_mapping_info *pmi);
++void ssdfs_peb_mapping_info_init(u64 leb_id, u64 peb_id, int consistency,
++				 struct ssdfs_peb_mapping_info *pmi);
++
++#endif /* _SSDFS_PEB_MAPPING_QUEUE_H */
+-- 
+2.34.1
+

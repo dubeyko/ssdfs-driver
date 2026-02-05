@@ -1,0 +1,1366 @@
+From b4e0278435683a6a7a185b64d35e72e7f9b481d1 Mon Sep 17 00:00:00 2001
+From: Viacheslav Dubeyko <slava@dubeyko.com>
+Date: Mon, 2 Feb 2026 20:36:26 -0800
+Subject: [PATCH v2 26/79] ssdfs: implement compression logic support
+
+This patch impelements supporting of compression
+logic (Zlib + LZO) in SSDFS file system.
+
+Signed-off-by: Viacheslav Dubeyko <slava@dubeyko.com>
+---
+ fs/ssdfs/compr_lzo.c   | 268 +++++++++++++++++++
+ fs/ssdfs/compr_zlib.c  | 374 +++++++++++++++++++++++++++
+ fs/ssdfs/compression.c | 569 +++++++++++++++++++++++++++++++++++++++++
+ fs/ssdfs/compression.h | 108 ++++++++
+ 4 files changed, 1319 insertions(+)
+ create mode 100644 fs/ssdfs/compr_lzo.c
+ create mode 100644 fs/ssdfs/compr_zlib.c
+ create mode 100644 fs/ssdfs/compression.c
+ create mode 100644 fs/ssdfs/compression.h
+
+diff --git a/fs/ssdfs/compr_lzo.c b/fs/ssdfs/compr_lzo.c
+new file mode 100644
+index 000000000000..6ee051900821
+--- /dev/null
++++ b/fs/ssdfs/compr_lzo.c
+@@ -0,0 +1,268 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/compr_lzo.c - LZO compression support.
++ *
++ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
++ *              http://www.hgst.com/
++ * Copyright (c) 2014-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ *
++ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
++ *
++ * Created by HGST, San Jose Research Center, Storage Architecture Group
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cyril Guyot
++ *                  Zvonimir Bandic
++ */
++
++#include <linux/kernel.h>
++#include <linux/slab.h>
++#include <linux/vmalloc.h>
++#include <linux/init.h>
++#include <linux/pagemap.h>
++#include <linux/lzo.h>
++#include <linux/pagevec.h>
++
++#include <kunit/visibility.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "compression.h"
++
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++atomic64_t ssdfs_lzo_folio_leaks;
++atomic64_t ssdfs_lzo_memory_leaks;
++atomic64_t ssdfs_lzo_cache_leaks;
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++/*
++ * void ssdfs_lzo_cache_leaks_increment(void *kaddr)
++ * void ssdfs_lzo_cache_leaks_decrement(void *kaddr)
++ * void *ssdfs_lzo_kmalloc(size_t size, gfp_t flags)
++ * void *ssdfs_lzo_kzalloc(size_t size, gfp_t flags)
++ * void *ssdfs_lzo_kcalloc(size_t n, size_t size, gfp_t flags)
++ * void ssdfs_lzo_kfree(void *kaddr)
++ * struct folio *ssdfs_lzo_alloc_folio(gfp_t gfp_mask,
++ *                                     unsigned int order)
++ * struct folio *ssdfs_lzo_add_batch_folio(struct folio_batch *batch,
++ *                                         unsigned int order)
++ * void ssdfs_lzo_free_folio(struct folio *folio)
++ * void ssdfs_lzo_folio_batch_release(struct folio_batch *batch)
++ */
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	SSDFS_MEMORY_LEAKS_CHECKER_FNS(lzo)
++#else
++	SSDFS_MEMORY_ALLOCATOR_FNS(lzo)
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++void ssdfs_lzo_memory_leaks_init(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	atomic64_set(&ssdfs_lzo_folio_leaks, 0);
++	atomic64_set(&ssdfs_lzo_memory_leaks, 0);
++	atomic64_set(&ssdfs_lzo_cache_leaks, 0);
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++void ssdfs_lzo_check_memory_leaks(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	if (atomic64_read(&ssdfs_lzo_folio_leaks) != 0) {
++		SSDFS_ERR("LZO: "
++			  "memory leaks include %lld folios\n",
++			  atomic64_read(&ssdfs_lzo_folio_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_lzo_memory_leaks) != 0) {
++		SSDFS_ERR("LZO: "
++			  "memory allocator suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_lzo_memory_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_lzo_cache_leaks) != 0) {
++		SSDFS_ERR("LZO: "
++			  "caches suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_lzo_cache_leaks));
++	}
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++static int ssdfs_lzo_compress(struct list_head *ws_ptr,
++				unsigned char *data_in,
++				unsigned char *cdata_out,
++				size_t *srclen, size_t *destlen);
++
++static int ssdfs_lzo_decompress(struct list_head *ws_ptr,
++				 unsigned char *cdata_in,
++				 unsigned char *data_out,
++				 size_t srclen, size_t destlen);
++
++static struct list_head *ssdfs_lzo_alloc_workspace(void);
++static void ssdfs_lzo_free_workspace(struct list_head *ptr);
++
++static const struct ssdfs_compress_ops ssdfs_lzo_compress_ops = {
++	.alloc_workspace = ssdfs_lzo_alloc_workspace,
++	.free_workspace = ssdfs_lzo_free_workspace,
++	.compress = ssdfs_lzo_compress,
++	.decompress = ssdfs_lzo_decompress,
++};
++
++static struct ssdfs_compressor lzo_compr = {
++	.type = SSDFS_COMPR_LZO,
++	.compr_ops = &ssdfs_lzo_compress_ops,
++	.name = "lzo",
++};
++
++struct ssdfs_lzo_workspace {
++	void *mem;
++	void *cbuf;	/* where compressed data goes */
++	struct list_head list;
++};
++
++static void ssdfs_lzo_free_workspace(struct list_head *ptr)
++{
++	struct ssdfs_lzo_workspace *workspace;
++
++	workspace = list_entry(ptr, struct ssdfs_lzo_workspace, list);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("workspace %p\n", workspace);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	vfree(workspace->cbuf);
++	vfree(workspace->mem);
++	ssdfs_lzo_kfree(workspace);
++}
++
++static struct list_head *ssdfs_lzo_alloc_workspace(void)
++{
++	struct ssdfs_lzo_workspace *workspace;
++	unsigned int nofs_flags;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("try to allocate workspace\n");
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	workspace = ssdfs_lzo_kzalloc(sizeof(*workspace), GFP_KERNEL);
++	if (unlikely(!workspace))
++		goto failed_alloc_workspaces;
++
++	nofs_flags = memalloc_nofs_save();
++	workspace->mem = vmalloc(LZO1X_MEM_COMPRESS);
++	workspace->cbuf = vmalloc(lzo1x_worst_compress(PAGE_SIZE));
++	memalloc_nofs_restore(nofs_flags);
++
++	if (!workspace->mem || !workspace->cbuf)
++		goto failed_alloc_workspaces;
++
++	INIT_LIST_HEAD(&workspace->list);
++
++	return &workspace->list;
++
++failed_alloc_workspaces:
++	SSDFS_ERR("unable to allocate memory for workspace\n");
++	ssdfs_lzo_free_workspace(&workspace->list);
++	return ERR_PTR(-ENOMEM);
++}
++
++int ssdfs_lzo_init(void)
++{
++	return ssdfs_register_compressor(&lzo_compr);
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_lzo_init);
++
++void ssdfs_lzo_exit(void)
++{
++	ssdfs_unregister_compressor(&lzo_compr);
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_lzo_exit);
++
++static int ssdfs_lzo_compress(struct list_head *ws,
++				unsigned char *data_in,
++				unsigned char *cdata_out,
++				size_t *srclen, size_t *destlen)
++{
++	struct ssdfs_lzo_workspace *workspace;
++	size_t compress_size;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("ws_ptr %p, data_in %p, cdata_out %p, "
++		  "srclen ptr %p, destlen ptr %p\n",
++		  ws, data_in, cdata_out, srclen, destlen);
++
++	BUG_ON(!ws || !data_in || !cdata_out || !srclen || !destlen);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	workspace = list_entry(ws, struct ssdfs_lzo_workspace, list);
++
++	err = lzo1x_1_compress(data_in, *srclen, workspace->cbuf,
++				&compress_size, workspace->mem);
++	if (err != LZO_E_OK) {
++		SSDFS_ERR("LZO compression failed: internal err %d, "
++			  "srclen %zu, destlen %zu\n",
++			  err, *srclen, *destlen);
++		err = -EINVAL;
++		goto failed_compress;
++	}
++
++	if (compress_size > *destlen) {
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("unable to compress: compress_size %zu, "
++			  "destlen %zu\n",
++			  compress_size, *destlen);
++#endif /* CONFIG_SSDFS_DEBUG */
++		err = -E2BIG;
++		goto failed_compress;
++	}
++
++	ssdfs_memcpy(cdata_out, 0, *destlen,
++		     workspace->cbuf, 0, lzo1x_worst_compress(PAGE_SIZE),
++		     compress_size);
++	*destlen = compress_size;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("compress has succeded: srclen %zu, destlen %zu\n",
++		    *srclen, *destlen);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return 0;
++
++failed_compress:
++	return err;
++}
++
++static int ssdfs_lzo_decompress(struct list_head *ws,
++				 unsigned char *cdata_in,
++				 unsigned char *data_out,
++				 size_t srclen, size_t destlen)
++{
++	size_t dl = destlen;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("ws_ptr %p, cdata_in %p, data_out %p, "
++		  "srclen %zu, destlen %zu\n",
++		  ws, cdata_in, data_out, srclen, destlen);
++
++	BUG_ON(!ws || !cdata_in || !data_out);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	err = lzo1x_decompress_safe(cdata_in, srclen, data_out, &dl);
++
++	if (err != LZO_E_OK || dl != destlen) {
++		SSDFS_ERR("decompression failed: LZO compressor err %d, "
++			  "srclen %zu, destlen %zu\n",
++			  err, srclen, destlen);
++		return -EINVAL;
++	}
++
++	return 0;
++}
+diff --git a/fs/ssdfs/compr_zlib.c b/fs/ssdfs/compr_zlib.c
+new file mode 100644
+index 000000000000..a6ff0981ca14
+--- /dev/null
++++ b/fs/ssdfs/compr_zlib.c
+@@ -0,0 +1,374 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/compr_zlib.c - ZLIB compression support.
++ *
++ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
++ *              http://www.hgst.com/
++ * Copyright (c) 2014-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ *
++ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
++ *
++ * Created by HGST, San Jose Research Center, Storage Architecture Group
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cyril Guyot
++ *                  Zvonimir Bandic
++ */
++
++#include <linux/kernel.h>
++#include <linux/slab.h>
++#include <linux/zlib.h>
++#include <linux/zutil.h>
++#include <linux/vmalloc.h>
++#include <linux/pagevec.h>
++
++#include <kunit/visibility.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "compression.h"
++
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++atomic64_t ssdfs_zlib_folio_leaks;
++atomic64_t ssdfs_zlib_memory_leaks;
++atomic64_t ssdfs_zlib_cache_leaks;
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++/*
++ * void ssdfs_zlib_cache_leaks_increment(void *kaddr)
++ * void ssdfs_zlib_cache_leaks_decrement(void *kaddr)
++ * void *ssdfs_zlib_kmalloc(size_t size, gfp_t flags)
++ * void *ssdfs_zlib_kzalloc(size_t size, gfp_t flags)
++ * void *ssdfs_zlib_kcalloc(size_t n, size_t size, gfp_t flags)
++ * void ssdfs_zlib_kfree(void *kaddr)
++ * struct folio *ssdfs_zlib_alloc_folio(gfp_t gfp_mask,
++ *                                      unsigned int order)
++ * struct folio *ssdfs_zlib_add_batch_folio(struct folio_batch *batch,
++ *                                          unsigned int order)
++ * void ssdfs_zlib_free_folio(struct folio *folio)
++ * void ssdfs_zlib_folio_batch_release(struct folio_batch *batch)
++ */
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	SSDFS_MEMORY_LEAKS_CHECKER_FNS(zlib)
++#else
++	SSDFS_MEMORY_ALLOCATOR_FNS(zlib)
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++void ssdfs_zlib_memory_leaks_init(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	atomic64_set(&ssdfs_zlib_folio_leaks, 0);
++	atomic64_set(&ssdfs_zlib_memory_leaks, 0);
++	atomic64_set(&ssdfs_zlib_cache_leaks, 0);
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++void ssdfs_zlib_check_memory_leaks(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	if (atomic64_read(&ssdfs_zlib_folio_leaks) != 0) {
++		SSDFS_ERR("ZLIB: "
++			  "memory leaks include %lld folios\n",
++			  atomic64_read(&ssdfs_zlib_folio_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_zlib_memory_leaks) != 0) {
++		SSDFS_ERR("ZLIB: "
++			  "memory allocator suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_zlib_memory_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_zlib_cache_leaks) != 0) {
++		SSDFS_ERR("ZLIB: "
++			  "caches suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_zlib_cache_leaks));
++	}
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++#define COMPR_LEVEL CONFIG_SSDFS_ZLIB_COMR_LEVEL
++
++static int ssdfs_zlib_compress(struct list_head *ws_ptr,
++				unsigned char *data_in,
++				unsigned char *cdata_out,
++				size_t *srclen, size_t *destlen);
++
++static int ssdfs_zlib_decompress(struct list_head *ws_ptr,
++				 unsigned char *cdata_in,
++				 unsigned char *data_out,
++				 size_t srclen, size_t destlen);
++
++static struct list_head *ssdfs_zlib_alloc_workspace(void);
++static void ssdfs_zlib_free_workspace(struct list_head *ptr);
++
++static const struct ssdfs_compress_ops ssdfs_zlib_compress_ops = {
++	.alloc_workspace = ssdfs_zlib_alloc_workspace,
++	.free_workspace = ssdfs_zlib_free_workspace,
++	.compress = ssdfs_zlib_compress,
++	.decompress = ssdfs_zlib_decompress,
++};
++
++static struct ssdfs_compressor zlib_compr = {
++	.type = SSDFS_COMPR_ZLIB,
++	.compr_ops = &ssdfs_zlib_compress_ops,
++	.name = "zlib",
++};
++
++struct ssdfs_zlib_workspace {
++	z_stream inflate_stream;
++	z_stream deflate_stream;
++	struct list_head list;
++};
++
++static void ssdfs_zlib_free_workspace(struct list_head *ptr)
++{
++	struct ssdfs_zlib_workspace *workspace;
++
++	workspace = list_entry(ptr, struct ssdfs_zlib_workspace, list);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("workspace %p\n", workspace);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	vfree(workspace->deflate_stream.workspace);
++	vfree(workspace->inflate_stream.workspace);
++	ssdfs_zlib_kfree(workspace);
++}
++
++static struct list_head *ssdfs_zlib_alloc_workspace(void)
++{
++	struct ssdfs_zlib_workspace *workspace;
++	int deflate_size, inflate_size;
++	unsigned int nofs_flags;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("try to allocate workspace\n");
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	workspace = ssdfs_zlib_kzalloc(sizeof(*workspace), GFP_KERNEL);
++	if (unlikely(!workspace)) {
++		SSDFS_ERR("unable to allocate memory for workspace\n");
++		return ERR_PTR(-ENOMEM);
++	}
++
++	nofs_flags = memalloc_nofs_save();
++	deflate_size = zlib_deflate_workspacesize(MAX_WBITS, MAX_MEM_LEVEL);
++	workspace->deflate_stream.workspace = vmalloc(deflate_size);
++	memalloc_nofs_restore(nofs_flags);
++
++	if (unlikely(!workspace->deflate_stream.workspace)) {
++		SSDFS_ERR("unable to allocate memory for deflate stream\n");
++		goto failed_alloc_workspaces;
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("deflate stream size %d\n", deflate_size);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	nofs_flags = memalloc_nofs_save();
++	inflate_size = zlib_inflate_workspacesize();
++	workspace->inflate_stream.workspace = vmalloc(inflate_size);
++	memalloc_nofs_restore(nofs_flags);
++
++	if (unlikely(!workspace->inflate_stream.workspace)) {
++		SSDFS_ERR("unable to allocate memory for inflate stream\n");
++		goto failed_alloc_workspaces;
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("inflate stream size %d\n", inflate_size);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	INIT_LIST_HEAD(&workspace->list);
++
++	return &workspace->list;
++
++failed_alloc_workspaces:
++	ssdfs_zlib_free_workspace(&workspace->list);
++	return ERR_PTR(-ENOMEM);
++}
++
++int ssdfs_zlib_init(void)
++{
++	return ssdfs_register_compressor(&zlib_compr);
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_zlib_init);
++
++void ssdfs_zlib_exit(void)
++{
++	ssdfs_unregister_compressor(&zlib_compr);
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_zlib_exit);
++
++static int ssdfs_zlib_compress(struct list_head *ws,
++				unsigned char *data_in,
++				unsigned char *cdata_out,
++				size_t *srclen, size_t *destlen)
++{
++	struct ssdfs_zlib_workspace *workspace;
++	z_stream *stream;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!ws || !data_in || !cdata_out || !srclen || !destlen);
++
++	SSDFS_DBG("ws_ptr %p, data_in %p, cdata_out %p, "
++		  "srclen %zu, destlen %zu\n",
++		  ws, data_in, cdata_out, *srclen, *destlen);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	workspace = list_entry(ws, struct ssdfs_zlib_workspace, list);
++	stream = &workspace->deflate_stream;
++
++	if (Z_OK != zlib_deflateInit(stream, COMPR_LEVEL)) {
++		SSDFS_ERR("zlib_deflateInit() failed\n");
++		err = -EINVAL;
++		goto failed_compress;
++	}
++
++	stream->next_in = data_in;
++	stream->avail_in = *srclen;
++	stream->total_in = 0;
++
++	stream->next_out = cdata_out;
++	stream->avail_out = *destlen;
++	stream->total_out = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("calling deflate with: "
++		  "stream->avail_in %lu, stream->total_in %lu, "
++		  "stream->avail_out %lu, stream->total_out %lu\n",
++		  (unsigned long)stream->avail_in,
++		  (unsigned long)stream->total_in,
++		  (unsigned long)stream->avail_out,
++		  (unsigned long)stream->total_out);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	err = zlib_deflate(stream, Z_FINISH);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("deflate returned with: "
++		  "stream->avail_in %lu, stream->total_in %lu, "
++		  "stream->avail_out %lu, stream->total_out %lu\n",
++		  (unsigned long)stream->avail_in,
++		  (unsigned long)stream->total_in,
++		  (unsigned long)stream->avail_out,
++		  (unsigned long)stream->total_out);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (err != Z_STREAM_END) {
++		if (err == Z_OK) {
++			err = -E2BIG;
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("unable to compress: "
++				  "total_in %zu, total_out %zu\n",
++				  stream->total_in, stream->total_out);
++#endif /* CONFIG_SSDFS_DEBUG */
++		} else {
++			SSDFS_ERR("ZLIB compression failed: "
++				  "internal err %d\n",
++				  err);
++		}
++		goto failed_compress;
++	}
++
++	err = zlib_deflateEnd(stream);
++	if (err != Z_OK) {
++		SSDFS_ERR("ZLIB compression failed with internal err %d\n",
++			  err);
++		goto failed_compress;
++	}
++
++	if (stream->total_out >= stream->total_in) {
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("unable to compress: total_in %zu, total_out %zu\n",
++			  stream->total_in, stream->total_out);
++#endif /* CONFIG_SSDFS_DEBUG */
++		err = -E2BIG;
++		goto failed_compress;
++	}
++
++	*destlen = stream->total_out;
++	*srclen = stream->total_in;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("compress has succeded: srclen %zu, destlen %zu\n",
++		    *srclen, *destlen);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++failed_compress:
++	return err;
++}
++
++static int ssdfs_zlib_decompress(struct list_head *ws,
++				 unsigned char *cdata_in,
++				 unsigned char *data_out,
++				 size_t srclen, size_t destlen)
++{
++	struct ssdfs_zlib_workspace *workspace;
++	int wbits = MAX_WBITS;
++	int ret = Z_OK;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!ws || !cdata_in || !data_out);
++
++	SSDFS_DBG("ws_ptr %p, cdata_in %p, data_out %p, "
++		  "srclen %zu, destlen %zu\n",
++		  ws, cdata_in, data_out, srclen, destlen);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	workspace = list_entry(ws, struct ssdfs_zlib_workspace, list);
++
++	workspace->inflate_stream.next_in = cdata_in;
++	workspace->inflate_stream.avail_in = srclen;
++	workspace->inflate_stream.total_in = 0;
++
++	workspace->inflate_stream.next_out = data_out;
++	workspace->inflate_stream.avail_out = destlen;
++	workspace->inflate_stream.total_out = 0;
++
++	/*
++	 * If it's deflate, and it's got no preset dictionary, then
++	 * we can tell zlib to skip the adler32 check.
++	 */
++	if (srclen > 2 && !(cdata_in[1] & PRESET_DICT) &&
++	    ((cdata_in[0] & 0x0f) == Z_DEFLATED) &&
++	    !(((cdata_in[0] << 8) + cdata_in[1]) % 31)) {
++
++		wbits = -((cdata_in[0] >> 4) + 8);
++		workspace->inflate_stream.next_in += 2;
++		workspace->inflate_stream.avail_in -= 2;
++	}
++
++	if (Z_OK != zlib_inflateInit2(&workspace->inflate_stream, wbits)) {
++		SSDFS_ERR("zlib_inflateInit2() failed\n");
++		return -EINVAL;
++	}
++
++	do {
++		ret = zlib_inflate(&workspace->inflate_stream, Z_FINISH);
++	} while (ret == Z_OK);
++
++	zlib_inflateEnd(&workspace->inflate_stream);
++
++	if (ret != Z_STREAM_END) {
++		SSDFS_ERR("inflate returned %d\n", ret);
++		return -EFAULT;
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("decompression has succeded: "
++		  "total_in %zu, total_out %zu\n",
++		  workspace->inflate_stream.total_in,
++		  workspace->inflate_stream.total_out);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return 0;
++}
+diff --git a/fs/ssdfs/compression.c b/fs/ssdfs/compression.c
+new file mode 100644
+index 000000000000..b9956aef1cd4
+--- /dev/null
++++ b/fs/ssdfs/compression.c
+@@ -0,0 +1,569 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/compression.c - compression logic implementation.
++ *
++ * Copyright (c) 2019-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <linux/kernel.h>
++#include <linux/mm.h>
++#include <linux/slab.h>
++#include <linux/highmem.h>
++#include <linux/pagemap.h>
++#include <linux/rwsem.h>
++#include <linux/zlib.h>
++#include <linux/pagevec.h>
++
++#include <kunit/visibility.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "compression.h"
++
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++atomic64_t ssdfs_compr_folio_leaks;
++atomic64_t ssdfs_compr_memory_leaks;
++atomic64_t ssdfs_compr_cache_leaks;
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++/*
++ * void ssdfs_compr_cache_leaks_increment(void *kaddr)
++ * void ssdfs_compr_cache_leaks_decrement(void *kaddr)
++ * void *ssdfs_compr_kmalloc(size_t size, gfp_t flags)
++ * void *ssdfs_compr_kzalloc(size_t size, gfp_t flags)
++ * void *ssdfs_compr_kcalloc(size_t n, size_t size, gfp_t flags)
++ * void ssdfs_compr_kfree(void *kaddr)
++ * struct folio *ssdfs_compr_alloc_folio(gfp_t gfp_mask,
++ *                                       unsigned int order)
++ * struct folio *ssdfs_compr_add_batch_folio(struct folio_batch *batch,
++ *                                           unsigned int order)
++ * void ssdfs_compr_free_folio(struct folio *folio)
++ * void ssdfs_compr_folio_batch_release(struct folio_batch *batch)
++ */
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	SSDFS_MEMORY_LEAKS_CHECKER_FNS(compr)
++#else
++	SSDFS_MEMORY_ALLOCATOR_FNS(compr)
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++void ssdfs_compr_memory_leaks_init(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	atomic64_set(&ssdfs_compr_folio_leaks, 0);
++	atomic64_set(&ssdfs_compr_memory_leaks, 0);
++	atomic64_set(&ssdfs_compr_cache_leaks, 0);
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++void ssdfs_compr_check_memory_leaks(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	if (atomic64_read(&ssdfs_compr_folio_leaks) != 0) {
++		SSDFS_ERR("COMPRESSION: "
++			  "memory leaks include %lld folios\n",
++			  atomic64_read(&ssdfs_compr_folio_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_compr_memory_leaks) != 0) {
++		SSDFS_ERR("COMPRESSION: "
++			  "memory allocator suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_compr_memory_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_compr_cache_leaks) != 0) {
++		SSDFS_ERR("COMPRESSION: "
++			  "caches suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_compr_cache_leaks));
++	}
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++struct ssdfs_compressor *ssdfs_compressors[SSDFS_COMPR_TYPES_CNT];
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_compressors);
++
++static struct list_head compr_idle_workspace[SSDFS_COMPR_TYPES_CNT];
++static spinlock_t compr_workspace_lock[SSDFS_COMPR_TYPES_CNT];
++static int compr_num_workspace[SSDFS_COMPR_TYPES_CNT];
++static atomic_t compr_alloc_workspace[SSDFS_COMPR_TYPES_CNT];
++static wait_queue_head_t compr_workspace_wait[SSDFS_COMPR_TYPES_CNT];
++
++static inline bool unable_compress(int type)
++{
++	if (!ssdfs_compressors[type])
++		return true;
++	else if (!ssdfs_compressors[type]->compr_ops)
++		return true;
++	else if (!ssdfs_compressors[type]->compr_ops->compress)
++		return true;
++	return false;
++}
++
++static inline bool unable_decompress(int type)
++{
++	if (!ssdfs_compressors[type])
++		return true;
++	else if (!ssdfs_compressors[type]->compr_ops)
++		return true;
++	else if (!ssdfs_compressors[type]->compr_ops->decompress)
++		return true;
++	return false;
++}
++
++static int ssdfs_none_compress(struct list_head *ws_ptr,
++				unsigned char *data_in,
++				unsigned char *cdata_out,
++				size_t *srclen, size_t *destlen)
++{
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("data_in %p, cdata_out %p, srclen %p, destlen %p\n",
++		  data_in, cdata_out, srclen, destlen);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (*srclen > *destlen) {
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("src_len %zu > dest_len %zu\n",
++			  *srclen, *destlen);
++#endif /* CONFIG_SSDFS_DEBUG */
++		return -E2BIG;
++	}
++
++	err = ssdfs_memcpy(cdata_out, 0, PAGE_SIZE,
++			   data_in, 0, PAGE_SIZE,
++			   *srclen);
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to copy: err %d\n", err);
++		return err;
++	}
++
++	*destlen = *srclen;
++	return 0;
++}
++
++static int ssdfs_none_decompress(struct list_head *ws_ptr,
++				 unsigned char *cdata_in,
++				 unsigned char *data_out,
++				 size_t srclen, size_t destlen)
++{
++	/* TODO: implement ssdfs_none_decompress() */
++	SSDFS_WARN("TODO: implement %s\n", __func__);
++	return -EOPNOTSUPP;
++}
++
++static const struct ssdfs_compress_ops ssdfs_compr_none_ops = {
++	.compress = ssdfs_none_compress,
++	.decompress = ssdfs_none_decompress,
++};
++
++static struct ssdfs_compressor ssdfs_none_compr = {
++	.type = SSDFS_COMPR_NONE,
++	.compr_ops = &ssdfs_compr_none_ops,
++	.name = "none",
++};
++
++static inline bool unknown_compression(int type)
++{
++	return type < SSDFS_COMPR_NONE || type >= SSDFS_COMPR_TYPES_CNT;
++}
++
++int ssdfs_register_compressor(struct ssdfs_compressor *compr)
++{
++	SSDFS_INFO("register %s compressor\n", compr->name);
++	ssdfs_compressors[compr->type] = compr;
++	return 0;
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_register_compressor);
++
++int ssdfs_unregister_compressor(struct ssdfs_compressor *compr)
++{
++	SSDFS_INFO("unregister %s compressor\n", compr->name);
++	ssdfs_compressors[compr->type] = NULL;
++	return 0;
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_unregister_compressor);
++
++int ssdfs_compressors_init(void)
++{
++	int i;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("init compressors subsystem\n");
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	for (i = 0; i < SSDFS_COMPR_TYPES_CNT; i++) {
++		INIT_LIST_HEAD(&compr_idle_workspace[i]);
++		spin_lock_init(&compr_workspace_lock[i]);
++		compr_num_workspace[i] = 0;
++		atomic_set(&compr_alloc_workspace[i], 0);
++		init_waitqueue_head(&compr_workspace_wait[i]);
++	}
++
++	err = ssdfs_zlib_init();
++	if (err)
++		goto out;
++
++	err = ssdfs_lzo_init();
++	if (err)
++		goto zlib_exit;
++
++	err = ssdfs_register_compressor(&ssdfs_none_compr);
++	if (err)
++		goto lzo_exit;
++
++	return 0;
++
++lzo_exit:
++	ssdfs_lzo_exit();
++
++zlib_exit:
++	ssdfs_zlib_exit();
++
++out:
++	return err;
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_compressors_init);
++
++void ssdfs_free_workspaces(void)
++{
++	struct list_head *workspace;
++	const struct ssdfs_compress_ops *ops;
++	int i;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("destruct auxiliary workspaces\n");
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	for (i = 0; i < SSDFS_COMPR_TYPES_CNT; i++) {
++		if (!ssdfs_compressors[i])
++			continue;
++
++		ops = ssdfs_compressors[i]->compr_ops;
++#ifdef CONFIG_SSDFS_DEBUG
++		BUG_ON(!ops);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		while (!list_empty(&compr_idle_workspace[i])) {
++			workspace = compr_idle_workspace[i].next;
++			list_del(workspace);
++			if (ops->free_workspace)
++				ops->free_workspace(workspace);
++			atomic_dec(&compr_alloc_workspace[i]);
++			compr_num_workspace[i]--;
++		}
++	}
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_free_workspaces);
++
++void ssdfs_compressors_exit(void)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("deinitialize compressors subsystem\n");
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	ssdfs_free_workspaces();
++	ssdfs_unregister_compressor(&ssdfs_none_compr);
++	ssdfs_zlib_exit();
++	ssdfs_lzo_exit();
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_compressors_exit);
++
++/*
++ * Find an available workspace or allocate a new one.
++ * ERR_PTR is returned in the case of error.
++ */
++static struct list_head *ssdfs_find_workspace(int type)
++{
++	struct list_head *workspace;
++	int cpus;
++	struct list_head *idle_workspace;
++	spinlock_t *workspace_lock;
++	atomic_t *alloc_workspace;
++	wait_queue_head_t *workspace_wait;
++	int *num_workspace;
++	const struct ssdfs_compress_ops *ops;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("type %d\n", type);
++
++	if (unknown_compression(type)) {
++		SSDFS_ERR("unknown compression type %d\n", type);
++		BUG();
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	ops = ssdfs_compressors[type]->compr_ops;
++
++	if (!ops->alloc_workspace)
++		return ERR_PTR(-EOPNOTSUPP);
++
++	cpus = num_online_cpus();
++	idle_workspace = &compr_idle_workspace[type];
++	workspace_lock = &compr_workspace_lock[type];
++	alloc_workspace = &compr_alloc_workspace[type];
++	workspace_wait = &compr_workspace_wait[type];
++	num_workspace = &compr_num_workspace[type];
++
++again:
++	spin_lock(workspace_lock);
++
++	if (!list_empty(idle_workspace)) {
++		workspace = idle_workspace->next;
++		list_del(workspace);
++		(*num_workspace)--;
++		spin_unlock(workspace_lock);
++		return workspace;
++	}
++
++	if (atomic_read(alloc_workspace) > cpus) {
++		ktime_t timeout = KTIME_MAX;
++		DEFINE_WAIT(wait);
++
++		spin_unlock(workspace_lock);
++		timeout = ktime_add_ns(ktime_get(), jiffies_to_nsecs(HZ));
++		prepare_to_wait(workspace_wait, &wait, TASK_INTERRUPTIBLE);
++		if (atomic_read(alloc_workspace) > cpus)
++			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
++		finish_wait(workspace_wait, &wait);
++		goto again;
++	}
++
++	atomic_inc(alloc_workspace);
++	spin_unlock(workspace_lock);
++
++	workspace = ops->alloc_workspace();
++	if (IS_ERR(workspace)) {
++		atomic_dec(alloc_workspace);
++		wake_up(workspace_wait);
++	}
++
++	return workspace;
++}
++
++static void ssdfs_free_workspace(int type, struct list_head *workspace)
++{
++	struct list_head *idle_workspace;
++	spinlock_t *workspace_lock;
++	atomic_t *alloc_workspace;
++	wait_queue_head_t *workspace_wait;
++	int *num_workspace;
++	const struct ssdfs_compress_ops *ops;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("type %d, workspace %p\n", type, workspace);
++
++	if (unknown_compression(type)) {
++		SSDFS_ERR("unknown compression type %d\n", type);
++		BUG();
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	ops = ssdfs_compressors[type]->compr_ops;
++
++	if (!ops->free_workspace)
++		return;
++
++	idle_workspace = &compr_idle_workspace[type];
++	workspace_lock = &compr_workspace_lock[type];
++	alloc_workspace = &compr_alloc_workspace[type];
++	workspace_wait = &compr_workspace_wait[type];
++	num_workspace = &compr_num_workspace[type];
++
++	spin_lock(workspace_lock);
++	if (*num_workspace < num_online_cpus()) {
++		list_add_tail(workspace, idle_workspace);
++		(*num_workspace)++;
++		spin_unlock(workspace_lock);
++		goto wake;
++	}
++	spin_unlock(workspace_lock);
++
++	ops->free_workspace(workspace);
++	atomic_dec(alloc_workspace);
++wake:
++	if (wq_has_sleeper(workspace_wait))
++		wake_up(workspace_wait);
++}
++
++#define SSDFS_DICT_SIZE			256
++#define SSDFS_MIN_MAX_DIFF_THRESHOLD	150
++
++bool ssdfs_can_compress_data(struct page *page,
++			     unsigned data_size)
++{
++	unsigned *counts;
++	unsigned found_symbols = 0;
++	unsigned min, max;
++	u8 *kaddr;
++	int i;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(data_size == 0 || data_size > PAGE_SIZE);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++#ifdef CONFIG_SSDFS_ZLIB
++	if (CONFIG_SSDFS_ZLIB_COMR_LEVEL == Z_NO_COMPRESSION)
++		return false;
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	counts = ssdfs_compr_kzalloc(sizeof(unsigned) * SSDFS_DICT_SIZE,
++				     GFP_KERNEL);
++	if (!counts) {
++		SSDFS_WARN("fail to alloc array\n");
++		return true;
++	}
++
++	min = SSDFS_DICT_SIZE;
++	max = 0;
++
++	kaddr = (u8 *)kmap_local_page(page);
++	for (i = 0; i < data_size; i++) {
++		u8 *value = kaddr + i;
++		counts[*value]++;
++		if (counts[*value] == 1)
++			found_symbols++;
++		if (counts[*value] < min)
++			min = counts[*value];
++		if (counts[*value] > max)
++			max = counts[*value];
++	}
++	kunmap_local(kaddr);
++
++	ssdfs_compr_kfree(counts);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("data_size %u, found_symbols %u, min %u, max %u\n",
++		  data_size, found_symbols, min, max);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return (max - min) >= SSDFS_MIN_MAX_DIFF_THRESHOLD;
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_can_compress_data);
++
++int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
++		    size_t *srclen, size_t *destlen)
++{
++	const struct ssdfs_compress_ops *ops;
++	struct list_head *workspace = NULL;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("type %d, data_in %p, cdata_out %p, "
++		  "srclen %zu, destlen %zu\n",
++		  type, data_in, cdata_out, *srclen, *destlen);
++
++	if (unknown_compression(type)) {
++		SSDFS_ERR("unknown compression type %d\n", type);
++		BUG();
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (unable_compress(type)) {
++		SSDFS_ERR("unsupported compression type %d\n", type);
++		err = -EOPNOTSUPP;
++		goto failed_compress;
++	}
++
++	workspace = ssdfs_find_workspace(type);
++	if (PTR_ERR(workspace) == -EOPNOTSUPP &&
++	    ssdfs_compressors[type]->type == SSDFS_COMPR_NONE) {
++		/*
++		 * None compressor case.
++		 * Simply call compress() operation.
++		 */
++	} else if (IS_ERR(workspace)) {
++		err = -ENOMEM;
++		goto failed_compress;
++	}
++
++	ops = ssdfs_compressors[type]->compr_ops;
++	err = ops->compress(workspace, data_in, cdata_out, srclen, destlen);
++
++	ssdfs_free_workspace(type, workspace);
++	if (err == -E2BIG) {
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("%s compressor is unable to compress data %p "
++			  "of size %zu\n",
++			  ssdfs_compressors[type]->name,
++			  data_in, *srclen);
++#endif /* CONFIG_SSDFS_DEBUG */
++		goto failed_compress;
++	} else if (unlikely(err)) {
++		SSDFS_ERR("%s compressor fails to compress data %p "
++			  "of size %zu because of err %d\n",
++			  ssdfs_compressors[type]->name,
++			  data_in, *srclen, err);
++		goto failed_compress;
++	}
++
++	return 0;
++
++failed_compress:
++	return err;
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_compress);
++
++int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
++			size_t srclen, size_t destlen)
++{
++	const struct ssdfs_compress_ops *ops;
++	struct list_head *workspace;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("type %d, cdata_in %p, data_out %p, "
++		  "srclen %zu, destlen %zu\n",
++		  type, cdata_in, data_out, srclen, destlen);
++
++	if (unknown_compression(type)) {
++		SSDFS_ERR("unknown compression type %d\n", type);
++		BUG();
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (unable_decompress(type)) {
++		SSDFS_ERR("unsupported compression type %d\n", type);
++		err = -EOPNOTSUPP;
++		goto failed_decompress;
++	}
++
++	workspace = ssdfs_find_workspace(type);
++	if (PTR_ERR(workspace) == -EOPNOTSUPP &&
++	    ssdfs_compressors[type]->type == SSDFS_COMPR_NONE) {
++		/*
++		 * None compressor case.
++		 * Simply call decompress() operation.
++		 */
++	} else if (IS_ERR(workspace)) {
++		err = -ENOMEM;
++		goto failed_decompress;
++	}
++
++	ops = ssdfs_compressors[type]->compr_ops;
++	err = ops->decompress(workspace, cdata_in, data_out, srclen, destlen);
++
++	ssdfs_free_workspace(type, workspace);
++	if (unlikely(err)) {
++		SSDFS_ERR("%s compresor fails to decompress data %p "
++			  "of size %zu because of err %d\n",
++			  ssdfs_compressors[type]->name,
++			  cdata_in, srclen, err);
++		goto failed_decompress;
++	}
++
++	return 0;
++
++failed_decompress:
++	return err;
++}
++EXPORT_SYMBOL_IF_KUNIT(ssdfs_decompress);
+diff --git a/fs/ssdfs/compression.h b/fs/ssdfs/compression.h
+new file mode 100644
+index 000000000000..14e50531ee29
+--- /dev/null
++++ b/fs/ssdfs/compression.h
+@@ -0,0 +1,108 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/compression.h - compression/decompression support declarations.
++ *
++ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
++ *              http://www.hgst.com/
++ * Copyright (c) 2014-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ *
++ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
++ *
++ * Created by HGST, San Jose Research Center, Storage Architecture Group
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cyril Guyot
++ *                  Zvonimir Bandic
++ */
++
++#ifndef _SSDFS_COMPRESSION_H
++#define _SSDFS_COMPRESSION_H
++
++/*
++ * SSDFS compression algorithms.
++ *
++ * SSDFS_COMPR_NONE: no compression
++ * SSDFS_COMPR_ZLIB: ZLIB compression
++ * SSDFS_COMPR_LZO: LZO compression
++ * SSDFS_COMPR_TYPES_CNT: count of supported compression types
++ */
++enum {
++	SSDFS_COMPR_NONE,
++	SSDFS_COMPR_ZLIB,
++	SSDFS_COMPR_LZO,
++	SSDFS_COMPR_TYPES_CNT,
++};
++
++#define SSDFS_UNCOMPRESSED_BLOB_SIZE		(64)
++#define SSDFS_UNCOMPR_BLOB_UPPER_THRESHOLD	(128)
++
++/*
++ * struct ssdfs_compress_ops - compressor operations
++ * @alloc_workspace - prepare workspace for (de)compression
++ * @free_workspace - free workspace after (de)compression
++ * @compress - compression method
++ * @decompress - decompression method
++ */
++struct ssdfs_compress_ops {
++	struct list_head * (*alloc_workspace)(void);
++	void (*free_workspace)(struct list_head *workspace);
++	int (*compress)(struct list_head *ws_ptr,
++			unsigned char *data_in,
++			unsigned char *cdata_out,
++			size_t *srclen,
++			size_t *destlen);
++	int (*decompress)(struct list_head *ws_ptr,
++			unsigned char *cdata_in,
++			unsigned char *data_out,
++			size_t srclen,
++			size_t destlen);
++};
++
++/*
++ * struct ssdfs_compressor - compressor type.
++ * @type: compressor type
++ * @name: compressor name
++ * @compr_ops: compressor operations
++ */
++struct ssdfs_compressor {
++	int type;
++	const char *name;
++	const struct ssdfs_compress_ops *compr_ops;
++};
++
++/* Available SSDFS compressors */
++extern struct ssdfs_compressor *ssdfs_compressors[SSDFS_COMPR_TYPES_CNT];
++
++/* compression.c */
++int ssdfs_register_compressor(struct ssdfs_compressor *);
++int ssdfs_unregister_compressor(struct ssdfs_compressor *);
++bool ssdfs_can_compress_data(struct page *page, unsigned data_size);
++int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
++		    size_t *srclen, size_t *destlen);
++int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
++			size_t srclen, size_t destlen);
++
++#ifdef CONFIG_SSDFS_ZLIB
++/* compr_zlib.c */
++int ssdfs_zlib_init(void);
++void ssdfs_zlib_exit(void);
++#else
++static inline int ssdfs_zlib_init(void) { return 0; }
++static inline void ssdfs_zlib_exit(void) { return; }
++#endif /* CONFIG_SSDFS_ZLIB */
++
++#ifdef CONFIG_SSDFS_LZO
++/* compr_lzo.c */
++int ssdfs_lzo_init(void);
++void ssdfs_lzo_exit(void);
++#else
++static inline int ssdfs_lzo_init(void) { return 0; }
++static inline void ssdfs_lzo_exit(void) { return; }
++#endif /* CONFIG_SSDFS_LZO */
++
++#endif /* _SSDFS_COMPRESSION_H */
+-- 
+2.34.1
+

@@ -1,0 +1,1684 @@
+From e5706d97802a81c47d1a613f7acf416a220242fb Mon Sep 17 00:00:00 2001
+From: Viacheslav Dubeyko <slava@dubeyko.com>
+Date: Mon, 2 Feb 2026 17:26:36 -0800
+Subject: [PATCH v2 02/79] ssdfs: add key file system declarations
+
+This patch adds declarations of key in-core file system's
+metadata structures and key constants.
+
+Signed-off-by: Viacheslav Dubeyko <slava@dubeyko.com>
+---
+ fs/ssdfs/ssdfs_constants.h    | 214 +++++++++
+ fs/ssdfs/ssdfs_fs_info.h      | 821 ++++++++++++++++++++++++++++++++++
+ fs/ssdfs/ssdfs_inode_info.h   | 144 ++++++
+ fs/ssdfs/ssdfs_thread_info.h  |  43 ++
+ fs/ssdfs/version.h            |   9 +
+ include/trace/events/ssdfs.h  | 256 +++++++++++
+ include/uapi/linux/ssdfs_fs.h | 126 ++++++
+ 7 files changed, 1613 insertions(+)
+ create mode 100644 fs/ssdfs/ssdfs_constants.h
+ create mode 100644 fs/ssdfs/ssdfs_fs_info.h
+ create mode 100644 fs/ssdfs/ssdfs_inode_info.h
+ create mode 100644 fs/ssdfs/ssdfs_thread_info.h
+ create mode 100644 fs/ssdfs/version.h
+ create mode 100644 include/trace/events/ssdfs.h
+ create mode 100644 include/uapi/linux/ssdfs_fs.h
+
+diff --git a/fs/ssdfs/ssdfs_constants.h b/fs/ssdfs/ssdfs_constants.h
+new file mode 100644
+index 000000000000..073906d0cd81
+--- /dev/null
++++ b/fs/ssdfs/ssdfs_constants.h
+@@ -0,0 +1,214 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/ssdfs_constants.h - SSDFS constant declarations.
++ *
++ * Copyright (c) 2019-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#ifndef _SSDFS_CONSTANTS_H
++#define _SSDFS_CONSTANTS_H
++
++/*
++ * Thread types
++ */
++enum {
++	SSDFS_PEB_READ_THREAD,
++	SSDFS_PEB_FLUSH_THREAD,
++	SSDFS_PEB_GC_THREAD,
++#ifdef CONFIG_SSDFS_ONLINE_FSCK
++	SSDFS_PEB_FSCK_THREAD,
++#endif /* CONFIG_SSDFS_ONLINE_FSCK */
++	SSDFS_PEB_THREAD_TYPE_MAX,
++};
++
++enum {
++	SSDFS_SEG_USING_GC_THREAD,
++	SSDFS_SEG_USED_GC_THREAD,
++	SSDFS_SEG_PRE_DIRTY_GC_THREAD,
++	SSDFS_SEG_DIRTY_GC_THREAD,
++	SSDFS_DESTROY_SEG_GC_THREAD,
++	SSDFS_BTREE_NODE_GC_THREAD,
++	SSDFS_GC_THREAD_TYPE_MAX,
++};
++
++enum {
++	SSDFS_256B	= 256,
++	SSDFS_512B	= 512,
++	SSDFS_1KB	= 1024,
++	SSDFS_2KB	= 2048,
++	SSDFS_4KB	= 4096,
++	SSDFS_8KB	= 8192,
++	SSDFS_16KB	= 16384,
++	SSDFS_32KB	= 32768,
++	SSDFS_64KB	= 65536,
++	SSDFS_128KB	= 131072,
++	SSDFS_256KB	= 262144,
++	SSDFS_512KB	= 524288,
++	SSDFS_1MB	= 1048576,
++	SSDFS_2MB	= 2097152,
++	SSDFS_4MB	= 4194304,
++	SSDFS_8MB	= 8388608,
++	SSDFS_16MB	= 16777216,
++	SSDFS_32MB	= 33554432,
++	SSDFS_64MB	= 67108864,
++	SSDFS_128MB	= 134217728,
++	SSDFS_256MB	= 268435456,
++	SSDFS_512MB	= 536870912,
++	SSDFS_1GB	= 1073741824,
++	SSDFS_2GB	= 2147483648,
++	SSDFS_4GB	= 4294967296,
++	SSDFS_8GB	= 8589934592,
++	SSDFS_16GB	= 17179869184,
++	SSDFS_32GB	= 34359738368,
++	SSDFS_64GB	= 68719476736,
++};
++
++#define SSDFS_256B_STRING	"265B"
++#define SSDFS_512B_STRING	"512B"
++#define SSDFS_1KB_STRING	"1KB"
++#define SSDFS_2KB_STRING	"2KB"
++#define SSDFS_4KB_STRING	"4KB"
++#define SSDFS_8KB_STRING	"8KB"
++#define SSDFS_16KB_STRING	"16KB"
++#define SSDFS_32KB_STRING	"32KB"
++#define SSDFS_64KB_STRING	"64KB"
++#define SSDFS_128KB_STRING	"128KB"
++#define SSDFS_256KB_STRING	"256KB"
++#define SSDFS_512KB_STRING	"512KB"
++#define SSDFS_1MB_STRING	"1MB"
++#define SSDFS_2MB_STRING	"2MB"
++#define SSDFS_4MB_STRING	"4MB"
++#define SSDFS_8MB_STRING	"8MB"
++#define SSDFS_16MB_STRING	"16MB"
++#define SSDFS_32MB_STRING	"32MB"
++#define SSDFS_64MB_STRING	"64MB"
++#define SSDFS_128MB_STRING	"128MB"
++#define SSDFS_256MB_STRING	"256MB"
++#define SSDFS_512MB_STRING	"512MB"
++#define SSDFS_1GB_STRING	"1GB"
++#define SSDFS_2GB_STRING	"2GB"
++#define SSDFS_4GB_STRING	"4GB"
++#define SSDFS_8GB_STRING	"8GB"
++#define SSDFS_16GB_STRING	"16GB"
++#define SSDFS_32GB_STRING	"32GB"
++#define SSDFS_64GB_STRING	"64GB"
++#define SSDFS_NUMBER_UNKNOWN	"unknown"
++
++enum {
++	SSDFS_UNKNOWN_PAGE_TYPE,
++	SSDFS_USER_DATA_PAGES,
++	SSDFS_METADATA_PAGES,
++	SSDFS_PAGES_TYPE_MAX
++};
++
++#define SSDFS_INVALID_CNO		U64_MAX
++#define SSDFS_SECTOR_SHIFT		(9)
++#define SSDFS_DEFAULT_TIMEOUT		(msecs_to_jiffies(120000))
++#define SSDFS_DEFAULT_TIMEOUT_NS	(jiffies64_to_nsecs(SSDFS_DEFAULT_TIMEOUT))
++#define SSDFS_USER_DATA_TIME_FACTOR	(3)
++#define SSDFS_INDEX_NODE_TIME_FACTOR	(5)
++#define SSDFS_LEAF_NODE_TIME_FACTOR	(5)
++#define SSDFS_HYBRID_NODE_TIME_FACTOR	(10)
++#define SSDFS_NANOSECS_PER_SEC		(1000000000)
++#define SSDFS_SECS_PER_MINUTE		(60)
++#define SSDFS_NANOSECS_PER_MINUTE	((u64)SSDFS_SECS_PER_MINUTE * \
++					 SSDFS_NANOSECS_PER_SEC)
++#define SSDFS_SECS_PER_HOUR		(60 * 60)
++#define SSDFS_HOURS_PER_DAY		(24)
++#define SSDFS_DAYS_PER_WEEK		(7)
++#define SSDFS_WEEKS_PER_MONTH		(4)
++#define SSDFS_EXTENT_LEN_MAX		(8)
++#define SSDFS_MAX_NUMBER_OF_TRIES	(10)
++#define SSDFS_UNMOUNT_NUMBER_OF_TRIES	(300)
++#define SSDFS_SB_SNAPSHOT_LOG_PAGES	(2)
++#define SSDFS_DEFAULT_PROTECTION_RANGE	((u64)20 * SSDFS_NANOSECS_PER_MINUTE)
++
++/*
++ * Every PEB contains a sequence of logs. Log starts from
++ * header and could be ended by footer. Header and footer
++ * requires as minimum 2 logical blocks for metadata.
++ * It needs to prevent 2 logical blocks from allocation
++ * in every erase block (PEB).
++ */
++#define SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB	(2)
++
++static inline
++const char *GRANULARITY2STRING(u64 value)
++{
++	switch (value) {
++	case SSDFS_256B:
++		return SSDFS_256B_STRING;
++	case SSDFS_512B:
++		return SSDFS_512B_STRING;
++	case SSDFS_1KB:
++		return SSDFS_1KB_STRING;
++	case SSDFS_2KB:
++		return SSDFS_2KB_STRING;
++	case SSDFS_4KB:
++		return SSDFS_4KB_STRING;
++	case SSDFS_8KB:
++		return SSDFS_8KB_STRING;
++	case SSDFS_16KB:
++		return SSDFS_16KB_STRING;
++	case SSDFS_32KB:
++		return SSDFS_32KB_STRING;
++	case SSDFS_64KB:
++		return SSDFS_64KB_STRING;
++	case SSDFS_128KB:
++		return SSDFS_128KB_STRING;
++	case SSDFS_256KB:
++		return SSDFS_256KB_STRING;
++	case SSDFS_512KB:
++		return SSDFS_512KB_STRING;
++	case SSDFS_1MB:
++		return SSDFS_1MB_STRING;
++	case SSDFS_2MB:
++		return SSDFS_2MB_STRING;
++	case SSDFS_4MB:
++		return SSDFS_4MB_STRING;
++	case SSDFS_8MB:
++		return SSDFS_8MB_STRING;
++	case SSDFS_16MB:
++		return SSDFS_16MB_STRING;
++	case SSDFS_32MB:
++		return SSDFS_32MB_STRING;
++	case SSDFS_64MB:
++		return SSDFS_64MB_STRING;
++	case SSDFS_128MB:
++		return SSDFS_128MB_STRING;
++	case SSDFS_256MB:
++		return SSDFS_256MB_STRING;
++	case SSDFS_512MB:
++		return SSDFS_512MB_STRING;
++	case SSDFS_1GB:
++		return SSDFS_1GB_STRING;
++	case SSDFS_2GB:
++		return SSDFS_2GB_STRING;
++	case SSDFS_4GB:
++		return SSDFS_4GB_STRING;
++	case SSDFS_8GB:
++		return SSDFS_8GB_STRING;
++	case SSDFS_16GB:
++		return SSDFS_16GB_STRING;
++	case SSDFS_32GB:
++		return SSDFS_32GB_STRING;
++	case SSDFS_64GB:
++		return SSDFS_64GB_STRING;
++	}
++
++	return SSDFS_NUMBER_UNKNOWN;
++}
++
++enum {
++	SSDFS_PARENT_LOCK = 0,
++	SSDFS_CHILD_LOCK,
++};
++
++#endif /* _SSDFS_CONSTANTS_H */
+diff --git a/fs/ssdfs/ssdfs_fs_info.h b/fs/ssdfs/ssdfs_fs_info.h
+new file mode 100644
+index 000000000000..082b4314095e
+--- /dev/null
++++ b/fs/ssdfs/ssdfs_fs_info.h
+@@ -0,0 +1,821 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/ssdfs_fs_info.h - in-core fs information.
++ *
++ * Copyright (c) 2019-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#ifndef _SSDFS_FS_INFO_H
++#define _SSDFS_FS_INFO_H
++
++/* Global FS states */
++enum {
++	SSDFS_UNKNOWN_GLOBAL_FS_STATE,
++	SSDFS_REGULAR_FS_OPERATIONS,
++	SSDFS_METADATA_GOING_FLUSHING,
++	SSDFS_METADATA_UNDER_FLUSH,
++	SSDFS_UNMOUNT_METADATA_GOING_FLUSHING,
++	SSDFS_UNMOUNT_METADATA_UNDER_FLUSH,
++	SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH,
++	SSDFS_UNMOUNT_COMMIT_SUPERBLOCK,
++	SSDFS_UNMOUNT_DESTROY_METADATA,
++	SSDFS_GLOBAL_FS_STATE_MAX
++};
++
++/*
++ * struct ssdfs_volume_block - logical block
++ * @seg_id: segment ID
++ * @blk_index: block index in segment
++ */
++struct ssdfs_volume_block {
++	u64 seg_id;
++	u16 blk_index;
++};
++
++/*
++ * struct ssdfs_volume_extent - logical extent
++ * @start: initial logical block
++ * @len: extent length
++ */
++struct ssdfs_volume_extent {
++	struct ssdfs_volume_block start;
++	u16 len;
++};
++
++/*
++ * struct ssdfs_peb_extent - PEB's extent
++ * @leb_id: LEB ID
++ * @peb_id: PEB ID
++ * @page_offset: offset in pages
++ * @pages_count: pages count
++ */
++struct ssdfs_peb_extent {
++	u64 leb_id;
++	u64 peb_id;
++	u32 page_offset;
++	u32 pages_count;
++};
++
++/*
++ * struct ssdfs_zone_fragment - zone fragment
++ * @ino: inode identification number
++ * @logical_blk_offset: logical offset from file's beginning in blocks
++ * @extent: zone fragment descriptor
++ */
++struct ssdfs_zone_fragment {
++	u64 ino;
++	u64 logical_blk_offset;
++	struct ssdfs_raw_extent extent;
++};
++
++/*
++ * struct ssdfs_metadata_options - metadata options
++ * @blk_bmap.flags: block bitmap's flags
++ * @blk_bmap.compression: compression type
++ *
++ * @blk2off_tbl.flags: offset translation table's flags
++ * @blk2off_tbl.compression: compression type
++ *
++ * @user_data.flags: user data's flags
++ * @user_data.compression: compression type
++ * @user_data.migration_threshold: default value of destination PEBs in migration
++ */
++struct ssdfs_metadata_options {
++	struct {
++		u16 flags;
++		u8 compression;
++	} blk_bmap;
++
++	struct {
++		u16 flags;
++		u8 compression;
++	} blk2off_tbl;
++
++	struct {
++		u16 flags;
++		u8 compression;
++		u16 migration_threshold;
++	} user_data;
++};
++
++/*
++ * struct ssdfs_sb_info - superblock info
++ * @vh_buf: volume header buffer
++ * @vh_buf_size: size of volume header buffer in bytes
++ * @vs_buf: volume state buffer
++ * @vs_buf_size: size of volume state buffer in bytes
++ * @last_log: latest sb log
++ */
++struct ssdfs_sb_info {
++	void *vh_buf;
++	size_t vh_buf_size;
++	void *vs_buf;
++	size_t vs_buf_size;
++	struct ssdfs_peb_extent last_log;
++};
++
++/*
++ * struct ssdfs_sb_snapshot_seg_info - superblock snapshot segment info
++ * @need_snapshot_sb: does it need to snapshot superblock state?
++ * @sequence_id: index of log in the sequence
++ * @last_log: latest segment log
++ * @req: erase and re-write segment request
++ */
++struct ssdfs_sb_snapshot_seg_info {
++	bool need_snapshot_sb;
++	int sequence_id;
++	struct ssdfs_peb_extent last_log;
++	struct ssdfs_segment_request *req;
++};
++
++/*
++ * struct ssdfs_device_ops - device operations
++ * @device_name: get device name
++ * @device_size: get device size in bytes
++ * @open_zone: open zone
++ * @reopen_zone: reopen closed zone
++ * @close_zone: close zone
++ * @read: read from device
++ * @read_block: read logical block
++ * @read_blocks: read sequence of logical blocks
++ * @can_write_block: can we write into logical block?
++ * @write_block: write logical block to device
++ * @write_blocks: write sequence of logical blocks to device
++ * @erase: erase block
++ * @trim: support of background erase operation
++ * @peb_isbad: check that physical erase block is bad
++ * @sync: synchronize page cache with device
++ */
++struct ssdfs_device_ops {
++	const char * (*device_name)(struct super_block *sb);
++	__u64 (*device_size)(struct super_block *sb);
++	int (*open_zone)(struct super_block *sb, loff_t offset);
++	int (*reopen_zone)(struct super_block *sb, loff_t offset);
++	int (*close_zone)(struct super_block *sb, loff_t offset);
++	int (*read)(struct super_block *sb, u32 block_size,
++		    loff_t offset, size_t len, void *buf);
++	int (*read_block)(struct super_block *sb, struct folio *folio,
++			  loff_t offset);
++	int (*read_blocks)(struct super_block *sb, struct folio_batch *batch,
++			   loff_t offset);
++	int (*can_write_block)(struct super_block *sb, u32 block_size,
++				loff_t offset, bool need_check);
++	int (*write_block)(struct super_block *sb, loff_t offset,
++			   struct folio *folio);
++	int (*write_blocks)(struct super_block *sb, loff_t offset,
++			    struct folio_batch *batch);
++	int (*erase)(struct super_block *sb, loff_t offset, size_t len);
++	int (*trim)(struct super_block *sb, loff_t offset, size_t len);
++	int (*peb_isbad)(struct super_block *sb, loff_t offset);
++	int (*mark_peb_bad)(struct super_block *sb, loff_t offset);
++	void (*sync)(struct super_block *sb);
++};
++
++/*
++ * struct ssdfs_snapshot_subsystem - snapshots subsystem
++ * @reqs_queue: snapshot requests queue
++ * @rules_list: snapshot rules list
++ * @tree: snapshots btree
++ */
++struct ssdfs_snapshot_subsystem {
++	struct ssdfs_snapshot_reqs_queue reqs_queue;
++	struct ssdfs_snapshot_rules_list rules_list;
++	struct ssdfs_snapshots_btree_info *tree;
++};
++
++/*
++ * Option possible states
++ */
++enum {
++	/* REQUEST */
++	SSDFS_IGNORE_OPTION,
++	SSDFS_ENABLE_OPTION,
++	SSDFS_DISABLE_OPTION,
++
++	/* RESPONCE */
++	SSDFS_DONT_SUPPORT_OPTION,
++	SSDFS_USE_RECOMMENDED_VALUE,
++	SSDFS_UNRECOGNIZED_VALUE,
++	SSDFS_NOT_IMPLEMENTED_OPTION,
++	SSDFS_OPTION_HAS_BEEN_APPLIED,
++};
++
++/*
++ * struct ssdfs_tunefs_option - option state
++ * @state: option state (ignore, enable, disable)
++ * @value: option value
++ * @recommended_value: value returned by driver as better option
++ */
++struct ssdfs_tunefs_option {
++	int state;
++	int value;
++	int recommended_value;
++};
++
++/*
++ * struct ssdfs_tunefs_volume_label_option - volume label option
++ * @state: option state (ignore, enable, disable)
++ * @volume_label: volume label
++ */
++struct ssdfs_tunefs_volume_label_option {
++	int state;
++	char volume_label[SSDFS_VOLUME_LABEL_MAX];
++};
++
++/*
++ * struct ssdfs_tunefs_blkbmap_options - block bitmap options
++ * @has_backup_copy: backup copy is present?
++ * @compression: compression type
++ */
++struct ssdfs_tunefs_blkbmap_options {
++	struct ssdfs_tunefs_option has_backup_copy;
++	struct ssdfs_tunefs_option compression;
++};
++
++/*
++ * struct ssdfs_tunefs_blk2off_table_options - offsets table options
++ * @has_backup_copy: backup copy is present?
++ * @compression: compression type
++ */
++struct ssdfs_tunefs_blk2off_table_options {
++	struct ssdfs_tunefs_option has_backup_copy;
++	struct ssdfs_tunefs_option compression;
++};
++
++/*
++ * struct ssdfs_tunefs_segbmap_options - segment bitmap options
++ * @has_backup_copy: backup copy is present?
++ * @log_pages: count of pages in the full log
++ * @migration_threshold: max amount of migrating PEBs for segment
++ * @compression: compression type
++ */
++struct ssdfs_tunefs_segbmap_options {
++	struct ssdfs_tunefs_option has_backup_copy;
++	struct ssdfs_tunefs_option log_pages;
++	struct ssdfs_tunefs_option migration_threshold;
++	struct ssdfs_tunefs_option compression;
++};
++
++/*
++ * struct ssdfs_tunefs_maptbl_options - PEB mapping table options
++ * @has_backup_copy: backup copy is present?
++ * @log_pages: count of pages in the full log
++ * @migration_threshold: max amount of migrating PEBs for segment
++ * @reserved_pebs_per_fragment: percentage of reserved PEBs for fragment
++ * @compression: compression type
++ */
++struct ssdfs_tunefs_maptbl_options {
++	struct ssdfs_tunefs_option has_backup_copy;
++	struct ssdfs_tunefs_option log_pages;
++	struct ssdfs_tunefs_option migration_threshold;
++	struct ssdfs_tunefs_option reserved_pebs_per_fragment;
++	struct ssdfs_tunefs_option compression;
++};
++
++/*
++ * struct ssdfs_tunefs_btree_options - btree options
++ * @min_index_area_size: minimal index area's size in bytes
++ * @lnode_log_pages: leaf node's log pages
++ * @hnode_log_pages: hybrid node's log pages
++ * @inode_log_pages: index node's log pages
++ */
++struct ssdfs_tunefs_btree_options {
++	struct ssdfs_tunefs_option min_index_area_size;
++	struct ssdfs_tunefs_option lnode_log_pages;
++	struct ssdfs_tunefs_option hnode_log_pages;
++	struct ssdfs_tunefs_option inode_log_pages;
++};
++
++/*
++ * struct ssdfs_tunefs_user_data_options - user data options
++ * @log_pages: count of pages in the full log
++ * @migration_threshold: max amount of migrating PEBs for segment
++ * @compression: compression type
++ */
++struct ssdfs_tunefs_user_data_options {
++	struct ssdfs_tunefs_option log_pages;
++	struct ssdfs_tunefs_option migration_threshold;
++	struct ssdfs_tunefs_option compression;
++};
++
++/*
++ * struct ssdfs_current_volume_config - current volume config
++ * @fs_uuid: 128-bit volume's uuid
++ * @fs_label: volume name
++ * @nsegs: number of segments on the volume
++ * @pagesize: page size in bytes
++ * @erasesize: physical erase block size in bytes
++ * @segsize: segment size in bytes
++ * @pebs_per_seg: physical erase blocks per segment
++ * @pages_per_peb: pages per physical erase block
++ * @pages_per_seg: pages per segment
++ * @leb_pages_capacity: maximal number of logical blocks per LEB
++ * @peb_pages_capacity: maximal number of NAND pages can be written per PEB
++ * @fs_ctime: volume create timestamp (mkfs phase)
++ * @raw_inode_size: raw inode size in bytes
++ * @create_threads_per_seg: number of creation threads per segment
++ * @metadata_options: metadata options
++ * @sb_seg_log_pages: full log size in sb segment (pages count)
++ * @segbmap_log_pages: full log size in segbmap segment (pages count)
++ * @segbmap_flags: segment bitmap flags
++ * @maptbl_log_pages: full log size in maptbl segment (pages count)
++ * @maptbl_flags: mapping table flags
++ * @lnodes_seg_log_pages: full log size in leaf nodes segment (pages count)
++ * @hnodes_seg_log_pages: full log size in hybrid nodes segment (pages count)
++ * @inodes_seg_log_pages: full log size in index nodes segment (pages count)
++ * @user_data_log_pages: full log size in user data segment (pages count)
++ * @migration_threshold: default value of destination PEBs in migration
++ * @is_zns_device: file system volume is on ZNS device
++ * @zone_size: zone size in bytes
++ * @zone_capacity: zone capacity in bytes available for write operations
++ * @max_open_zones: open zones limitation (upper bound)
++ */
++struct ssdfs_current_volume_config {
++	unsigned char fs_uuid[SSDFS_UUID_SIZE];
++	char fs_label[SSDFS_VOLUME_LABEL_MAX];
++
++	u64 nsegs;
++	u32 pagesize;
++	u32 erasesize;
++	u32 segsize;
++	u32 pebs_per_seg;
++	u32 pages_per_peb;
++	u32 pages_per_seg;
++	u32 leb_pages_capacity;
++	u32 peb_pages_capacity;
++	u64 fs_ctime;
++	u16 raw_inode_size;
++	u16 create_threads_per_seg;
++
++	struct ssdfs_metadata_options metadata_options;
++
++	u16 sb_seg_log_pages;
++
++	u16 segbmap_log_pages;
++	u16 segbmap_flags;
++
++	u16 maptbl_log_pages;
++	u16 maptbl_flags;
++
++	u16 lnodes_seg_log_pages;
++	u16 hnodes_seg_log_pages;
++	u16 inodes_seg_log_pages;
++	u16 user_data_log_pages;
++
++	u16 migration_threshold;
++
++	int is_zns_device;
++	u64 zone_size;
++	u64 zone_capacity;
++	u32 max_open_zones;
++};
++
++/*
++ * struct ssdfs_tunefs_config_request - tunefs config request
++ * @label: volume label option
++ * @blkbmap: block bitmap options
++ * @blk2off_tbl: offset translation table options
++ * @segbmap: segment bitmap options
++ * @maptbl: PEB mapping table options
++ * @btree: btree options
++ * @user_data_seg: user data segment's options
++ */
++struct ssdfs_tunefs_config_request {
++	struct ssdfs_tunefs_volume_label_option label;
++	struct ssdfs_tunefs_blkbmap_options blkbmap;
++	struct ssdfs_tunefs_blk2off_table_options blk2off_tbl;
++	struct ssdfs_tunefs_segbmap_options segbmap;
++	struct ssdfs_tunefs_maptbl_options maptbl;
++	struct ssdfs_tunefs_btree_options btree;
++	struct ssdfs_tunefs_user_data_options user_data_seg;
++};
++
++/*
++ * struct ssdfs_tunefs_options - tunefs options
++ * @old_config: current volume configuration
++ * @new_config: tunefs configuration request
++ */
++struct ssdfs_tunefs_options {
++	struct ssdfs_current_volume_config old_config;
++	struct ssdfs_tunefs_config_request new_config;
++};
++
++/*
++ * struct ssdfs_tunefs_request_copy - tunefs request copy
++ * @lock: tunefs request lock
++ * @state: state of the tunefs request copy
++ * @new_config: new config request
++ */
++struct ssdfs_tunefs_request_copy {
++	struct mutex lock;
++	int state;
++	struct ssdfs_tunefs_config_request new_config;
++};
++
++/*
++ * struct ssdfs_requests_queue - requests queue descriptor
++ * @lock: requests queue's lock
++ * @list: requests queue's list
++ */
++struct ssdfs_requests_queue {
++	spinlock_t lock;
++	struct list_head list;
++};
++
++/*
++ * struct ssdfs_seg_objects_queue - segment objects queue descriptor
++ * @lock: segment objects queue's lock
++ * @list: segment objects queue's list
++ */
++struct ssdfs_seg_objects_queue {
++	spinlock_t lock;
++	struct list_head list;
++};
++
++/*
++ * struct ssdfs_global_fsck_thread - global fsck thread info
++ * @thread: thread info
++ * @wait_queue: wait queue
++ * @rq: requests queue
++ */
++struct ssdfs_global_fsck_thread {
++	struct ssdfs_thread_info thread;
++	wait_queue_head_t wait_queue;
++	struct ssdfs_requests_queue rq;
++};
++
++/*
++ * struct ssdfs_btree_nodes_list - btree nodes list
++ * @lock: btree nodes list's lock
++ * @list: btree nodes list's list
++ */
++struct ssdfs_btree_nodes_list {
++	spinlock_t lock;
++	struct list_head list;
++};
++
++/*
++ * struct ssdfs_fs_info - in-core fs information
++ * @log_pagesize: log2(page size)
++ * @pagesize: page size in bytes
++ * @log_erasesize: log2(erase block size)
++ * @erasesize: physical erase block size in bytes
++ * @log_segsize: log2(segment size)
++ * @segsize: segment size in bytes
++ * @log_pebs_per_seg: log2(erase blocks per segment)
++ * @pebs_per_seg: physical erase blocks per segment
++ * @pages_per_peb: pages per physical erase block
++ * @pages_per_seg: pages per segment
++ * @leb_pages_capacity: maximal number of logical blocks per LEB
++ * @peb_pages_capacity: maximal number of NAND pages can be written per PEB
++ * @lebs_per_peb_index: difference of LEB IDs between PEB indexes in segment
++ * @fs_ctime: volume create timestamp (mkfs phase)
++ * @fs_cno: volume create checkpoint
++ * @raw_inode_size: raw inode size in bytes
++ * @create_threads_per_seg: number of creation threads per segment
++ * @mount_opts: mount options
++ * @metadata_options: metadata options
++ * @volume_sem: volume semaphore
++ * @last_vh: buffer for last valid volume header
++ * @vh: volume header
++ * @vs: volume state
++ * @sbi: superblock info
++ * @sbi_backup: backup copy of superblock info
++ * @sb_snapi: superblock snapshot segment info
++ * @sb_seg_log_pages: full log size in sb segment (pages count)
++ * @segbmap_log_pages: full log size in segbmap segment (pages count)
++ * @maptbl_log_pages: full log size in maptbl segment (pages count)
++ * @lnodes_seg_log_pages: full log size in leaf nodes segment (pages count)
++ * @hnodes_seg_log_pages: full log size in hybrid nodes segment (pages count)
++ * @inodes_seg_log_pages: full log size in index nodes segment (pages count)
++ * @user_data_log_pages: full log size in user data segment (pages count)
++ * @volume_state_lock: lock for mutable volume metadata
++ * @free_pages: free pages count on the volume
++ * @reserved_new_user_data_pages: reserved pages of growing files' content
++ * @updated_user_data_pages: number of updated pages of files' content
++ * @read_user_data_requests: number of user data processing read/init request
++ * @flushing_user_data_requests: number of user data processing flush request
++ * @commit_log_requests: number of commit log request
++ * @pending_wq: wait queue for flush threads of user data segments
++ * @finish_user_data_read_wq: wait queue for waiting the end of user data reads
++ * @finish_user_data_flush_wq: wait queue for waiting the end of user data flush
++ * @finish_commit_log_flush_wq: wait queue for waiting the end of commit logs
++ * @fs_mount_time: file system mount timestamp
++ * @fs_mod_time: last write timestamp
++ * @fs_mount_cno: mount checkpoint
++ * @boot_vs_mount_timediff: difference between boottime and mounttime
++ * @fs_flags: file system flags
++ * @fs_state: file system state
++ * @fs_errors: behaviour when detecting errors
++ * @fs_feature_compat: compatible feature set
++ * @fs_feature_compat_ro: read-only compatible feature set
++ * @fs_feature_incompat: incompatible feature set
++ * @fs_uuid: 128-bit volume's uuid
++ * @fs_label: volume name
++ * @migration_threshold: default value of destination PEBs in migration
++ * @resize_mutex: resize mutex
++ * @nsegs: number of segments on the volume
++ * @sb_segs_sem: semaphore for superblock's array of LEB/PEB numbers
++ * @sb_lebs: array of LEB ID numbers
++ * @sb_pebs: array of PEB ID numbers
++ * @segbmap: segment bitmap object
++ * @segbmap_users: current number of segment bitmap's users
++ * @segbmap_users_wq: waiting queue of finishing segbmap operations before umount
++ * @maptbl: PEB mapping table object
++ * @maptbl_cache: maptbl cache
++ * @maptbl_users: current number of mapping table's users
++ * @maptbl_users_wq: waiting queue of finishing maptbl operations before umount
++ * @segs_tree: tree of segment objects
++ * @cur_segs: array of current segments
++ * @shextree: shared extents tree
++ * @shdictree: shared dictionary
++ * @inodes_tree: inodes btree
++ * @invextree: invalidated extents btree
++ * @snapshots: snapshots subsystem
++ * @btree_nodes: list of all btree nodes
++ * @gc_thread: array of GC threads
++ * @gc_wait_queue: array of GC threads' wait queues
++ * @gc_should_act: array of counters that define necessity of GC activity
++ * @pre_destroyed_segs_rq: pre destroy segment objects queue
++ * @flush_reqs: current number of flush requests
++ * @global_fsck: global fsck thread
++ * @sb: pointer on VFS superblock object
++ * @mtd: MTD info
++ * @devops: device access operations
++ * @pending_bios: count of pending BIOs (dev_bdev.c ONLY)
++ * @erase_folio: folio with content for erase operation (dev_bdev.c ONLY)
++ * @is_zns_device: file system volume is on ZNS device
++ * @zone_size: zone size in bytes
++ * @zone_capacity: zone capacity in bytes available for write operations
++ * @max_open_zones: open zones limitation (upper bound)
++ * @open_zones: current number of opened zones
++ * @fsck_priority: define priority of FSCK operations
++ * @tunefs_request: tunefs request copy
++ * @dev_kobj: /sys/fs/ssdfs/<device> kernel object
++ * @dev_kobj_unregister: completion state for <device> kernel object
++ * @maptbl_kobj: /sys/fs/<ssdfs>/<device>/maptbl kernel object
++ * @maptbl_kobj_unregister: completion state for maptbl kernel object
++ * @segbmap_kobj: /sys/fs/<ssdfs>/<device>/segbmap kernel object
++ * @segbmap_kobj_unregister: completion state for segbmap kernel object
++ * @segments_kobj: /sys/fs/<ssdfs>/<device>/segments kernel object
++ * @segments_kobj_unregister: completion state for segments kernel object
++ * @inodes_tree_kobj: /sys/fs/<ssdfs>/<device>/inodes_tree kernel object
++ * @inodes_tree_kobj_unregister: completion state for inodes_tree kernel object
++ * @snapshots_tree_kobj: /sys/fs/<ssdfs>/<device>/snapshots_tree kernel object
++ * @snapshots_tree_kobj_unregister: completion state for snapshots_tree kernel object
++ * @shared_dict_kobj: /sys/fs/<ssdfs>/<device>/shared_dict kernel object
++ * @shared_dict_kobj_unregister: completion state for shared_dict kernel object
++ * @invextree_kobj: /sys/fs/<ssdfs>/<device>/invextree kernel object
++ * @invextree_kobj_unregister: completion state for invextree kernel object
++ */
++struct ssdfs_fs_info {
++	u8 log_pagesize;
++	u32 pagesize;
++	u8 log_erasesize;
++	u32 erasesize;
++	u8 log_segsize;
++	u32 segsize;
++	u8 log_pebs_per_seg;
++	u32 pebs_per_seg;
++	u32 pages_per_peb;
++	u32 pages_per_seg;
++	u32 leb_pages_capacity;
++	u32 peb_pages_capacity;
++	u32 lebs_per_peb_index;
++	u64 fs_ctime;
++	u64 fs_cno;
++	u16 raw_inode_size;
++	u16 create_threads_per_seg;
++
++	unsigned long mount_opts;
++	struct ssdfs_metadata_options metadata_options;
++
++	struct rw_semaphore volume_sem;
++	struct ssdfs_volume_header last_vh;
++	struct ssdfs_volume_header *vh;
++	struct ssdfs_volume_state *vs;
++	struct ssdfs_sb_info sbi;
++	struct ssdfs_sb_info sbi_backup;
++	struct ssdfs_sb_snapshot_seg_info sb_snapi;
++	u16 sb_seg_log_pages;
++	u16 segbmap_log_pages;
++	u16 maptbl_log_pages;
++	u16 lnodes_seg_log_pages;
++	u16 hnodes_seg_log_pages;
++	u16 inodes_seg_log_pages;
++	u16 user_data_log_pages;
++
++	atomic_t global_fs_state;
++	struct completion mount_end;
++
++	spinlock_t volume_state_lock;
++	u64 free_pages;
++	u64 reserved_new_user_data_pages;
++	u64 updated_user_data_pages;
++	u64 read_user_data_requests;
++	u64 flushing_user_data_requests;
++	u64 commit_log_requests;
++	wait_queue_head_t pending_wq;
++	wait_queue_head_t finish_user_data_read_wq;
++	wait_queue_head_t finish_user_data_flush_wq;
++	wait_queue_head_t finish_commit_log_flush_wq;
++	u64 fs_mount_time;
++	u64 fs_mod_time;
++	u64 fs_mount_cno;
++	u64 boot_vs_mount_timediff;
++	u32 fs_flags;
++	u16 fs_state;
++	u16 fs_errors;
++	u64 fs_feature_compat;
++	u64 fs_feature_compat_ro;
++	u64 fs_feature_incompat;
++	unsigned char fs_uuid[SSDFS_UUID_SIZE];
++	char fs_label[SSDFS_VOLUME_LABEL_MAX];
++	u16 migration_threshold;
++
++	struct mutex resize_mutex;
++	u64 nsegs;
++
++	struct rw_semaphore sb_segs_sem;
++	u64 sb_lebs[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
++	u64 sb_pebs[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
++
++	struct ssdfs_segment_bmap *segbmap;
++	atomic_t segbmap_users;
++	wait_queue_head_t segbmap_users_wq;
++
++	struct ssdfs_peb_mapping_table *maptbl;
++	struct ssdfs_maptbl_cache maptbl_cache;
++	atomic_t maptbl_users;
++	wait_queue_head_t maptbl_users_wq;
++
++	struct ssdfs_segment_tree *segs_tree;
++	struct ssdfs_current_segs_array *cur_segs;
++
++	struct ssdfs_shared_extents_tree *shextree;
++	struct ssdfs_shared_dict_btree_info *shdictree;
++	struct ssdfs_inodes_btree_info *inodes_tree;
++	struct ssdfs_invextree_info *invextree;
++
++	struct ssdfs_snapshot_subsystem snapshots;
++
++	struct ssdfs_btree_nodes_list btree_nodes;
++
++	struct ssdfs_thread_info gc_thread[SSDFS_GC_THREAD_TYPE_MAX];
++	wait_queue_head_t gc_wait_queue[SSDFS_GC_THREAD_TYPE_MAX];
++	atomic_t gc_should_act[SSDFS_GC_THREAD_TYPE_MAX];
++	struct ssdfs_seg_objects_queue pre_destroyed_segs_rq;
++	atomic64_t flush_reqs;
++
++	struct ssdfs_global_fsck_thread global_fsck;
++
++	struct super_block *sb;
++
++	struct mtd_info *mtd;
++	const struct ssdfs_device_ops *devops;
++	atomic_t pending_bios;			/* for dev_bdev.c */
++	struct folio *erase_folio;		/* for dev_bdev.c */
++
++	bool is_zns_device;
++	u64 zone_size;
++	u64 zone_capacity;
++	u32 max_open_zones;
++	atomic_t open_zones;
++
++#ifdef CONFIG_SSDFS_ONLINE_FSCK
++	atomic_t fsck_priority;
++#endif /* CONFIG_SSDFS_ONLINE_FSCK */
++
++	struct ssdfs_tunefs_request_copy tunefs_request;
++
++	/* /sys/fs/ssdfs/<device> */
++	struct kobject dev_kobj;
++	struct completion dev_kobj_unregister;
++
++	/* /sys/fs/<ssdfs>/<device>/maptbl */
++	struct kobject maptbl_kobj;
++	struct completion maptbl_kobj_unregister;
++
++	/* /sys/fs/<ssdfs>/<device>/maptbl/fragments */
++	struct kobject maptbl_frags_kobj;
++	struct completion maptbl_frags_kobj_unregister;
++
++	/* /sys/fs/<ssdfs>/<device>/segbmap */
++	struct kobject segbmap_kobj;
++	struct completion segbmap_kobj_unregister;
++
++	/* /sys/fs/<ssdfs>/<device>/segbmap/fragments */
++	struct kobject segbmap_frags_kobj;
++	struct completion segbmap_frags_kobj_unregister;
++
++	/* /sys/fs/<ssdfs>/<device>/segments */
++	struct kobject segments_kobj;
++	struct completion segments_kobj_unregister;
++
++	/* /sys/fs/<ssdfs>/<device>/inodes_tree */
++	struct kobject inodes_tree_kobj;
++	struct completion inodes_tree_kobj_unregister;
++
++	/* /sys/fs/<ssdfs>/<device>/snapshots_tree */
++	struct kobject snapshots_tree_kobj;
++	struct completion snapshots_tree_kobj_unregister;
++
++	/* /sys/fs/<ssdfs>/<device>/shared_dict */
++	struct kobject shared_dict_kobj;
++	struct completion shared_dict_kobj_unregister;
++
++	/* /sys/fs/<ssdfs>/<device>/invextree */
++	struct kobject invextree_kobj;
++	struct completion invextree_kobj_unregister;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	spinlock_t requests_lock;
++	struct list_head user_data_requests_list;
++#endif /* CONFIG_SSDFS_DEBUG */
++
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	atomic64_t ssdfs_writeback_folios;
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++#ifdef CONFIG_SSDFS_TESTING
++	struct address_space testing_pages;
++	struct inode *testing_inode;
++	bool do_fork_invalidation;
++#endif /* CONFIG_SSDFS_TESTING */
++};
++
++#define SSDFS_FS_I(sb) \
++	((struct ssdfs_fs_info *)(sb->s_fs_info))
++
++/*
++ * GC constants
++ */
++#define SSDFS_GC_LOW_BOUND_THRESHOLD	(50)
++#define SSDFS_GC_UPPER_BOUND_THRESHOLD	(1000)
++#define SSDFS_GC_DISTANCE_THRESHOLD	(5)
++#define SSDFS_GC_DEFAULT_SEARCH_STEP	(100)
++#define SSDFS_GC_DIRTY_SEG_SEARCH_STEP	(1000)
++#define SSDFS_GC_DIRTY_SEG_DEFAULT_OPS	(50)
++
++/*
++ * GC possible states
++ */
++enum {
++	SSDFS_UNDEFINED_GC_STATE,
++	SSDFS_COLLECT_GARBAGE_NOW,
++	SSDFS_WAIT_IDLE_STATE,
++	SSDFS_STOP_GC_ACTIVITY_NOW,
++	SSDFS_GC_STATE_MAX
++};
++
++/*
++ * FSCK possible states
++ */
++enum {
++	SSDFS_UNDEFINED_FSCK_STATE = SSDFS_UNDEFINED_GC_STATE,
++	SSDFS_DO_FSCK_CHECK_NOW = SSDFS_COLLECT_GARBAGE_NOW,
++	SSDFS_FSCK_WAIT_IDLE_STATE = SSDFS_WAIT_IDLE_STATE,
++	SSDFS_STOP_FSCK_ACTIVITY_NOW = SSDFS_STOP_GC_ACTIVITY_NOW,
++	SSDFS_FSCK_STATE_MAX
++};
++
++/*
++ * struct ssdfs_io_load_stats - I/O load estimation
++ * @measurements: number of executed measurements
++ * @reqs_count: number of I/O requests for every measurement
++ */
++struct ssdfs_io_load_stats {
++	u32 measurements;
++#define SSDFS_MEASUREMENTS_MAX		(10)
++	s64 reqs_count[SSDFS_MEASUREMENTS_MAX];
++};
++
++/*
++ * GC thread functions
++ */
++int ssdfs_using_seg_gc_thread_func(void *data);
++int ssdfs_used_seg_gc_thread_func(void *data);
++int ssdfs_pre_dirty_seg_gc_thread_func(void *data);
++int ssdfs_dirty_seg_gc_thread_func(void *data);
++int ssdfs_destroy_seg_gc_thread_func(void *data);
++int ssdfs_btree_node_gc_thread_func(void *data);
++int ssdfs_start_gc_thread(struct ssdfs_fs_info *fsi, int type);
++int ssdfs_stop_gc_thread(struct ssdfs_fs_info *fsi, int type);
++int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
++			    struct ssdfs_io_load_stats *io_stats);
++
++/*
++ * Device operations
++ */
++extern const struct ssdfs_device_ops ssdfs_mtd_devops;
++extern const struct ssdfs_device_ops ssdfs_bdev_devops;
++extern const struct ssdfs_device_ops ssdfs_zns_devops;
++
++#endif /* _SSDFS_FS_INFO_H */
+diff --git a/fs/ssdfs/ssdfs_inode_info.h b/fs/ssdfs/ssdfs_inode_info.h
+new file mode 100644
+index 000000000000..350923fab81b
+--- /dev/null
++++ b/fs/ssdfs/ssdfs_inode_info.h
+@@ -0,0 +1,144 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/ssdfs_inode_info.h - SSDFS in-core inode.
++ *
++ * Copyright (c) 2019-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#ifndef _SSDFS_INODE_INFO_H
++#define _SSDFS_INODE_INFO_H
++
++/*
++ * Inode flags (GETFLAGS/SETFLAGS)
++ */
++#define	SSDFS_SECRM_FL			FS_SECRM_FL	/* Secure deletion */
++#define	SSDFS_UNRM_FL			FS_UNRM_FL	/* Undelete */
++#define	SSDFS_COMPR_FL			FS_COMPR_FL	/* Compress file */
++#define SSDFS_SYNC_FL			FS_SYNC_FL	/* Synchronous updates */
++#define SSDFS_IMMUTABLE_FL		FS_IMMUTABLE_FL	/* Immutable file */
++#define SSDFS_APPEND_FL			FS_APPEND_FL	/* writes to file may only append */
++#define SSDFS_NODUMP_FL			FS_NODUMP_FL	/* do not dump file */
++#define SSDFS_NOATIME_FL		FS_NOATIME_FL	/* do not update atime */
++/* Reserved for compression usage... */
++#define SSDFS_DIRTY_FL			FS_DIRTY_FL
++#define SSDFS_COMPRBLK_FL		FS_COMPRBLK_FL	/* One or more compressed clusters */
++#define SSDFS_NOCOMP_FL			FS_NOCOMP_FL	/* Don't compress */
++#define SSDFS_ECOMPR_FL			FS_ECOMPR_FL	/* Compression error */
++/* End compression flags --- maybe not all used */
++#define SSDFS_BTREE_FL			FS_BTREE_FL	/* btree format dir */
++#define SSDFS_INDEX_FL			FS_INDEX_FL	/* hash-indexed directory */
++#define SSDFS_IMAGIC_FL			FS_IMAGIC_FL	/* AFS directory */
++#define SSDFS_JOURNAL_DATA_FL		FS_JOURNAL_DATA_FL /* Reserved for ext3 */
++#define SSDFS_NOTAIL_FL			FS_NOTAIL_FL	/* file tail should not be merged */
++#define SSDFS_DIRSYNC_FL		FS_DIRSYNC_FL	/* dirsync behaviour (directories only) */
++#define SSDFS_TOPDIR_FL			FS_TOPDIR_FL	/* Top of directory hierarchies*/
++#define SSDFS_RESERVED_FL		FS_RESERVED_FL	/* reserved for ext2 lib */
++
++#define SSDFS_FL_USER_VISIBLE		FS_FL_USER_VISIBLE	/* User visible flags */
++#define SSDFS_FL_USER_MODIFIABLE	FS_FL_USER_MODIFIABLE	/* User modifiable flags */
++
++/* Flags that should be inherited by new inodes from their parent. */
++#define SSDFS_FL_INHERITED (SSDFS_SECRM_FL | SSDFS_UNRM_FL | SSDFS_COMPR_FL |\
++			   SSDFS_SYNC_FL | SSDFS_NODUMP_FL |\
++			   SSDFS_NOATIME_FL | SSDFS_COMPRBLK_FL |\
++			   SSDFS_NOCOMP_FL | SSDFS_JOURNAL_DATA_FL |\
++			   SSDFS_NOTAIL_FL | SSDFS_DIRSYNC_FL)
++
++/* Flags that are appropriate for regular files (all but dir-specific ones). */
++#define SSDFS_REG_FLMASK (~(SSDFS_DIRSYNC_FL | SSDFS_TOPDIR_FL))
++
++/* Flags that are appropriate for non-directories/regular files. */
++#define SSDFS_OTHER_FLMASK (SSDFS_NODUMP_FL | SSDFS_NOATIME_FL)
++
++/* Mask out flags that are inappropriate for the given type of inode. */
++static inline __u32 ssdfs_mask_flags(umode_t mode, __u32 flags)
++{
++	if (S_ISDIR(mode))
++		return flags;
++	else if (S_ISREG(mode))
++		return flags & SSDFS_REG_FLMASK;
++	else
++		return flags & SSDFS_OTHER_FLMASK;
++}
++
++/*
++ * struct ssdfs_inode_info - in-core inode
++ * @vfs_inode: VFS inode object
++ * @birthtime: creation time
++ * @raw_inode_size: raw inode size in bytes
++ * @private_flags: inode's private flags
++ * @lock: inode lock
++ * @parent_ino: parent inode ID
++ * @flags: inode flags
++ * @name_hash: name's hash code
++ * @name_len: name length
++ * @extents_tree: extents btree
++ * @dentries_tree: dentries btree
++ * @xattrs_tree: extended attributes tree
++ * @inline_file: inline file buffer
++ * @raw_inode: raw inode
++ */
++struct ssdfs_inode_info {
++	struct inode vfs_inode;
++	struct timespec64 birthtime;
++	u16 raw_inode_size;
++
++	atomic_t private_flags;
++
++	struct rw_semaphore lock;
++	u64 parent_ino;
++	u32 flags;
++	u64 name_hash;
++	u16 name_len;
++	struct ssdfs_extents_btree_info *extents_tree;
++	struct ssdfs_dentries_btree_info *dentries_tree;
++	struct ssdfs_xattrs_btree_info *xattrs_tree;
++	void *inline_file;
++	struct ssdfs_inode raw_inode;
++};
++
++static inline struct ssdfs_inode_info *SSDFS_I(struct inode *inode)
++{
++	return container_of(inode, struct ssdfs_inode_info, vfs_inode);
++}
++
++static inline
++struct ssdfs_extents_btree_info *SSDFS_EXTREE(struct ssdfs_inode_info *ii)
++{
++	if (S_ISDIR(ii->vfs_inode.i_mode))
++		return NULL;
++	else
++		return ii->extents_tree;
++}
++
++static inline
++struct ssdfs_dentries_btree_info *SSDFS_DTREE(struct ssdfs_inode_info *ii)
++{
++	if (S_ISDIR(ii->vfs_inode.i_mode))
++		return ii->dentries_tree;
++	else
++		return NULL;
++}
++
++static inline
++struct ssdfs_xattrs_btree_info *SSDFS_XATTREE(struct ssdfs_inode_info *ii)
++{
++	return ii->xattrs_tree;
++}
++
++extern const struct file_operations ssdfs_dir_operations;
++extern const struct inode_operations ssdfs_dir_inode_operations;
++extern const struct file_operations ssdfs_file_operations;
++extern const struct inode_operations ssdfs_file_inode_operations;
++extern const struct address_space_operations ssdfs_aops;
++extern const struct inode_operations ssdfs_special_inode_operations;
++extern const struct inode_operations ssdfs_symlink_inode_operations;
++
++#endif /* _SSDFS_INODE_INFO_H */
+diff --git a/fs/ssdfs/ssdfs_thread_info.h b/fs/ssdfs/ssdfs_thread_info.h
+new file mode 100644
+index 000000000000..6d18245327b5
+--- /dev/null
++++ b/fs/ssdfs/ssdfs_thread_info.h
+@@ -0,0 +1,43 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/ssdfs_thread_info.h - thread declarations.
++ *
++ * Copyright (c) 2019-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#ifndef _SSDFS_THREAD_INFO_H
++#define _SSDFS_THREAD_INFO_H
++
++/*
++ * struct ssdfs_thread_info - thread info
++ * @task: task descriptor
++ * @wait: wait queue
++ * @full_stop: ending of thread's activity
++ */
++struct ssdfs_thread_info {
++	struct task_struct *task;
++	struct wait_queue_entry wait;
++	struct completion full_stop;
++};
++
++/* function prototype */
++typedef int (*ssdfs_threadfn)(void *data);
++
++/*
++ * struct ssdfs_thread_descriptor - thread descriptor
++ * @threadfn: thread's function
++ * @fmt: thread's name format
++ */
++struct ssdfs_thread_descriptor {
++	ssdfs_threadfn threadfn;
++	const char *fmt;
++};
++
++#endif /* _SSDFS_THREAD_INFO_H */
+diff --git a/fs/ssdfs/version.h b/fs/ssdfs/version.h
+new file mode 100644
+index 000000000000..8c94b1653bf6
+--- /dev/null
++++ b/fs/ssdfs/version.h
+@@ -0,0 +1,9 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ */
++#ifndef _SSDFS_VERSION_H
++#define _SSDFS_VERSION_H
++
++#define SSDFS_VERSION "SSDFS v.5.47"
++
++#endif /* _SSDFS_VERSION_H */
+diff --git a/include/trace/events/ssdfs.h b/include/trace/events/ssdfs.h
+new file mode 100644
+index 000000000000..492beb6e7c30
+--- /dev/null
++++ b/include/trace/events/ssdfs.h
+@@ -0,0 +1,256 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * include/trace/events/ssdfs.h - definition of tracepoints.
++ *
++ * Copyright (c) 2019-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#undef TRACE_SYSTEM
++#define TRACE_SYSTEM ssdfs
++
++#if !defined(_TRACE_SSDFS_H) || defined(TRACE_HEADER_MULTI_READ)
++#define _TRACE_SSDFS_H
++
++#include <linux/tracepoint.h>
++
++DECLARE_EVENT_CLASS(ssdfs__inode,
++
++	TP_PROTO(struct inode *inode),
++
++	TP_ARGS(inode),
++
++	TP_STRUCT__entry(
++		__field(dev_t,	dev)
++		__field(ino_t,	ino)
++		__field(umode_t, mode)
++		__field(loff_t,	size)
++		__field(unsigned int, nlink)
++		__field(blkcnt_t, blocks)
++	),
++
++	TP_fast_assign(
++		__entry->dev	= inode->i_sb->s_dev;
++		__entry->ino	= inode->i_ino;
++		__entry->mode	= inode->i_mode;
++		__entry->nlink	= inode->i_nlink;
++		__entry->size	= inode->i_size;
++		__entry->blocks	= inode->i_blocks;
++	),
++
++	TP_printk("dev = (%d,%d), ino = %lu, i_mode = 0x%hx, "
++		"i_size = %lld, i_nlink = %u, i_blocks = %llu",
++		MAJOR(__entry->dev),
++		MINOR(__entry->dev),
++		(unsigned long)__entry->ino,
++		__entry->mode,
++		__entry->size,
++		(unsigned int)__entry->nlink,
++		(unsigned long long)__entry->blocks)
++);
++
++DECLARE_EVENT_CLASS(ssdfs__inode_exit,
++
++	TP_PROTO(struct inode *inode, int ret),
++
++	TP_ARGS(inode, ret),
++
++	TP_STRUCT__entry(
++		__field(dev_t,	dev)
++		__field(ino_t,	ino)
++		__field(int,	ret)
++	),
++
++	TP_fast_assign(
++		__entry->dev	= inode->i_sb->s_dev;
++		__entry->ino	= inode->i_ino;
++		__entry->ret	= ret;
++	),
++
++	TP_printk("dev = (%d,%d), ino = %lu, ret = %d",
++		MAJOR(__entry->dev),
++		MINOR(__entry->dev),
++		(unsigned long)__entry->ino,
++		__entry->ret)
++);
++
++DEFINE_EVENT(ssdfs__inode, ssdfs_inode_new,
++
++	TP_PROTO(struct inode *inode),
++
++	TP_ARGS(inode)
++);
++
++DEFINE_EVENT(ssdfs__inode_exit, ssdfs_inode_new_exit,
++
++	TP_PROTO(struct inode *inode, int ret),
++
++	TP_ARGS(inode, ret)
++);
++
++DEFINE_EVENT(ssdfs__inode, ssdfs_inode_request,
++
++	TP_PROTO(struct inode *inode),
++
++	TP_ARGS(inode)
++);
++
++DEFINE_EVENT(ssdfs__inode, ssdfs_inode_evict,
++
++	TP_PROTO(struct inode *inode),
++
++	TP_ARGS(inode)
++);
++
++DEFINE_EVENT(ssdfs__inode, ssdfs_iget,
++
++	TP_PROTO(struct inode *inode),
++
++	TP_ARGS(inode)
++);
++
++DEFINE_EVENT(ssdfs__inode_exit, ssdfs_iget_exit,
++
++	TP_PROTO(struct inode *inode, int ret),
++
++	TP_ARGS(inode, ret)
++);
++
++TRACE_EVENT(ssdfs_sync_fs,
++
++	TP_PROTO(struct super_block *sb, int wait),
++
++	TP_ARGS(sb, wait),
++
++	TP_STRUCT__entry(
++		__field(dev_t,	dev)
++		__field(int,	wait)
++	),
++
++	TP_fast_assign(
++		__entry->dev	= sb->s_dev;
++		__entry->wait	= wait;
++	),
++
++	TP_printk("dev = (%d,%d), wait = %d",
++		MAJOR(__entry->dev),
++		MINOR(__entry->dev),
++		__entry->wait)
++);
++
++TRACE_EVENT(ssdfs_sync_fs_exit,
++
++	TP_PROTO(struct super_block *sb, int wait, int ret),
++
++	TP_ARGS(sb, wait, ret),
++
++	TP_STRUCT__entry(
++		__field(dev_t,	dev)
++		__field(int,	wait)
++		__field(int,	ret)
++	),
++
++	TP_fast_assign(
++		__entry->dev	= sb->s_dev;
++		__entry->wait	= wait;
++		__entry->ret	= ret;
++	),
++
++	TP_printk("dev = (%d,%d), wait = %d, ret = %d",
++		MAJOR(__entry->dev),
++		MINOR(__entry->dev),
++		__entry->wait,
++		__entry->ret)
++);
++
++DEFINE_EVENT(ssdfs__inode, ssdfs_sync_file_enter,
++
++	TP_PROTO(struct inode *inode),
++
++	TP_ARGS(inode)
++);
++
++TRACE_EVENT(ssdfs_sync_file_exit,
++
++	TP_PROTO(struct file *file, int datasync, int ret),
++
++	TP_ARGS(file, datasync, ret),
++
++	TP_STRUCT__entry(
++		__field(dev_t,	dev)
++		__field(ino_t,	ino)
++		__field(ino_t,	parent)
++		__field(int,	datasync)
++		__field(int,	ret)
++	),
++
++	TP_fast_assign(
++		struct dentry *dentry = file->f_path.dentry;
++		struct inode *inode = dentry->d_inode;
++
++		__entry->dev		= inode->i_sb->s_dev;
++		__entry->ino		= inode->i_ino;
++		__entry->parent		= dentry->d_parent->d_inode->i_ino;
++		__entry->datasync	= datasync;
++		__entry->ret		= ret;
++	),
++
++	TP_printk("dev = (%d,%d), ino = %lu, parent = %ld, "
++		"datasync = %d, ret = %d",
++		MAJOR(__entry->dev),
++		MINOR(__entry->dev),
++		(unsigned long)__entry->ino,
++		(unsigned long)__entry->parent,
++		__entry->datasync,
++		__entry->ret)
++);
++
++TRACE_EVENT(ssdfs_unlink_enter,
++
++	TP_PROTO(struct inode *dir, struct dentry *dentry),
++
++	TP_ARGS(dir, dentry),
++
++	TP_STRUCT__entry(
++		__field(dev_t,	dev)
++		__field(ino_t,	ino)
++		__field(loff_t,	size)
++		__field(blkcnt_t, blocks)
++		__field(const char *,	name)
++	),
++
++	TP_fast_assign(
++		__entry->dev	= dir->i_sb->s_dev;
++		__entry->ino	= dir->i_ino;
++		__entry->size	= dir->i_size;
++		__entry->blocks	= dir->i_blocks;
++		__entry->name	= dentry->d_name.name;
++	),
++
++	TP_printk("dev = (%d,%d), dir ino = %lu, i_size = %lld, "
++		"i_blocks = %llu, name = %s",
++		MAJOR(__entry->dev),
++		MINOR(__entry->dev),
++		(unsigned long)__entry->ino,
++		__entry->size,
++		(unsigned long long)__entry->blocks,
++		__entry->name)
++);
++
++DEFINE_EVENT(ssdfs__inode_exit, ssdfs_unlink_exit,
++
++	TP_PROTO(struct inode *inode, int ret),
++
++	TP_ARGS(inode, ret)
++);
++
++#endif /* _TRACE_SSDFS_H */
++
++/* This part must be outside protection */
++#include <trace/define_trace.h>
+diff --git a/include/uapi/linux/ssdfs_fs.h b/include/uapi/linux/ssdfs_fs.h
+new file mode 100644
+index 000000000000..74c8a1be8051
+--- /dev/null
++++ b/include/uapi/linux/ssdfs_fs.h
+@@ -0,0 +1,126 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * include/uapi/linux/ssdfs_fs.h - SSDFS common declarations.
++ *
++ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
++ *              http://www.hgst.com/
++ * Copyright (c) 2014-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ *
++ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
++ *
++ * Created by HGST, San Jose Research Center, Storage Architecture Group
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cyril Guyot
++ *                  Zvonimir Bandic
++ */
++
++#ifndef _UAPI_LINUX_SSDFS_H
++#define _UAPI_LINUX_SSDFS_H
++
++#include <linux/types.h>
++#include <linux/ioctl.h>
++
++/* SSDFS magic signatures */
++#define SSDFS_SUPER_MAGIC			0x53734466	/* SsDf */
++#define SSDFS_SEGMENT_HDR_MAGIC			0x5348		/* SH */
++#define SSDFS_LOG_FOOTER_MAGIC			0x4C46		/* LF */
++#define SSDFS_PARTIAL_LOG_HDR_MAGIC		0x5048		/* PH */
++#define SSDFS_PADDING_HDR_MAGIC			0x5044		/* PD */
++#define SSDFS_BLK_BMAP_MAGIC			0x424D		/* BM */
++#define SSDFS_FRAGMENT_DESC_MAGIC		0x66		/* f */
++#define SSDFS_CHAIN_HDR_MAGIC			0x63		/* c */
++#define SSDFS_PHYS_OFF_TABLE_MAGIC		0x504F5448	/* POTH */
++#define SSDFS_BLK2OFF_TABLE_HDR_MAGIC		0x5474		/* Tt */
++#define SSDFS_SEGBMAP_HDR_MAGIC			0x534D		/* SM */
++#define SSDFS_INODE_MAGIC			0x6469		/* di */
++#define SSDFS_PEB_TABLE_MAGIC			0x5074		/* Pt */
++#define SSDFS_LEB_TABLE_MAGIC			0x4C74		/* Lt */
++#define SSDFS_MAPTBL_CACHE_MAGIC		0x4D63		/* Mc */
++#define SSDFS_MAPTBL_CACHE_PEB_STATE_MAGIC	0x4D635053	/* McPS */
++#define SSDFS_INODES_BTREE_MAGIC		0x496E4274	/* InBt */
++#define SSDFS_INODES_BNODE_MAGIC		0x494E		/* IN */
++#define SSDFS_DENTRIES_BTREE_MAGIC		0x44654274	/* DeBt */
++#define SSDFS_DENTRIES_BNODE_MAGIC		0x444E		/* DN */
++#define SSDFS_EXTENTS_BTREE_MAGIC		0x45784274	/* ExBt */
++#define SSDFS_SHARED_EXTENTS_BTREE_MAGIC	0x53454274	/* SEBt */
++#define SSDFS_EXTENTS_BNODE_MAGIC		0x454E		/* EN */
++#define SSDFS_XATTR_BTREE_MAGIC			0x45414274	/* EABt */
++#define SSDFS_SHARED_XATTR_BTREE_MAGIC		0x53454174	/* SEAt */
++#define SSDFS_XATTR_BNODE_MAGIC			0x414E		/* AN */
++#define SSDFS_SHARED_DICT_BTREE_MAGIC		0x53446963	/* SDic */
++#define SSDFS_DICTIONARY_BNODE_MAGIC		0x534E		/* SN */
++#define SSDFS_SNAPSHOTS_BTREE_MAGIC		0x536E4274	/* SnBt */
++#define SSDFS_SNAPSHOTS_BNODE_MAGIC		0x736E		/* sn */
++#define SSDFS_SNAPSHOT_RULES_MAGIC		0x536E5275	/* SnRu */
++#define SSDFS_SNAPSHOT_RECORD_MAGIC		0x5372		/* Sr */
++#define SSDFS_PEB2TIME_RECORD_MAGIC		0x5072		/* Pr */
++#define SSDFS_DIFF_BLOB_MAGIC			0x4466		/* Df */
++#define SSDFS_INVEXT_BTREE_MAGIC		0x49784274	/* IxBt */
++#define SSDFS_INVEXT_BNODE_MAGIC		0x4958		/* IX */
++
++/* SSDFS padding blob */
++#define SSDFS_PADDING_BLOB		0x50414444494E4730	/* PADDING0 */
++
++/* SSDFS revision */
++#define SSDFS_MAJOR_REVISION		1
++#define SSDFS_MINOR_REVISION		20
++
++/* SSDFS constants */
++#define SSDFS_MAX_NAME_LEN		255
++#define SSDFS_UUID_SIZE			16
++#define SSDFS_VOLUME_LABEL_MAX		16
++#define SSDFS_MAX_SNAP_RULE_NAME_LEN	16
++#define SSDFS_MAX_SNAPSHOT_NAME_LEN	12
++
++#define SSDFS_RESERVED_VBR_SIZE		1024 /* Volume Boot Record size*/
++#define SSDFS_DEFAULT_SEG_SIZE		8388608
++
++/*
++ * File system states
++ */
++#define SSDFS_MOUNTED_FS		0x0000  /* Mounted FS state */
++#define SSDFS_VALID_FS			0x0001  /* Unmounted cleanly */
++#define SSDFS_ERROR_FS			0x0002  /* Errors detected */
++#define SSDFS_RESIZE_FS			0x0004	/* Resize required */
++#define SSDFS_LAST_KNOWN_FS_STATE	SSDFS_RESIZE_FS
++
++/*
++ * Behaviour when detecting errors
++ */
++#define SSDFS_ERRORS_CONTINUE		1	/* Continue execution */
++#define SSDFS_ERRORS_RO			2	/* Remount fs read-only */
++#define SSDFS_ERRORS_PANIC		3	/* Panic */
++#define SSDFS_ERRORS_DEFAULT		SSDFS_ERRORS_CONTINUE
++#define SSDFS_LAST_KNOWN_FS_ERROR	SSDFS_ERRORS_PANIC
++
++/* Reserved inode id */
++#define SSDFS_INVALID_EXTENTS_BTREE_INO		5
++#define SSDFS_SNAPSHOTS_BTREE_INO		6
++#define SSDFS_TESTING_INO			7
++#define SSDFS_SHARED_DICT_BTREE_INO		8
++#define SSDFS_INODES_BTREE_INO			9
++#define SSDFS_SHARED_EXTENTS_BTREE_INO		10
++#define SSDFS_SHARED_XATTR_BTREE_INO		11
++#define SSDFS_MAPTBL_INO			12
++#define SSDFS_SEG_TREE_INO			13
++#define SSDFS_SEG_BMAP_INO			14
++#define SSDFS_PEB_CACHE_INO			15
++#define SSDFS_ROOT_INO				16
++
++#define SSDFS_LINK_MAX				INT_MAX
++
++#define SSDFS_CUR_SEG_DEFAULT_ID		3
++#define SSDFS_LOG_PAGES_DEFAULT			32
++#define SSDFS_CREATE_THREADS_DEFAULT		1
++
++#define SSDFS_INITIAL_SNAPSHOT_SEG_ID		0
++#define SSDFS_INITIAL_SNAPSHOT_SEG_LEB_ID	0
++#define SSDFS_INITIAL_SNAPSHOT_SEG_PEB_ID	0
++
++#endif /* _UAPI_LINUX_SSDFS_H */
+-- 
+2.34.1
+

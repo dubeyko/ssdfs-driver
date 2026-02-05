@@ -1,0 +1,238 @@
+From 931f7a2b77a9be19e6bafd35240f80971e3fa975 Mon Sep 17 00:00:00 2001
+From: Viacheslav Dubeyko <slava@dubeyko.com>
+Date: Mon, 2 Feb 2026 21:35:58 -0800
+Subject: [PATCH v2 52/79] ssdfs: introduce dentries b-tree
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SSDFS dentry is the metadata structure of fixed size (32 bytes).
+It contains inode ID, name hash, name length, and inline string
+for 12 symbols. Generally speaking, the dentry is able to store
+8.3 filename inline. If the name of file/folder has longer name
+(more than 12 symbols) then the dentry will keep only the portion of
+the name but the whole name will be stored into a shared dictionary.
+The goal of such approach is to represent the dentry by compact
+metadata structure of fixed size for the fast and efficient operations
+with the dentries. It is possible to point out that there are a lot of
+use-cases when the length of file or folder is not very long. As a result,
+dentry’s inline string could be only storage for the file/folder name.
+Moreover, the goal of shared dictionary is to store the long names
+efficiently by means of using the deduplication mechanism.
+
+Dentries b-tree is the hybrid b-tree with the root node is stored into
+the private inode’s area. By default, inode’s private area has 128 bytes
+in size. Also SSDFS dentry has 32 bytes in size. As a result, inode’s
+private area provides enough space for 4 inline dentries. Generally
+speaking, if a folder contains 4 or lesser files then the dentries
+can be stored into the inode’s private area without the necessity
+to create the dentries b-tree. Otherwise, if a folder includes
+more than 4 files or folders then it needs to create the regular
+dentries b-tree with the root node is stored into the private area
+of inode. Actually, every node of dentries b-tree contains the header,
+index area (for the case of hybrid node), and array of dentries are ordered
+by hash value of filename. Moreover, if a b-tree node has 8 KB size then
+it is capable to contain maximum 256 dentries. Generally speaking,
+the hybrid b-tree was opted for the dentries metadata structure
+by virtue of compactness of metadata structure representation and
+efficient lookup mechanism. Dentries is ordered on the basis of
+name’s hash. Every node of dentries b-tree has: (1) dirty bitmap -
+tracking modified dentries, (2) lock bitmap - exclusive locking of
+particular dentries without the necessity to lock the whole b-tree
+node. Actually, it is expected that dentries b-tree could contain
+not many nodes in average because the two nodes (8K in size) of
+dentries b-tree is capable to store about 400 dentries.
+
+Dentries b-tree implements API:
+(1) create - create dentries b-tree
+(2) destroy - destroy dentries b-tree
+(3) flush - flush dirty dentries b-tree
+(4) find - find dentry for a name in b-tree
+(5) add - add dentry object into b-tree
+(6) change - change/update dentry object in b-tree
+(7) delete - delete dentry object from b-tree
+(8) delete_all - delete all dentries from b-tree
+
+Dentries b-tree node implements a specialized API:
+(1) find_item - find item in the node
+(2) find_range - find range of items in the node
+(3) extract_range - extract range of items (or all items) from node
+(4) insert_item - insert item in the node
+(5) insert_range - insert range of items in the node
+(6) change_item - change item in the node
+(7) delete_item - delete item from the node
+(8) delete_range - delete range of items from the node
+
+Signed-off-by: Viacheslav Dubeyko <slava@dubeyko.com>
+---
+ fs/ssdfs/dentries_tree.h | 158 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 158 insertions(+)
+ create mode 100644 fs/ssdfs/dentries_tree.h
+
+diff --git a/fs/ssdfs/dentries_tree.h b/fs/ssdfs/dentries_tree.h
+new file mode 100644
+index 000000000000..1428e5d70d49
+--- /dev/null
++++ b/fs/ssdfs/dentries_tree.h
+@@ -0,0 +1,158 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/dentries_tree.h - dentries btree declarations.
++ *
++ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
++ *              http://www.hgst.com/
++ * Copyright (c) 2014-2026 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ *
++ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
++ *
++ * Created by HGST, San Jose Research Center, Storage Architecture Group
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cyril Guyot
++ *                  Zvonimir Bandic
++ */
++
++#ifndef _SSDFS_DENTRIES_TREE_H
++#define _SSDFS_DENTRIES_TREE_H
++
++#define SSDFS_INLINE_DENTRIES_COUNT		(2 * SSDFS_INLINE_DENTRIES_PER_AREA)
++#define SSDFS_FOLDER_DEFAULT_SHORTCUTS_COUNT	(2)
++
++/*
++ * struct ssdfs_dentries_btree_info - dentries btree info
++ * @type: dentries btree type
++ * @state: dentries btree state
++ * @dentries_count: count of the dentries in the whole dentries tree
++ * @lock: dentries btree lock
++ * @generic_tree: pointer on generic btree object
++ * @inline_dentries: pointer on inline dentries array
++ * @buffer.tree: piece of memory for generic btree object
++ * @buffer.dentries: piece of memory for the inline dentries
++ * @root: pointer on root node
++ * @root_buffer: buffer for root node
++ * @desc: b-tree descriptor
++ * @owner: pointer on owner inode object
++ * @fsi: pointer on shared file system object
++ *
++ * A newly created inode tries to store dentries into inline
++ * dentries. The raw on-disk inode has internal private area
++ * that is able to contain the four inline dentries or
++ * root node of extents btree and extended attributes btree.
++ * If inode hasn't extended attributes and the amount of dentries
++ * are lesser than four then everithing can be stored inside of
++ * inline dentries. Otherwise, the real dentries btree should
++ * be created.
++ */
++struct ssdfs_dentries_btree_info {
++	atomic_t type;
++	atomic_t state;
++	atomic64_t dentries_count;
++
++	struct rw_semaphore lock;
++	struct ssdfs_btree *generic_tree;
++	struct ssdfs_dir_entry *inline_dentries;
++	union {
++		struct ssdfs_btree tree;
++		struct ssdfs_dir_entry dentries[SSDFS_INLINE_DENTRIES_COUNT];
++	} buffer;
++	struct ssdfs_btree_inline_root_node *root;
++	struct ssdfs_btree_inline_root_node root_buffer;
++
++	struct ssdfs_dentries_btree_descriptor desc;
++	struct ssdfs_inode_info *owner;
++	struct ssdfs_fs_info *fsi;
++};
++
++/* Dentries tree types */
++enum {
++	SSDFS_DENTRIES_BTREE_UNKNOWN_TYPE,
++	SSDFS_INLINE_DENTRIES_ARRAY,
++	SSDFS_PRIVATE_DENTRIES_BTREE,
++	SSDFS_DENTRIES_BTREE_TYPE_MAX
++};
++
++/* Dentries tree states */
++enum {
++	SSDFS_DENTRIES_BTREE_UNKNOWN_STATE,
++	SSDFS_DENTRIES_BTREE_CREATED,
++	SSDFS_DENTRIES_BTREE_INITIALIZED,
++	SSDFS_DENTRIES_BTREE_DIRTY,
++	SSDFS_DENTRIES_BTREE_CORRUPTED,
++	SSDFS_DENTRIES_BTREE_STATE_MAX
++};
++
++/*
++ * Inline methods
++ */
++static inline
++size_t ssdfs_inline_dentries_size(void)
++{
++	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
++	return dentry_size * SSDFS_INLINE_DENTRIES_COUNT;
++}
++
++static inline
++size_t ssdfs_area_dentries_size(void)
++{
++	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
++	return dentry_size * SSDFS_INLINE_DENTRIES_PER_AREA;
++}
++
++/*
++ * Dentries tree API
++ */
++int ssdfs_dentries_tree_create(struct ssdfs_fs_info *fsi,
++				struct ssdfs_inode_info *ii);
++int ssdfs_dentries_tree_init(struct ssdfs_fs_info *fsi,
++			     struct ssdfs_inode_info *ii);
++void ssdfs_dentries_tree_destroy(struct ssdfs_inode_info *ii);
++int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
++				struct ssdfs_inode_info *ii);
++
++int ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
++			     const char *name, size_t len,
++			     struct ssdfs_btree_search *search);
++int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
++			    const struct qstr *str,
++			    struct ssdfs_inode_info *ii,
++			    struct ssdfs_btree_search *search);
++int ssdfs_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
++				u64 name_hash, ino_t old_ino,
++				const struct qstr *str,
++				struct ssdfs_inode_info *new_ii,
++				struct ssdfs_btree_search *search);
++int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
++				u64 name_hash, ino_t ino,
++				struct ssdfs_btree_search *search);
++int ssdfs_dentries_tree_delete_all(struct ssdfs_dentries_btree_info *tree);
++
++/*
++ * Internal dentries tree API
++ */
++u64 ssdfs_generate_name_hash(const struct qstr *str);
++int ssdfs_dentries_tree_find_leaf_node(struct ssdfs_dentries_btree_info *tree,
++					u64 name_hash,
++					struct ssdfs_btree_search *search);
++int ssdfs_dentries_tree_extract_range(struct ssdfs_dentries_btree_info *tree,
++				      u16 start_index, u16 count,
++				      struct ssdfs_btree_search *search);
++
++void ssdfs_debug_dentries_btree_object(struct ssdfs_dentries_btree_info *tree);
++
++/*
++ * Dentries btree specialized operations
++ */
++extern const struct ssdfs_btree_descriptor_operations
++						ssdfs_dentries_btree_desc_ops;
++extern const struct ssdfs_btree_operations ssdfs_dentries_btree_ops;
++extern const struct ssdfs_btree_node_operations ssdfs_dentries_btree_node_ops;
++
++#endif /* _SSDFS_DENTRIES_TREE_H */
+-- 
+2.34.1
+
