@@ -7745,16 +7745,20 @@ bool does_peb_require_move_data_out(struct ssdfs_peb_info *pebi,
 	int peb_valid_blks;
 	int peb_blks_capacity;
 	u32 pages_per_peb;
+	u32 start_block;
 	u32 valid_blks_per_page;
 	bool is_peb_migrating = false;
 	bool is_peb_inflated = false;
 	int src_valid_blks;
+	int src_invalid_blks;
 	int dst_valid_blks;
+	int dst_invalid_blks;
 	u32 free_data_blocks;
 	u32 used_phys_pages;
 	u32 migrated_blks_per_page;
 	u32 predicted_blks_per_page;
 	u32 threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
+	u32 free_space_25_percentage;
 	bool need_move_out = false;
 	u32 i;
 	int err;
@@ -7840,6 +7844,35 @@ bool does_peb_require_move_data_out(struct ssdfs_peb_info *pebi,
 		break;
 	}
 
+	start_block = pebi->current_log.start_block;
+	start_block += pebi->log_blocks;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(start_block < pebi->current_log.free_data_blocks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	start_block -= pebi->current_log.free_data_blocks;
+
+	if (start_block > fsi->pages_per_peb)
+		free_data_blocks = 0;
+	else
+		free_data_blocks = fsi->pages_per_peb - start_block;
+
+	free_space_25_percentage = (fsi->pages_per_peb * 25) / 100;
+
+	if (free_data_blocks > free_space_25_percentage) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("DON'T MOVE DATA OUT: "
+			  "peb %llu, free_data_blocks %u, "
+			  "free_space_25_percentage %u\n",
+			  pebi->peb_id,
+			  free_data_blocks,
+			  free_space_25_percentage);
+#endif /* CONFIG_SSDFS_DEBUG */
+		need_move_out = false;
+		goto finish_make_decision;
+	}
+
 	peb_valid_blks = atomic_read(&peb_blkbmap->peb_valid_blks);
 	peb_valid_blks = max_t(int, peb_valid_blks, (int)pages_per_peb);
 
@@ -7854,6 +7887,15 @@ bool does_peb_require_move_data_out(struct ssdfs_peb_info *pebi,
 		goto finish_make_decision;
 	}
 
+	src_invalid_blks = ssdfs_src_blk_bmap_get_invalid_pages(peb_blkbmap);
+	if (src_invalid_blks < 0) {
+		err = src_invalid_blks;
+		SSDFS_ERR("fail to get source's invalid blocks: err %d\n",
+			  err);
+		need_move_out = false;
+		goto finish_make_decision;
+	}
+
 	dst_valid_blks = ssdfs_dst_blk_bmap_get_used_pages(peb_blkbmap);
 	if (dst_valid_blks < 0) {
 		err = dst_valid_blks;
@@ -7863,22 +7905,13 @@ bool does_peb_require_move_data_out(struct ssdfs_peb_info *pebi,
 		goto finish_make_decision;
 	}
 
-	free_data_blocks = pebi->current_log.free_data_blocks;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(free_data_blocks > fsi->pages_per_peb);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (free_data_blocks < (req->place.len + threshold)) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("Data needs to be move out: "
-			  "peb %llu, free_data_blocks %u, "
-			  "req->place.len %u\n",
-			  pebi->peb_id, free_data_blocks,
-			  req->place.len);
-#endif /* CONFIG_SSDFS_DEBUG */
-		need_move_out = true;
-		goto check_block_state;
+	dst_invalid_blks = ssdfs_dst_blk_bmap_get_invalid_pages(peb_blkbmap);
+	if (dst_invalid_blks < 0) {
+		err = dst_invalid_blks;
+		SSDFS_ERR("fail to get destination's invalid blocks: err %d\n",
+			  err);
+		need_move_out = false;
+		goto finish_make_decision;
 	}
 
 	used_phys_pages = fsi->pages_per_peb - free_data_blocks;
@@ -7886,7 +7919,10 @@ bool does_peb_require_move_data_out(struct ssdfs_peb_info *pebi,
 	if (used_phys_pages == 0) {
 		migrated_blks_per_page = 1;
 	} else {
-		migrated_blks_per_page = dst_valid_blks / used_phys_pages;
+		migrated_blks_per_page = dst_valid_blks;
+		migrated_blks_per_page += src_invalid_blks;
+		migrated_blks_per_page += dst_invalid_blks;
+		migrated_blks_per_page /= used_phys_pages;
 		if (migrated_blks_per_page == 0)
 			migrated_blks_per_page = 1;
 	}
@@ -7905,17 +7941,32 @@ bool does_peb_require_move_data_out(struct ssdfs_peb_info *pebi,
 			predicted_blks_per_page = 1;
 	}
 
+	if (free_data_blocks <= (threshold + 1) &&
+	    src_valid_blks > migrated_blks_per_page) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("Data needs to be move out: "
+			  "peb %llu, free_data_blocks %u, "
+			  "src_valid_blks %d, migrated_blks_per_page %u\n",
+			  pebi->peb_id, free_data_blocks,
+			  src_valid_blks, migrated_blks_per_page);
+#endif /* CONFIG_SSDFS_DEBUG */
+		need_move_out = true;
+		goto check_block_state;
+	}
+
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb %llu, pages_per_peb %u, "
 		  "peb_blks_capacity %d, peb_valid_blks %d, "
 		  "valid_blks_per_page %u, src_valid_blks %d, "
-		  "dst_valid_blks %d, free_data_blocks %u, "
+		  "src_invalid_blks %d, dst_valid_blks %d, "
+		  "dst_invalid_blks %d, free_data_blocks %u, "
 		  "used_phys_pages %u, migrated_blks_per_page %u, "
 		  "predicted_blks_per_page %u\n",
 		  pebi->peb_id, fsi->pages_per_peb,
 		  peb_blks_capacity, peb_valid_blks,
 		  valid_blks_per_page, src_valid_blks,
-		  dst_valid_blks, free_data_blocks,
+		  src_invalid_blks, dst_valid_blks,
+		  dst_invalid_blks, free_data_blocks,
 		  used_phys_pages, migrated_blks_per_page,
 		  predicted_blks_per_page);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -7942,8 +7993,8 @@ bool does_peb_require_move_data_out(struct ssdfs_peb_info *pebi,
 		}
 	}
 
-	if (predicted_blks_per_page > migrated_blks_per_page &&
-	    predicted_blks_per_page > valid_blks_per_page) {
+	if (predicted_blks_per_page > (migrated_blks_per_page * 2) &&
+	    predicted_blks_per_page > (valid_blks_per_page * 2)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("Data needs to be move out: "
 			  "peb %llu, predicted_blks_per_page %u, "

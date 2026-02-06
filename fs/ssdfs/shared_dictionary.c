@@ -3389,7 +3389,9 @@ int ssdfs_shared_dict_btree_flush_node(struct ssdfs_btree_node *node)
 	SSDFS_DBG("node %p, node_id %u\n",
 		  node, node->node_id);
 
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_shdict_btree_node_consistency(node);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = node->tree;
@@ -6549,9 +6551,9 @@ int ssdfs_shared_dict_btree_node_find_item(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_shdict_btree_node_consistency(node);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 
 	return ssdfs_shared_dict_btree_node_find_range(node, search);
 }
@@ -14309,9 +14311,9 @@ finish_insert_item:
 		break;
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_shdict_btree_node_consistency(node);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 
 	return err;
 }
@@ -14406,7 +14408,9 @@ int ssdfs_shared_dict_btree_node_insert_item(struct ssdfs_btree_node *node,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_shdict_btree_node_consistency(node);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 	ssdfs_debug_btree_node_object(node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -14586,7 +14590,9 @@ int __ssdfs_shared_dict_btree_node_insert_range(struct ssdfs_btree_node *node,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_shdict_btree_node_consistency(node);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 	ssdfs_debug_btree_node_object(node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -16530,7 +16536,9 @@ finish_insert_name_range:
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_shdict_btree_node_consistency(node);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 	ssdfs_debug_btree_node_object(node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -19532,7 +19540,9 @@ finish_delete_range:
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_shdict_btree_node_consistency(node);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 	ssdfs_debug_btree_node_object(node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -19919,7 +19929,9 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_shdict_btree_node_consistency(node);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->items_area.state)) {
