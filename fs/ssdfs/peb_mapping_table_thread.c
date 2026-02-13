@@ -2641,6 +2641,8 @@ finish_erase_dirty_pebs:
 	(kthread_should_stop() || \
 	 has_maptbl_pre_erase_pebs(MAPTBL_PTR(tbl)) || \
 	 !is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue))
+#define MAPTBL_THREAD_RDONLY_WAKE_CONDITION() \
+	(kthread_should_stop())
 #define MAPTBL_FAILED_THREAD_WAKE_CONDITION() \
 	(kthread_should_stop())
 
@@ -2728,7 +2730,7 @@ repeat:
 	}
 
 	if (fsi->sb->s_flags & SB_RDONLY)
-		goto sleep_maptbl_thread;
+		goto sleep_read_only_maptbl_thread;
 
 	if (!has_maptbl_pre_erase_pebs(tbl) &&
 	    is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue)) {
@@ -2856,6 +2858,12 @@ sleep_maptbl_thread:
 		}
 	}
 	remove_wait_queue(wait_queue, &wait);
+	goto repeat;
+
+sleep_read_only_maptbl_thread:
+	wait_event_interruptible_timeout(*wait_queue,
+					 MAPTBL_THREAD_RDONLY_WAKE_CONDITION(),
+					 SSDFS_DEFAULT_TIMEOUT);
 	goto repeat;
 
 sleep_failed_maptbl_thread:

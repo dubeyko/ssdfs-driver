@@ -3657,8 +3657,10 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	err = ssdfs_gather_superblock_info(fs_info, silent);
-	if (err)
+	if (err) {
+		complete_all(&fs_info->mount_end);
 		goto free_erase_folio;
+	}
 
 	spin_lock(&fs_info->volume_state_lock);
 	fs_feature_compat = fs_info->fs_feature_compat;
@@ -3671,8 +3673,10 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	err = ssdfs_sysfs_create_device_group(sb);
-	if (err)
+	if (err) {
+		complete_all(&fs_info->mount_end);
 		goto release_maptbl_cache;
+	}
 
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
 	sb->s_magic = SSDFS_SUPER_MAGIC;
@@ -3694,9 +3698,12 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		 * Ignore this error.
 		 */
 		err = 0;
+		complete_all(&fs_info->mount_end);
 		goto destroy_sysfs_device_group;
-	} else if (err)
+	} else if (err) {
+		complete_all(&fs_info->mount_end);
 		goto destroy_sysfs_device_group;
+	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create segment tree started...\n");
@@ -3707,8 +3714,10 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	down_write(&fs_info->volume_sem);
 	err = ssdfs_segment_tree_create(fs_info);
 	up_write(&fs_info->volume_sem);
-	if (err)
+	if (err) {
+		complete_all(&fs_info->mount_end);
 		goto destroy_snapshot_subsystem;
+	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create mapping table started...\n");
@@ -3726,12 +3735,16 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 			 * Ignore this error.
 			 */
 			err = 0;
+			complete_all(&fs_info->mount_end);
 			goto destroy_segments_tree;
-		} else if (err)
+		} else if (err) {
+			complete_all(&fs_info->mount_end);
 			goto destroy_segments_tree;
+		}
 	} else {
 		err = -EIO;
 		SSDFS_WARN("volume hasn't mapping table\n");
+		complete_all(&fs_info->mount_end);
 		goto destroy_segments_tree;
 	}
 
@@ -3751,12 +3764,16 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 			 * Ignore this error.
 			 */
 			err = 0;
+			complete_all(&fs_info->mount_end);
 			goto destroy_maptbl;
-		} else if (err)
+		} else if (err) {
+			complete_all(&fs_info->mount_end);
 			goto destroy_maptbl;
+		}
 	} else {
 		err = -EIO;
 		SSDFS_WARN("volume hasn't segment bitmap\n");
+		complete_all(&fs_info->mount_end);
 		goto destroy_maptbl;
 	}
 
@@ -3770,11 +3787,14 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		down_write(&fs_info->volume_sem);
 		err = ssdfs_shextree_create(fs_info);
 		up_write(&fs_info->volume_sem);
-		if (err)
+		if (err) {
+			complete_all(&fs_info->mount_end);
 			goto destroy_segbmap;
+		}
 	} else {
 		err = -EIO;
 		SSDFS_WARN("volume hasn't shared extents tree\n");
+		complete_all(&fs_info->mount_end);
 		goto destroy_segbmap;
 	}
 
@@ -3788,8 +3808,10 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		down_write(&fs_info->volume_sem);
 		err = ssdfs_invextree_create(fs_info);
 		up_write(&fs_info->volume_sem);
-		if (err)
+		if (err) {
+			complete_all(&fs_info->mount_end);
 			goto destroy_shextree;
+		}
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -3801,8 +3823,10 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	down_write(&fs_info->volume_sem);
 	err = ssdfs_current_segment_array_create(fs_info);
 	up_write(&fs_info->volume_sem);
-	if (err)
+	if (err) {
+		complete_all(&fs_info->mount_end);
 		goto destroy_invext_btree;
+	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create shared dictionary started...\n");
@@ -3816,12 +3840,14 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		err = ssdfs_shared_dict_btree_create(fs_info);
 		if (err) {
 			up_write(&fs_info->volume_sem);
+			complete_all(&fs_info->mount_end);
 			goto destroy_current_segment_array;
 		}
 
 		err = ssdfs_shared_dict_btree_init(fs_info);
 		if (err) {
 			up_write(&fs_info->volume_sem);
+			complete_all(&fs_info->mount_end);
 			goto destroy_shdictree;
 		}
 
@@ -3829,6 +3855,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	} else {
 		err = -EIO;
 		SSDFS_WARN("volume hasn't shared dictionary\n");
+		complete_all(&fs_info->mount_end);
 		goto destroy_current_segment_array;
 	}
 
@@ -3846,11 +3873,14 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 			err = 0;
 			fs_info->sb->s_flags |= SB_RDONLY;
 			SSDFS_DBG("unable to create inodes btree\n");
-		} else if (err)
+		} else if (err) {
+			complete_all(&fs_info->mount_end);
 			goto destroy_shdictree;
+		}
 	} else {
 		err = -EIO;
 		SSDFS_WARN("volume hasn't inodes btree\n");
+		complete_all(&fs_info->mount_end);
 		goto destroy_shdictree;
 	}
 
@@ -3864,6 +3894,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	if (IS_ERR(root_i)) {
 		SSDFS_DBG("getting root inode failed\n");
 		err = PTR_ERR(root_i);
+		complete_all(&fs_info->mount_end);
 		goto destroy_inodes_btree;
 	}
 
@@ -3871,6 +3902,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		err = -ERANGE;
 		iput(root_i);
 		SSDFS_ERR("corrupted root inode\n");
+		complete_all(&fs_info->mount_end);
 		goto destroy_inodes_btree;
 	}
 
@@ -3883,6 +3915,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	sb->s_root = d_make_root(root_i);
 	if (!sb->s_root) {
 		err = -ENOMEM;
+		complete_all(&fs_info->mount_end);
 		goto put_root_inode;
 	}
 
@@ -3898,10 +3931,12 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		 * Ignore this error.
 		 */
 		err = 0;
+		complete_all(&fs_info->mount_end);
 		goto put_root_inode;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to start global FSCK thread: "
 			  "err %d\n", err);
+		complete_all(&fs_info->mount_end);
 		goto put_root_inode;
 	}
 
@@ -3920,6 +3955,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 			err = 0;
 			for (i--; i >= 0; i--)
 				ssdfs_stop_gc_thread(fs_info, i);
+			complete_all(&fs_info->mount_end);
 			goto stop_global_fsck_thread;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to start GC threads: "
@@ -3927,6 +3963,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 				  i, err);
 			for (i--; i >= 0; i--)
 				ssdfs_stop_gc_thread(fs_info, i);
+			complete_all(&fs_info->mount_end);
 			goto stop_global_fsck_thread;
 		}
 	}

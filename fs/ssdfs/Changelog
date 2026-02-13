@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.48 [February 12, 2026]
+    (*) Fix softlockup issue in PEB mapping table's thread logic.
+
 v.5.47 [January 29, 2026]
     (*) Rework shared dictionary logic.
 
