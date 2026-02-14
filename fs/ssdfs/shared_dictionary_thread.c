@@ -156,6 +156,8 @@ finish_init:
 #define SHDICT_THREAD_WAKE_CONDITION(tree) \
 	(kthread_should_stop() || \
 	 has_queue_unprocessed_names(SHDICT_PTR(tree)))
+#define SHDICT_THREAD_RDONLY_WAKE_CONDITION() \
+	(kthread_should_stop())
 #define SHDICT_FAILED_THREAD_WAKE_CONDITION() \
 	(kthread_should_stop())
 
@@ -213,7 +215,7 @@ finish_thread:
 	}
 
 	if (tree->generic_tree.fsi->sb->s_flags & SB_RDONLY)
-		goto sleep_shared_dict_thread;
+		goto sleep_read_only_shared_dict_thread;
 
 	if (!has_queue_unprocessed_names(tree))
 		goto sleep_shared_dict_thread;
@@ -351,6 +353,12 @@ sleep_shared_dict_thread:
 		}
 	}
 	remove_wait_queue(wait_queue, &wait);
+	goto repeat;
+
+sleep_read_only_shared_dict_thread:
+	wait_event_interruptible_timeout(*wait_queue,
+					SHDICT_THREAD_RDONLY_WAKE_CONDITION(),
+					SSDFS_DEFAULT_TIMEOUT);
 	goto repeat;
 
 sleep_failed_shared_dict_thread:

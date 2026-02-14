@@ -4036,6 +4036,7 @@ destroy_inodes_btree:
 	ssdfs_inodes_btree_destroy(fs_info);
 
 destroy_shdictree:
+	ssdfs_shared_dict_stop_thread(fs_info->shdictree);
 	ssdfs_shared_dict_btree_destroy(fs_info);
 
 destroy_current_segment_array:
@@ -4045,6 +4046,8 @@ destroy_invext_btree:
 	ssdfs_invextree_destroy(fs_info);
 
 destroy_shextree:
+	for (i = SSDFS_INVALIDATION_QUEUE_NUMBER - 1; i >= 0; i--)
+		ssdfs_shextree_stop_thread(fs_info->shextree, i);
 	ssdfs_shextree_destroy(fs_info);
 
 destroy_segbmap:
@@ -4059,6 +4062,7 @@ destroy_segments_tree:
 	ssdfs_current_segment_array_destroy(fs_info);
 
 destroy_snapshot_subsystem:
+	ssdfs_stop_snapshots_btree_thread(fs_info);
 	ssdfs_snapshot_subsystem_destroy(fs_info);
 
 destroy_sysfs_device_group:

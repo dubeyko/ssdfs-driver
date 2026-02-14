@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.50 [February 13, 2026]
+    (*) Fix softlockup issue in the case of mount failure.
+
 v.5.49 [February 13, 2026]
     (*) Fix issue of block bitmap initialization for the case
         of several folios.

@@ -37,6 +37,8 @@
 #define SNAPTREE_THREAD_WAKE_CONDITION(tree) \
 	(kthread_should_stop() || \
 	 !is_ssdfs_snapshot_reqs_queue_empty(&tree->requests.queue))
+#define SNAPTREE_THREAD_RDONLY_WAKE_CONDITION() \
+	(kthread_should_stop())
 #define SNAPTREE_FAILED_THREAD_WAKE_CONDITION() \
 	(kthread_should_stop())
 
@@ -253,7 +255,7 @@ finish_thread:
 	}
 
 	if (fsi->sb->s_flags & SB_RDONLY)
-		goto sleep_snapshots_btree_thread;
+		goto sleep_read_only_snapshots_btree_thread;
 
 	if (!is_time_process_requests(tree) &&
 	    !has_any_snapshot_been_deleted(tree)) {
@@ -537,6 +539,12 @@ sleep_snapshots_btree_thread:
 		}
 	}
 	remove_wait_queue(wait_queue, &wait);
+	goto repeat;
+
+sleep_read_only_snapshots_btree_thread:
+	wait_event_interruptible_timeout(*wait_queue,
+					SNAPTREE_THREAD_RDONLY_WAKE_CONDITION(),
+					SSDFS_DEFAULT_TIMEOUT);
 	goto repeat;
 
 sleep_failed_snapshots_btree_thread:

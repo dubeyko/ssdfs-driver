@@ -240,6 +240,8 @@ int ssdfs_shextree_try_merge_extents(struct ssdfs_extent_info *ei,
 #define SHEXTREE_THREAD_WAKE_CONDITION(tree, index) \
 	(kthread_should_stop() || \
 	 has_shextree_pre_invalid_extents(SHEXTREE_PTR(tree), index))
+#define SHEXTREE_THREAD_RDONLY_WAKE_CONDITION() \
+	(kthread_should_stop())
 #define SHEXTREE_FAILED_THREAD_WAKE_CONDITION() \
 	(kthread_should_stop())
 
@@ -292,7 +294,7 @@ finish_thread:
 	}
 
 	if (tree->fsi->sb->s_flags & SB_RDONLY)
-		goto sleep_shextree_thread;
+		goto sleep_read_only_shextree_thread;
 
 	if (!has_shextree_pre_invalid_extents(tree, id))
 		goto sleep_shextree_thread;
@@ -463,6 +465,15 @@ sleep_shextree_thread:
 		}
 	}
 	remove_wait_queue(wait_queue, &wait);
+	goto repeat;
+
+sleep_read_only_shextree_thread:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("READ-ONLY state: go to sleep...\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+	wait_event_interruptible_timeout(*wait_queue,
+					SHEXTREE_THREAD_RDONLY_WAKE_CONDITION(),
+					SSDFS_DEFAULT_TIMEOUT);
 	goto repeat;
 
 sleep_failed_shextree_thread:
