@@ -1455,9 +1455,12 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_migration_id %u, "
-		  "range (start %u, len %u)\n",
+		  "range (start %u, len %u), range_state %#x, "
+		  "current_log.start_block %u\n",
 		  bmap->parent_si->seg_id, pebi->pebc->peb_index,
-		  peb_migration_id, range->start, range->len);
+		  peb_migration_id, range->start, range->len,
+		  range_state,
+		  pebi->current_log.start_block);
 
 	BUG_ON(atomic_read(&bmap->seg_free_blks) < 0);
 	BUG_ON(atomic_read(&bmap->seg_valid_blks) < 0);
@@ -1840,16 +1843,9 @@ finish_define_bmap_index:
 
 		dst_blkbmap = &bmap->peb[peb_index];
 
-		if (range_state == SSDFS_BLK_PRE_ALLOCATED) {
-			err = ssdfs_peb_blk_bmap_pre_allocate(dst_blkbmap,
-							      bmap_index,
-							      range);
-		} else {
-			err = ssdfs_peb_blk_bmap_allocate(dst_blkbmap,
-							  bmap_index,
-							  range);
-		}
-
+		err = ssdfs_peb_blk_bmap_move(dst_blkbmap,
+						range_state,
+						range);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to move: "
 				  "range (start %u, len %u), "

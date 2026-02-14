@@ -216,6 +216,7 @@ void ssdfs_blk2off_frag_free(void *ptr)
  * struct ssdfs_blk2off_init - initialization environment
  * @table: pointer on translation table object
  * @env: read init environment
+ * @pebi: PEB object
  * @peb_index: PEB's index
  * @PEB_ID: PEB identification number
  * @cno: checkpoint
@@ -233,6 +234,7 @@ void ssdfs_blk2off_frag_free(void *ptr)
 struct ssdfs_blk2off_init {
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_read_init_env *env;
+	struct ssdfs_peb_info *pebi;
 	u16 peb_index;
 	u64 peb_id;
 	u64 cno;
@@ -2195,6 +2197,10 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	int phys_off_index;
 	bool is_partially_processed = false;
 	int i, j;
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	int blk_state;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2635,6 +2641,38 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 			goto finish_process_fragment;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		seg_blkbmap = &portion->pebi->pebc->parent_si->blk_bmap;
+
+		ssdfs_peb_current_log_lock(portion->pebi);
+		blk_state = ssdfs_segment_blk_bmap_get_block_state(seg_blkbmap,
+								   portion->pebi,
+								   cur_blk);
+		ssdfs_peb_current_log_unlock(portion->pebi);
+
+		if (blk_state < 0) {
+			SSDFS_ERR("fail to detect block %u state: "
+				  "err %d\n", cur_blk, err);
+			BUG();
+		}
+
+		switch (blk_state) {
+		case SSDFS_BLK_PRE_ALLOCATED:
+		case SSDFS_BLK_VALID:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("logical block has unexpected state: "
+				  "seg %llu, peb %llu, "
+				  "cur_blk %u, blk_state %#x\n",
+				  portion->pebi->pebc->parent_si->seg_id,
+				  portion->pebi->peb_id,
+				  cur_blk, blk_state);
+			BUG();
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		atomic_inc(&frag->actual_records);
 	}
 
@@ -2709,6 +2747,10 @@ int __ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 	u32 logical_blk;
 	u16 len;
 	int i;
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	int blk_state;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2816,6 +2858,38 @@ int __ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 				  cur_blk, err);
 			goto finish_process_extent;
 		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		seg_blkbmap = &portion->pebi->pebc->parent_si->blk_bmap;
+
+		ssdfs_peb_current_log_lock(portion->pebi);
+		blk_state = ssdfs_segment_blk_bmap_get_block_state(seg_blkbmap,
+								   portion->pebi,
+								   cur_blk);
+		ssdfs_peb_current_log_unlock(portion->pebi);
+
+		if (blk_state < 0) {
+			SSDFS_ERR("fail to detect block %u state: "
+				  "err %d\n", cur_blk, err);
+			BUG();
+		}
+
+		switch (blk_state) {
+		case SSDFS_BLK_FREE:
+		case SSDFS_BLK_INVALID:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("logical block has unexpected state: "
+				  "seg %llu, peb %llu, "
+				  "cur_blk %u, blk_state %#x\n",
+				  portion->pebi->pebc->parent_si->seg_id,
+				  portion->pebi->peb_id,
+				  cur_blk, blk_state);
+			BUG();
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		/*
 		 * Free block needs to be marked as modified
@@ -3483,8 +3557,7 @@ int ssdfs_define_blk2off_table_object_state(struct ssdfs_blk2off_table *table,
  * ssdfs_blk2off_table_partial_init() - initialize PEB's table fragment
  * @table: pointer on translation table object
  * @env: read init environment
- * @peb_index: PEB's index
- * @peb_id: PEB identification number
+ * @pebi: PEB object
  * @cno: fragment's checkpoint (log's checkpoint)
  *
  * This method tries to initialize PEB's table fragment.
@@ -3500,7 +3573,8 @@ int ssdfs_define_blk2off_table_object_state(struct ssdfs_blk2off_table *table,
  */
 int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				     struct ssdfs_read_init_env *env,
-				     u16 peb_index, u64 peb_id, u64 cno)
+				     struct ssdfs_peb_info *pebi,
+				     u64 cno)
 {
 	struct ssdfs_blk2off_init portion;
 	struct ssdfs_content_stream *stream;
@@ -3514,33 +3588,34 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!table || !env);
-	BUG_ON(peb_index >= table->pebs_count);
+	BUG_ON(!table || !env || !pebi);
+	BUG_ON(pebi->peb_index >= table->pebs_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("table %p, peb_index %u, peb_id %llu\n",
-		  table, peb_index, peb_id);
+		  table, pebi->peb_index, pebi->peb_id);
 #else
 	SSDFS_DBG("table %p, peb_index %u, peb_id %llu\n",
-		  table, peb_index, peb_id);
+		  table, pebi->peb_index, pebi->peb_id);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	memset(&portion, 0, sizeof(struct ssdfs_blk2off_init));
 
-	if (ssdfs_blk2off_table_initialized(table, peb_index)) {
+	if (ssdfs_blk2off_table_initialized(table, pebi->peb_index)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("PEB's table has been initialized already: "
 			   "peb_index %u\n",
-			   peb_index);
+			   pebi->peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -EEXIST;
 	}
 
 	portion.table = table;
 	portion.env = env;
-	portion.peb_index = peb_index;
-	portion.peb_id = peb_id;
+	portion.pebi = pebi;
+	portion.peb_index = pebi->peb_index;
+	portion.peb_id = pebi->peb_id;
 	portion.cno = cno;
 	portion.total_blks_in_extents = 0;
 	portion.initialized_blks = 0;
@@ -3760,11 +3835,11 @@ try_next_extent:
 		++extent_index;
 	};
 
-	err = ssdfs_define_peb_table_state(table, &portion, peb_index);
+	err = ssdfs_define_peb_table_state(table, &portion, pebi->peb_index);
 	if (err) {
 		SSDFS_ERR("fail to define PEB's table state: "
 			  "peb_index %u, err %d\n",
-			  peb_index, err);
+			  pebi->peb_index, err);
 		goto unlock_translation_table;
 	}
 

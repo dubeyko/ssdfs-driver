@@ -346,6 +346,8 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
 			   size_t items_capacity);
 int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap);
+int ssdfs_block_bmap_clean2invalid(struct ssdfs_block_bmap *blk_bmap,
+				struct ssdfs_block_bmap_range *range);
 
 #if IS_ENABLED(CONFIG_KUNIT)
 bool BLK_BMAP_BYTE_CONTAINS_STATE(u8 *value, int blk_state);

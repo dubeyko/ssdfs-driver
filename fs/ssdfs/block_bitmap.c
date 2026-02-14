@@ -6767,6 +6767,140 @@ int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap)
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_invalid2clean);
 
 /*
+ * ssdfs_block_bmap_clean2invalid() - convert clean range into invalidated
+ * @blk_bmap: pointer on block bitmap
+ * @range: pointer on blocks' range [in | out]
+ *
+ * This function tries to convert clean range into invalidated state.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input value.
+ * %-ENOENT     - block bitmap doesn't initialized.
+ */
+int ssdfs_block_bmap_clean2invalid(struct ssdfs_block_bmap *blk_bmap,
+				struct ssdfs_block_bmap_range *range)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	int i;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!blk_bmap || !range);
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap mutex should be locked\n");
+		return -EINVAL;
+	}
+
+	SSDFS_DBG("blk_bmap %p, range (start %u, len %u)\n",
+		  blk_bmap, range->start, range->len);
+	SSDFS_DBG("allocation_pool %zu, used_blks %u, "
+		  "metadata_items %u, invalid_blks %u\n",
+		  blk_bmap->allocation_pool,
+		  blk_bmap->used_blks,
+		  blk_bmap->metadata_items,
+		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("range (start %u, len %u)\n",
+		  range->start, range->len);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (unlikely(!blk_bmap) || unlikely(!range)) {
+		SSDFS_ERR("fail to invalidate: "
+			  "blk_bmap %p, range %p\n",
+			  blk_bmap, range);
+		return -EINVAL;
+	}
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -ENOENT;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	ssdfs_debug_block_bitmap(blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (range_corrupted(blk_bmap, range)) {
+		SSDFS_ERR("invalid range (start %u, len %u); "
+			  "items_capacity %zu\n",
+			  range->start, range->len,
+			  blk_bmap->items_capacity);
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	for (i = 0; i < range->len; i++) {
+		u32 blk = range->start + i;
+		int blk_state;
+
+		blk_state = ssdfs_get_block_state(blk_bmap, blk);
+		if (blk_state < 0) {
+			SSDFS_ERR("fail to detect block %u state: "
+				  "err %d\n", blk, err);
+			return err;
+		}
+
+		switch (blk_state) {
+		case SSDFS_BLK_FREE:
+			/* continue check */
+			break;
+
+		default:
+			SSDFS_ERR("range (start %u, len %u) is not clean\n",
+				  range->start, range->len);
+			SSDFS_ERR("blk %u has state %#x\n",
+				  blk, blk_state);
+			return -EINVAL;
+		}
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_block_bmap_set_range(blk_bmap, range,
+					 SSDFS_BLK_INVALID);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set range (start %u, len %u): err %d\n",
+			  range->start, range->len, err);
+		return err;
+	}
+
+	blk_bmap->invalid_blks += range->len;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("allocation_pool %zu, used_blks %u, "
+		  "metadata_items %u, invalid_blks %u\n",
+		  blk_bmap->allocation_pool,
+		  blk_bmap->used_blks,
+		  blk_bmap->metadata_items,
+		  blk_bmap->invalid_blks);
+
+	SSDFS_DBG("set dirty state\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	set_block_bmap_dirty(blk_bmap);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	ssdfs_debug_block_bitmap(blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("range (start %u, len %u) has been invalidated\n",
+		  range->start, range->len);
+#else
+	SSDFS_DBG("range (start %u, len %u) has been invalidated\n",
+		  range->start, range->len);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return 0;
+}
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_clean2invalid);
+
+/*
  * ssdfs_block_bmap_clean() - set all blocks as free/clean
  * @blk_bmap: pointer on block bitmap
  * @items_capacity: total capacity of items in bitmap

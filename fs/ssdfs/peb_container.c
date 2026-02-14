@@ -2649,6 +2649,7 @@ fail_start_threads:
  * @fsi: pointer on shared file system object
  * @seg: segment number
  * @peb_index: index of PEB object in array
+ * @peb_type: PEB's type
  * @log_blocks: count of logical blocks in full log
  * @si: pointer on parent segment object
  *

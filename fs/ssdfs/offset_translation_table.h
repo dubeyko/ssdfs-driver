@@ -350,7 +350,7 @@ int ssdfs_blk2off_table_partial_clean_init(struct ssdfs_blk2off_table *table,
 					   u16 peb_index);
 int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				     struct ssdfs_read_init_env *env,
-				     u16 peb_index, u64 peb_id, u64 cno);
+				     struct ssdfs_peb_info *pebi, u64 cno);
 int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
 					u16 logical_blk,
 					struct ssdfs_offset_position *pos);

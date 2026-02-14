@@ -160,6 +160,9 @@ int ssdfs_peb_blk_bmap_start_migration(struct ssdfs_peb_blk_bmap *bmap);
 int ssdfs_peb_blk_bmap_migrate(struct ssdfs_peb_blk_bmap *bmap,
 				int new_range_state,
 				struct ssdfs_block_bmap_range *range);
+int ssdfs_peb_blk_bmap_move(struct ssdfs_peb_blk_bmap *bmap,
+			    int new_range_state,
+			    struct ssdfs_block_bmap_range *range);
 int ssdfs_peb_blk_bmap_finish_migration(struct ssdfs_peb_blk_bmap *bmap);
 
 /*

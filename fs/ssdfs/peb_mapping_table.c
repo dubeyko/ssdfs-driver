@@ -8089,6 +8089,16 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 			SSDFS_DBG("unable to map leb_id %llu: "
 				  "value is out of threshold\n",
 				  leb_id);
+			SSDFS_DBG("fragment_id %u, start_leb %llu, lebs_count %u, "
+				  "mapped_lebs %u, migrating_lebs %u, "
+				  "reserved_pebs %u, pre_erase_pebs %u\n",
+				  fdesc->fragment_id,
+				  fdesc->start_leb,
+				  fdesc->lebs_count,
+				  fdesc->mapped_lebs,
+				  fdesc->migrating_lebs,
+				  fdesc->reserved_pebs,
+				  fdesc->pre_erase_pebs);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_folio_processing;
 		} else if (unlikely(err)) {

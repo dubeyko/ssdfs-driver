@@ -1710,6 +1710,7 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 			   u8 create_threads)
 {
 	struct ssdfs_segment_info *si;
+	struct completion *init_end;
 	int res;
 	int err = 0;
 
@@ -1823,9 +1824,23 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("NO FREE SPACE: "
 				  "unable to create segment: "
-				  "seg %llu\n",
+				  "seg %llu, seg_state %#x\n",
+				  seg_id, seg_state);
+			SSDFS_DBG("make segment %llu clean\n",
 				  seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+			res = ssdfs_segbmap_change_state(fsi->segbmap,
+							 seg_id,
+							 SSDFS_SEG_CLEAN,
+							 &init_end);
+			if (unlikely(res)) {
+				SSDFS_ERR("fail to change segment state: "
+					  "seg_id %llu, err %d\n",
+					  seg_id, res);
+				return ERR_PTR(res);
+			}
+
 			return ERR_PTR(err);
 		} else if (err == -EINTR) {
 			/*

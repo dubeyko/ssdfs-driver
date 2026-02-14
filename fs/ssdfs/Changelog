@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.49 [February 13, 2026]
+    (*) Fix issue of block bitmap initialization for the case
+        of several folios.
+
 v.5.48 [February 12, 2026]
     (*) Fix softlockup issue in PEB mapping table's thread logic.
 

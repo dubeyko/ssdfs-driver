@@ -9536,8 +9536,11 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 	u32 last_free_blk;
 	u32 bmap_bytes = 0;
 	u32 bmap_folios = 0;
-	u32 folios_count;
+	u32 folios_count = 0;
 	int i;
+#ifdef CONFIG_SSDFS_DEBUG
+	void *kaddr;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -9633,15 +9636,11 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 		bmap_folios = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
 	}
 
-	folios_count = min_t(u32, (u32)fragments_count, bmap_folios);
-
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_free_blk %u, bmap_bytes %u, "
-		  "bmap_folios %u, fragments_count %u, "
-		  "folios_count %u\n",
+		  "bmap_folios %u, fragments_count %u\n",
 		  last_free_blk, bmap_bytes,
-		  bmap_folios, fragments_count,
-		  folios_count);
+		  bmap_folios, fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < fragments_count; i++) {
@@ -9680,15 +9679,6 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 			  frag_desc->flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (i >= folios_count) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("account fragment bytes: "
-				  "i %d, folios_count %u\n",
-				  i, folios_count);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto account_fragment_bytes;
-		}
-
 		folio = ssdfs_folio_vector_allocate(content);
 		if (unlikely(IS_ERR_OR_NULL(folio))) {
 			err = !folio ? -ENOMEM : PTR_ERR(folio);
@@ -9705,6 +9695,13 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 						  frag_desc,
 						  cdata_buf,
 						  folio_page(folio, 0));
+#ifdef CONFIG_SSDFS_DEBUG
+		kaddr = kmap_local_folio(folio, 0);
+		SSDFS_DBG("BMAP FRAGMENT %d\n", i);
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr, PAGE_SIZE);
+		kunmap_local(kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
 		ssdfs_folio_unlock(folio);
 
 		if (unlikely(err)) {
@@ -9730,11 +9727,19 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 			goto fail_read_blk_bmap;
 		}
 
-account_fragment_bytes:
 		read_bytes += le16_to_cpu(frag_desc->compr_size);
 		uncompr_bytes += le16_to_cpu(frag_desc->uncompr_size);
 		env->log.blk_bmap.read_bytes +=
 				le16_to_cpu(frag_desc->compr_size);
+		folios_count++;
+	}
+
+	if (bmap_folios > folios_count) {
+		err = -EIO;
+		SSDFS_ERR("corrupted block bitmap: "
+			  "bmap_folios %u > folios_count %u\n",
+			  bmap_folios, folios_count);
+		goto fail_read_blk_bmap;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10433,8 +10438,7 @@ fail_init_using_blk_bmap:
 	}
 
 	err = ssdfs_blk2off_table_partial_init(si->blk2off_table, env,
-						pebi->peb_index,
-						pebi->peb_id, cno);
+						pebi, cno);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to start initialization of offset table: "
 			  "seg %llu, peb %llu, err %d\n",
@@ -10627,8 +10631,7 @@ fail_init_used_blk_bmap:
 	}
 
 	err = ssdfs_blk2off_table_partial_init(si->blk2off_table, env,
-						pebi->peb_index,
-						pebi->peb_id, cno);
+						pebi, cno);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to start initialization of offset table: "
 			  "seg %llu, peb %llu, err %d\n",
@@ -11846,9 +11849,7 @@ int ssdfs_peb_process_current_log_blk2off_table(struct ssdfs_peb_info *pebi,
 
 	err = ssdfs_blk2off_table_partial_init(blk2off_table,
 					       &pebi->env,
-					       pebi->peb_index,
-					       pebi->peb_id,
-					       cno);
+					       pebi, cno);
 	if (err == -EEXIST) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("blk2off table has been initialized: "
