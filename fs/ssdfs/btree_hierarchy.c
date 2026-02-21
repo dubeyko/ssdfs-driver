@@ -3636,7 +3636,7 @@ bool need_update_parent_index_area(u64 start_hash,
 		break;
 
 	default:
-		if (start_hash <= child_start_hash)
+		if (start_hash <= child_start_hash && child_items_count > 0)
 			need_update = true;
 		else
 			need_update = false;
@@ -3645,9 +3645,9 @@ bool need_update_parent_index_area(u64 start_hash,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, child_start_hash %llx, "
-		  "need_update %#x\n",
+		  "child_items_count %u, need_update %#x\n",
 		  start_hash, child_start_hash,
-		  need_update);
+		  child_items_count, need_update);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return need_update;

@@ -119,6 +119,11 @@ struct ssdfs_btree {
 	struct radix_tree_root nodes;
 
 	struct ssdfs_fs_info *fsi;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_t created_nodes;
+	atomic64_t destroyed_nodes;
+#endif /* CONFIG_SSDFS_DEBUG */
 };
 
 /* Btree object states */

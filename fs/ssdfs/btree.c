@@ -323,7 +323,13 @@ int ssdfs_btree_create(struct ssdfs_fs_info *fsi,
 		  fsi, owner_ino, desc_ops, btree_ops, tree);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+	memset(tree, 0, sizeof(struct ssdfs_btree));
 	atomic_set(&tree->state, SSDFS_BTREE_UNKNOWN_STATE);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&tree->created_nodes, 0);
+	atomic64_set(&tree->destroyed_nodes, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree->owner_ino = owner_ino;
 
@@ -476,6 +482,11 @@ void ssdfs_btree_destroy(struct ssdfs_btree *tree)
 		spin_lock(&tree->nodes_lock);
 	}
 	spin_unlock(&tree->nodes_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(atomic64_read(&tree->created_nodes) !=
+		atomic64_read(&tree->destroyed_nodes));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -8202,7 +8213,7 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 
 	BUG_ON(!tree);
 
-	down_read(&tree->lock);
+	down_write(&tree->lock);
 
 	rcu_read_lock();
 	radix_tree_for_each_slot(slot1, &tree->nodes, &iter1,
@@ -8211,6 +8222,24 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 
 		if (!node1)
 			continue;
+
+		switch (atomic_read(&node1->state)) {
+		case SSDFS_BTREE_NODE_UNKNOWN_STATE:
+		case SSDFS_BTREE_NODE_NONE_CONTENT:
+		case SSDFS_BTREE_NODE_CONTENT_PREPARED:
+		case SSDFS_BTREE_NODE_CONTENT_UNDER_FREE:
+			/* ignore node */
+			continue;
+
+		case SSDFS_BTREE_NODE_INVALID:
+		case SSDFS_BTREE_NODE_CORRUPTED:
+			SSDFS_WARN("node %u is corrupted\n", node1->node_id);
+			continue;
+
+		default:
+			/* continue logic */
+			break;
+		}
 
 		if (is_ssdfs_btree_node_pre_deleted(node1)) {
 			SSDFS_DBG("node %u has pre-deleted state\n",
@@ -8314,6 +8343,25 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 			if (!node2)
 				continue;
 
+			switch (atomic_read(&node2->state)) {
+			case SSDFS_BTREE_NODE_UNKNOWN_STATE:
+			case SSDFS_BTREE_NODE_NONE_CONTENT:
+			case SSDFS_BTREE_NODE_CONTENT_PREPARED:
+			case SSDFS_BTREE_NODE_CONTENT_UNDER_FREE:
+				/* ignore node */
+				continue;
+
+			case SSDFS_BTREE_NODE_INVALID:
+			case SSDFS_BTREE_NODE_CORRUPTED:
+				SSDFS_WARN("node %u is corrupted\n",
+					   node2->node_id);
+				continue;
+
+			default:
+				/* continue logic */
+				break;
+			}
+
 			if (is_ssdfs_btree_node_pre_deleted(node2)) {
 				SSDFS_DBG("node %u has pre-deleted state\n",
 					  node2->node_id);
@@ -8406,7 +8454,7 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 	}
 	rcu_read_unlock();
 
-	up_read(&tree->lock);
+	up_write(&tree->lock);
 #endif /* CONFIG_SSDFS_BTREE_CONSISTENCY_CHECK */
 }
 

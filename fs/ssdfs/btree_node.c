@@ -821,6 +821,10 @@ ssdfs_btree_node_create(struct ssdfs_btree *tree,
 
 	ssdfs_btree_nodes_list_add(&fsi->btree_nodes, ptr);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_inc(&tree->created_nodes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
@@ -1188,6 +1192,10 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 			   atomic_read(&node->state));
 		break;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_inc(&node->tree->destroyed_nodes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_btree_node_free(node);
 
@@ -4224,6 +4232,7 @@ bool is_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node)
 	case SSDFS_BTREE_NODE_PRE_DELETED:
 		return true;
 
+	case SSDFS_BTREE_NODE_CREATED:
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
 		return false;

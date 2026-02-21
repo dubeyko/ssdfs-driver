@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.51 [February 20, 2026]
+    (*) Fix multiple issues in b-tree functionality.
+
 v.5.50 [February 13, 2026]
     (*) Fix softlockup issue in the case of mount failure.
 

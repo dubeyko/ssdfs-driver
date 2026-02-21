@@ -9676,8 +9676,8 @@ finish_detect_affected_items:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (node->items_area.items_count == 0) {
-		start_hash = U64_MAX;
-		end_hash = U64_MAX;
+		start_hash = node->items_area.start_hash;
+		end_hash = start_hash;
 	} else {
 		err = ssdfs_dentries_btree_node_get_dentry(node,
 						    &node->items_area,
