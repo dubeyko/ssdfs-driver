@@ -1141,7 +1141,12 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 			break;
 
 		default:
-			SSDFS_WARN("node %u is dirty\n", node->node_id);
+			if (node->tree->fsi->sb->s_flags & SB_RDONLY) {
+				/*
+				 * ignore dirty state for READ-ONLY mode
+				 */
+			} else
+				SSDFS_WARN("node %u is dirty\n", node->node_id);
 			break;
 		}
 		/* FALLTHRU */

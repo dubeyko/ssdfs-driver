@@ -4261,7 +4261,8 @@ static ssize_t ssdfs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	struct inode *inode = file->f_mapping->host;
-	int err;
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, start %llu, end %llu, datasync %#x\n",
@@ -4273,7 +4274,6 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 
 	err = filemap_write_and_wait_range(inode->i_mapping, start, end);
 	if (err) {
-		trace_ssdfs_sync_file_exit(file, datasync, err);
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fsync failed: ino %lu, start %llu, "
 			  "end %llu, err %d\n",
@@ -4282,7 +4282,7 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 			  (unsigned long long)end,
 			  err);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return err;
+		goto finish_fsync;
 	}
 
 	inode_lock(inode);
@@ -4290,6 +4290,20 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	blkdev_issue_flush(inode->i_sb->s_bdev);
 	inode_unlock(inode);
 
+	err = ssdfs_sync_metadata(fsi);
+	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("metadata flush failed: ino %lu, start %llu, "
+			  "end %llu, err %d\n",
+			  (unsigned long)inode->i_ino,
+			  (unsigned long long)start,
+			  (unsigned long long)end,
+			  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_fsync;
+	}
+
+finish_fsync:
 	trace_ssdfs_sync_file_exit(file, datasync, err);
 
 	return err;

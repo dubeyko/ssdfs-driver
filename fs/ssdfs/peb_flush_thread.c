@@ -19166,15 +19166,6 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 		}
 	}
 
-	err = ssdfs_prepare_current_segment_ids(fsi, cur_segs, size);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to prepare current segments IDs: "
-			  "err %d\n", err);
-		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-		thread_state->err = err;
-		goto finish_method;
-	}
-
 	pebi = ssdfs_get_current_peb_locked(pebc);
 	if (IS_ERR_OR_NULL(pebi)) {
 		err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
@@ -19237,6 +19228,14 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
 						&pebc->update_rq,
 						-EROFS);
+
+		if (is_peb_joined_into_create_requests_queue(pebc)) {
+			spin_lock(&pebc->crq_ptr_lock);
+			ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+							pebc->create_rq,
+							-EROFS);
+			spin_unlock(&pebc->crq_ptr_lock);
+		}
 	}
 
 	ssdfs_peb_current_log_lock(pebi);
@@ -19247,6 +19246,24 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
 		} else {
+			ssdfs_peb_current_log_unlock(pebi);
+			err = ssdfs_prepare_current_segment_ids(fsi,
+								cur_segs,
+								size);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare current segments IDs: "
+					  "err %d\n", err);
+				ssdfs_peb_current_log_lock(pebi);
+				ssdfs_peb_clear_current_log_pages(pebi);
+				ssdfs_peb_clear_cache_dirty_pages(pebi);
+				ssdfs_peb_current_log_unlock(pebi);
+				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+				thread_state->err = err;
+				ssdfs_unlock_current_peb(pebc);
+				goto finish_method;
+			}
+			ssdfs_peb_current_log_lock(pebi);
+
 			err = ssdfs_peb_commit_log(pebi, cur_segs, size);
 			if (unlikely(err)) {
 				SSDFS_CRIT("fail to commit log: "
@@ -19815,18 +19832,6 @@ int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
 				goto process_flush_requests;
 		}
 
-		err = ssdfs_prepare_current_segment_ids(fsi,
-							cur_segs,
-							size);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to prepare current seg IDs: "
-				  "err %d\n",
-				  err);
-			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-			thread_state->err = err;
-			goto finish_method;
-		}
-
 		pebi = ssdfs_get_current_peb_locked(pebc);
 		if (IS_ERR_OR_NULL(pebi)) {
 			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
@@ -19840,9 +19845,25 @@ int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
 		}
 
 		ssdfs_peb_current_log_lock(pebi);
-		err = ssdfs_peb_commit_log_on_thread_stop(pebi,
-							  cur_segs,
-							  size);
+		if (ssdfs_peb_has_dirty_folios(pebi)) {
+			ssdfs_peb_current_log_unlock(pebi);
+			err = ssdfs_prepare_current_segment_ids(fsi,
+								cur_segs,
+								size);
+			ssdfs_peb_current_log_lock(pebi);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare current seg IDs: "
+					  "err %d\n",
+					  err);
+				goto finish_commit;
+			}
+
+			err = ssdfs_peb_commit_log_on_thread_stop(pebi,
+								  cur_segs,
+								  size);
+		}
+finish_commit:
 		ssdfs_peb_current_log_unlock(pebi);
 		ssdfs_unlock_current_peb(pebc);
 
@@ -19862,6 +19883,7 @@ int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
 		SSDFS_DBG("finished: err %d\n", err);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+		err = -EAGAIN;
 		thread_state->state = SSDFS_FLUSH_THREAD_MUST_STOP_NOW;
 	} else {
 process_flush_requests:
@@ -23283,6 +23305,9 @@ int should_be_thread_metadata_structure_user(struct ssdfs_peb_container *pebc,
 
 	fsi = pebc->parent_si->fsi;
 
+	if (fsi->sb->s_flags & SB_RDONLY)
+		return -EROFS;
+
 	pebi = ssdfs_get_current_peb_locked(pebc);
 	if (IS_ERR_OR_NULL(pebi)) {
 		err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
@@ -23497,11 +23522,25 @@ repeat:
 						      &is_segbmap_user);
 		}
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+	} else if (thread_state->err == -EROFS) {
+		if (is_maptbl_user) {
+			ssdfs_unregister_mapping_table_user(pebc,
+							    &is_maptbl_user);
+		}
+		if (is_segbmap_user) {
+			ssdfs_unregister_segbmap_user(pebc,
+						      &is_segbmap_user);
+		}
 	} else {
 		err = should_be_thread_metadata_structure_user(pebc,
 							&is_maptbl_user,
 							&is_segbmap_user);
-		if (unlikely(err)) {
+		if (err == -EROFS) {
+			thread_state->err = -EROFS;
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_RO_STATE;
+			goto repeat;
+		} else if (unlikely(err)) {
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
 			goto repeat;
@@ -23511,6 +23550,7 @@ repeat:
 	switch (thread_state->state) {
 	case SSDFS_FLUSH_THREAD_ERROR:
 	case SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT:
+	case SSDFS_FLUSH_THREAD_RO_STATE:
 	case SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION:
 	case SSDFS_FLUSH_THREAD_MUST_STOP_NOW:
 		/* continue logic */
@@ -23521,7 +23561,16 @@ repeat:
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
 		} else if (fsi->sb->s_flags & SB_RDONLY) {
-			thread_state->err = 0;
+			if (is_maptbl_user) {
+				ssdfs_unregister_mapping_table_user(pebc,
+							    &is_maptbl_user);
+			}
+			if (is_segbmap_user) {
+				ssdfs_unregister_segbmap_user(pebc,
+						      &is_segbmap_user);
+			}
+
+			thread_state->err = -EROFS;
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_RO_STATE;
 		}
@@ -23593,11 +23642,15 @@ next_partial_step:
 			  thread_state->unfinished_reqs);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (err == -EROFS) {
+		if (kthread_should_stop()) {
+			goto next_partial_step;
+		} else if (err == -EROFS) {
 			goto sleep_flush_thread;
 		} else if (err) {
 			goto repeat;
 		} else {
+			ssdfs_register_mapping_table_user(pebc, &is_maptbl_user);
+			ssdfs_register_segbmap_user(pebc, &is_segbmap_user);
 			goto next_partial_step;
 		}
 		break;

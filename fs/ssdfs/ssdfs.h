@@ -301,6 +301,7 @@ int ssdfs_segment_get_used_data_pages(struct ssdfs_segment_info *si);
 /* super.c */
 void ssdfs_destroy_btree_of_inode(struct inode *inode);
 void ssdfs_destroy_and_decrement_btree_of_inode(struct inode *inode);
+int ssdfs_sync_metadata(struct ssdfs_fs_info *fsi);
 
 /* sysfs.c */
 int ssdfs_sysfs_init(void);

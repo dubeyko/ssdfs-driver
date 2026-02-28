@@ -565,6 +565,135 @@ void wait_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
 	}
 }
 
+int ssdfs_sync_metadata(struct ssdfs_fs_info *fsi)
+{
+	int err = 0, err1;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	atomic_set(&fsi->global_fs_state, SSDFS_METADATA_UNDER_FLUSH);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("SSDFS_METADATA_UNDER_FLUSH\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_write(&fsi->volume_sem);
+
+	if (fsi->fs_feature_compat &
+			SSDFS_HAS_INVALID_EXTENTS_TREE_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush invalidated extents btree\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err1 = ssdfs_invextree_flush(fsi);
+		if (err1) {
+			SSDFS_ERR("fail to flush invalidated extents btree: "
+				  "err %d\n", err1);
+			err = err != 0 ? err : err1;
+		}
+	}
+
+	if (fsi->fs_feature_compat & SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush shared extents btree\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err1 = ssdfs_shextree_flush(fsi);
+		if (err1) {
+			SSDFS_ERR("fail to flush shared extents btree: "
+				  "err %d\n", err1);
+			err = err != 0 ? err : err1;
+		}
+	}
+
+	if (fsi->fs_feature_compat & SSDFS_HAS_INODES_TREE_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush inodes btree\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err1 = ssdfs_inodes_btree_flush(fsi->inodes_tree);
+		if (err1) {
+			SSDFS_ERR("fail to flush inodes btree: "
+				  "err %d\n", err1);
+			err = err != 0 ? err : err1;
+		}
+	}
+
+	if (fsi->fs_feature_compat & SSDFS_HAS_SHARED_DICT_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush shared dictionary\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err1 = ssdfs_shared_dict_btree_flush(fsi->shdictree);
+		if (err1) {
+			SSDFS_ERR("fail to flush shared dictionary: "
+				  "err %d\n", err1);
+			err = err != 0 ? err : err1;
+		}
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("process the snapshots creation\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err1 = ssdfs_execute_create_snapshots(fsi);
+	if (err1) {
+		SSDFS_ERR("fail to process the snapshots creation\n");
+		err = err != 0 ? err : err1;
+	}
+
+	if (fsi->fs_feature_compat & SSDFS_HAS_SNAPSHOTS_TREE_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush snapshots btree\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err1 = ssdfs_snapshots_btree_flush(fsi);
+		if (err1) {
+			SSDFS_ERR("fail to flush snapshots btree: "
+				  "err %d\n", err1);
+			err = err != 0 ? err : err1;
+		}
+	}
+
+	if (fsi->fs_feature_compat & SSDFS_HAS_SEGBMAP_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush segment bitmap\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err1 = ssdfs_segbmap_flush(fsi->segbmap);
+		if (err1) {
+			SSDFS_ERR("fail to flush segment bitmap: "
+				  "err %d\n", err1);
+			err = err != 0 ? err : err1;
+		}
+	}
+
+	if (fsi->fs_feature_compat & SSDFS_HAS_MAPTBL_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush mapping table\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err1 = ssdfs_maptbl_flush(fsi->maptbl);
+		if (err1) {
+			SSDFS_ERR("fail to flush mapping table: "
+				  "err %d\n", err1);
+			err = err != 0 ? err : err1;
+		}
+	}
+
+	up_write(&fsi->volume_sem);
+
+	atomic_set(&fsi->global_fs_state, SSDFS_REGULAR_FS_OPERATIONS);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("SSDFS_REGULAR_FS_OPERATIONS\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
 static int ssdfs_sync_fs(struct super_block *sb, int wait)
 {
 	struct ssdfs_fs_info *fsi;
@@ -592,115 +721,7 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 	wake_up_all(&fsi->pending_wq);
 	wait_unfinished_user_data_requests(fsi);
 
-	atomic_set(&fsi->global_fs_state, SSDFS_METADATA_UNDER_FLUSH);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("SSDFS_METADATA_UNDER_FLUSH\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	down_write(&fsi->volume_sem);
-
-	if (fsi->fs_feature_compat &
-			SSDFS_HAS_INVALID_EXTENTS_TREE_COMPAT_FLAG) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("flush invalidated extents btree\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_invextree_flush(fsi);
-		if (err) {
-			SSDFS_ERR("fail to flush invalidated extents btree: "
-				  "err %d\n", err);
-		}
-	}
-
-	if (fsi->fs_feature_compat & SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("flush shared extents btree\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_shextree_flush(fsi);
-		if (err) {
-			SSDFS_ERR("fail to flush shared extents btree: "
-				  "err %d\n", err);
-		}
-	}
-
-	if (fsi->fs_feature_compat & SSDFS_HAS_INODES_TREE_COMPAT_FLAG) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("flush inodes btree\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_inodes_btree_flush(fsi->inodes_tree);
-		if (err) {
-			SSDFS_ERR("fail to flush inodes btree: "
-				  "err %d\n", err);
-		}
-	}
-
-	if (fsi->fs_feature_compat & SSDFS_HAS_SHARED_DICT_COMPAT_FLAG) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("flush shared dictionary\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_shared_dict_btree_flush(fsi->shdictree);
-		if (err) {
-			SSDFS_ERR("fail to flush shared dictionary: "
-				  "err %d\n", err);
-		}
-	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("process the snapshots creation\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	err = ssdfs_execute_create_snapshots(fsi);
-	if (err) {
-		SSDFS_ERR("fail to process the snapshots creation\n");
-	}
-
-	if (fsi->fs_feature_compat & SSDFS_HAS_SNAPSHOTS_TREE_COMPAT_FLAG) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("flush snapshots btree\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_snapshots_btree_flush(fsi);
-		if (err) {
-			SSDFS_ERR("fail to flush snapshots btree: "
-				  "err %d\n", err);
-		}
-	}
-
-	if (fsi->fs_feature_compat & SSDFS_HAS_SEGBMAP_COMPAT_FLAG) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("flush segment bitmap\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_segbmap_flush(fsi->segbmap);
-		if (err) {
-			SSDFS_ERR("fail to flush segment bitmap: "
-				  "err %d\n", err);
-		}
-	}
-
-	if (fsi->fs_feature_compat & SSDFS_HAS_MAPTBL_COMPAT_FLAG) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("flush mapping table\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_maptbl_flush(fsi->maptbl);
-		if (err) {
-			SSDFS_ERR("fail to flush mapping table: "
-				  "err %d\n", err);
-		}
-	}
-
-	up_write(&fsi->volume_sem);
-
-	atomic_set(&fsi->global_fs_state, SSDFS_REGULAR_FS_OPERATIONS);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("SSDFS_REGULAR_FS_OPERATIONS\n");
-#endif /* CONFIG_SSDFS_DEBUG */
+	err = ssdfs_sync_metadata(fsi);
 
 	wake_up_all(&fsi->pending_wq);
 

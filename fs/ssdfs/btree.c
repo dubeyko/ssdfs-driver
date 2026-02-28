@@ -437,7 +437,10 @@ void ssdfs_btree_destroy(struct ssdfs_btree *tree)
 		break;
 
 	case SSDFS_BTREE_DIRTY:
-		if (!is_ssdfs_btree_empty(tree)) {
+		if (tree->fsi->sb->s_flags & SB_RDONLY) {
+			/* READ-ONLY state */
+			atomic_set(&tree->state, SSDFS_BTREE_UNKNOWN_STATE);
+		} else if (!is_ssdfs_btree_empty(tree)) {
 			/* complain */
 			SSDFS_WARN("tree is dirty\n");
 		} else {

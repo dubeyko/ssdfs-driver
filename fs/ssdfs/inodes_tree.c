@@ -468,6 +468,156 @@ void ssdfs_free_inodes_queue_remove_all(struct ssdfs_free_inode_range_queue *q)
  ******************************************************************************/
 
 /*
+ * ssdfs_create_generic_inodes_btree() - convert inline b-tree into generic one
+ * @ptr: pointer on inodes b-tree object
+ *
+ * This method tries to convert inline b-tree into generic one.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_create_generic_inodes_btree(struct ssdfs_inodes_btree_info *ptr)
+{
+	struct ssdfs_btree_search *search;
+	size_t raw_inode_size = sizeof(struct ssdfs_inode);
+	ino_t ino;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr);
+
+	SSDFS_DBG("ptr %p\n", ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+	search->request.type = SSDFS_BTREE_SEARCH_ALLOCATE_ITEM;
+	search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	search->request.start.hash = 0;
+	search->request.end.hash = 0;
+	search->request.count = 1;
+
+	ptr->allocated_inodes = 0;
+	ptr->free_inodes = 0;
+	ptr->inodes_capacity = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("upper_allocated_ino %llu, allocated_inodes %llu, "
+		  "free_inodes %llu, inodes_capacity %llu\n",
+		  ptr->upper_allocated_ino,
+		  ptr->allocated_inodes,
+		  ptr->free_inodes,
+		  ptr->inodes_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_btree_add_node(&ptr->generic_tree, search);
+	if (err == -ENOSPC) {
+		SSDFS_DBG("no free space: err %d\n",
+			  err);
+		goto free_search_object;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to add the node: err %d\n",
+			  err);
+		goto free_search_object;
+	}
+
+	/* allocate all reserved inodes */
+	ino = 0;
+	do {
+		search->request.start.hash = ino;
+		search->request.end.hash = ino;
+		search->request.count = 1;
+
+		err = ssdfs_inodes_btree_allocate(ptr, &ino, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to allocate an inode: err %d\n",
+				  err);
+			goto free_search_object;
+		} else if (search->request.start.hash != ino) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid ino %lu\n",
+				  ino);
+			goto free_search_object;
+		}
+
+		ino++;
+	} while (ino <= SSDFS_ROOT_INO);
+
+	if (ino > SSDFS_ROOT_INO)
+		ino = SSDFS_ROOT_INO;
+	else {
+		err = -ERANGE;
+		SSDFS_ERR("unexpected ino %lu\n", ino);
+		goto free_search_object;
+	}
+
+	switch (search->result.raw_buf.state) {
+	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
+		/* expected state */
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid result's buffer state: "
+			  "%#x\n",
+			  search->result.raw_buf.state);
+		goto free_search_object;
+	}
+
+	if (!search->result.raw_buf.place.ptr) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid buffer\n");
+		goto free_search_object;
+	}
+
+	if (search->result.raw_buf.size < raw_inode_size) {
+		err = -ERANGE;
+		SSDFS_ERR("buf_size %zu < raw_inode_size %zu\n",
+			  search->result.raw_buf.size,
+			  raw_inode_size);
+		goto free_search_object;
+	}
+
+	if (search->result.raw_buf.items_count != 1) {
+		SSDFS_WARN("unexpected value: "
+			   "items_in_buffer %u\n",
+			   search->result.raw_buf.items_count);
+	}
+
+	ssdfs_memcpy(search->result.raw_buf.place.ptr,
+		     0, search->result.raw_buf.size,
+		     &ptr->root_folder, 0, raw_inode_size,
+		     raw_inode_size);
+
+	err = ssdfs_inodes_btree_change(ptr, ino, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change inode: "
+			  "ino %lu, err %d\n",
+			  ino, err);
+		goto free_search_object;
+	}
+
+free_search_object:
+	ssdfs_btree_search_free(search);
+
+	return err;
+}
+
+/*
  * ssdfs_inodes_btree_create() - create inodes btree
  * @fsi: pointer on shared file system object
  *
@@ -489,7 +639,6 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 	size_t raw_inode_size = sizeof(struct ssdfs_inode);
 	u32 vs_flags;
 	bool is_tree_inline = true;
-	ino_t ino;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -568,128 +717,12 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 	ssdfs_free_inodes_queue_init(&ptr->free_inodes_queue);
 
 	if (is_tree_inline) {
-		search = ssdfs_btree_search_alloc();
-		if (!search) {
-			err = -ENOMEM;
-			SSDFS_ERR("fail to allocate btree search object\n");
-			goto fail_create_inodes_tree;
-		}
-
-		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_ALLOCATE_ITEM;
-		search->request.flags =
-			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
-			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
-		search->request.start.hash = 0;
-		search->request.end.hash = 0;
-		search->request.count = 1;
-
-		ptr->allocated_inodes = 0;
-		ptr->free_inodes = 0;
-		ptr->inodes_capacity = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("upper_allocated_ino %llu, allocated_inodes %llu, "
-			  "free_inodes %llu, inodes_capacity %llu\n",
-			  ptr->upper_allocated_ino,
-			  ptr->allocated_inodes,
-			  ptr->free_inodes,
-			  ptr->inodes_capacity);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_btree_add_node(&ptr->generic_tree, search);
-		if (err == -ENOSPC) {
-			SSDFS_DBG("no free space: err %d\n",
-				  err);
-			goto free_search_object;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to add the node: err %d\n",
-				  err);
-			goto free_search_object;
-		}
-
-		/* allocate all reserved inodes */
-		ino = 0;
-		do {
-			search->request.start.hash = ino;
-			search->request.end.hash = ino;
-			search->request.count = 1;
-
-			err = ssdfs_inodes_btree_allocate(ptr, &ino, search);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to allocate an inode: err %d\n",
-					  err);
-				goto free_search_object;
-			} else if (search->request.start.hash != ino) {
-				err = -ERANGE;
-				SSDFS_ERR("invalid ino %lu\n",
-					  ino);
-				goto free_search_object;
-			}
-
-			ino++;
-		} while (ino <= SSDFS_ROOT_INO);
-
-		if (ino > SSDFS_ROOT_INO)
-			ino = SSDFS_ROOT_INO;
-		else {
-			err = -ERANGE;
-			SSDFS_ERR("unexpected ino %lu\n", ino);
-			goto free_search_object;
-		}
-
-		switch (search->result.raw_buf.state) {
-		case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
-		case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
-			/* expected state */
-			break;
-
-		default:
-			err = -ERANGE;
-			SSDFS_ERR("invalid result's buffer state: "
-				  "%#x\n",
-				  search->result.raw_buf.state);
-			goto free_search_object;
-		}
-
-		if (!search->result.raw_buf.place.ptr) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid buffer\n");
-			goto free_search_object;
-		}
-
-		if (search->result.raw_buf.size < raw_inode_size) {
-			err = -ERANGE;
-			SSDFS_ERR("buf_size %zu < raw_inode_size %zu\n",
-				  search->result.raw_buf.size,
-				  raw_inode_size);
-			goto free_search_object;
-		}
-
-		if (search->result.raw_buf.items_count != 1) {
-			SSDFS_WARN("unexpected value: "
-				   "items_in_buffer %u\n",
-				   search->result.raw_buf.items_count);
-		}
-
-		ssdfs_memcpy(search->result.raw_buf.place.ptr,
-			     0, search->result.raw_buf.size,
-			     &ptr->root_folder, 0, raw_inode_size,
-			     raw_inode_size);
-
-		err = ssdfs_inodes_btree_change(ptr, ino, search);
+		err = ssdfs_create_generic_inodes_btree(ptr);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to change inode: "
-				  "ino %lu, err %d\n",
-				  ino, err);
-			goto free_search_object;
-		}
-
-free_search_object:
-		ssdfs_btree_search_free(search);
-
-		if (unlikely(err))
+			SSDFS_ERR("fail to convert inline b-tree: "
+				  "err %d\n", err);
 			goto fail_create_inodes_tree;
+		}
 
 		spin_lock(&fsi->volume_state_lock);
 		vs_flags = fsi->fs_flags;
@@ -710,12 +743,22 @@ free_search_object:
 		ssdfs_btree_search_free(search);
 
 		if (err == -ENODATA) {
-			err = 0;
-			/*
-			 * It doesn't need to find the inode.
-			 * The goal is to pass through the tree.
-			 * Simply ignores the no data error.
-			 */
+			if (ptr->upper_allocated_ino == SSDFS_ROOT_INO) {
+				/* empty inodes b-tree */
+				err = ssdfs_create_generic_inodes_btree(ptr);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to re-create b-tree: "
+						  "err %d\n", err);
+					goto fail_create_inodes_tree;
+				}
+			} else {
+				err = 0;
+				/*
+				 * It doesn't need to find the inode.
+				 * The goal is to pass through the tree.
+				 * Simply ignores the no data error.
+				 */
+			}
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare free inodes queue: "
 				  "upper_allocated_ino %llu, err %d\n",

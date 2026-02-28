@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.52 [February 27, 2026]
+    (*) Fix multiple issue for the case of READ-ONLY mount.
+
 v.5.51 [February 20, 2026]
     (*) Fix multiple issues in b-tree functionality.
 
