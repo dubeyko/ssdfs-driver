@@ -171,7 +171,6 @@ int ssdfs_shared_dict_thread_func(void *data)
 	wait_queue_head_t *wait_queue = NULL;
 	struct ssdfs_name_requests_queue *ptr = NULL;
 	struct ssdfs_btree_search *search = NULL;
-	int read_reqs;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -262,10 +261,6 @@ try_process_queue:
 					atomic_read(&tree->state));
 			goto repeat;
 		}
-
-		read_reqs = atomic_read(&tree->read_reqs);
-		if (read_reqs > 0)
-			goto sleep_shared_dict_thread;
 
 		if (!has_queue_unprocessed_names(tree))
 			goto sleep_shared_dict_thread;

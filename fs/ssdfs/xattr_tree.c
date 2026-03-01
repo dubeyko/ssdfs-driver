@@ -245,7 +245,9 @@ int ssdfs_xattrs_tree_create(struct ssdfs_fs_info *fsi,
 
 	atomic_set(&ptr->state, SSDFS_XATTR_BTREE_CREATED);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_xattrs_btree_object(ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ii->xattrs_tree = ptr;
 
@@ -596,7 +598,9 @@ finish_tree_init:
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_xattrs_btree_object(tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -1213,7 +1217,9 @@ int __ssdfs_xattrs_tree_find(struct ssdfs_xattrs_btree_info *tree,
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_xattrs_btree_object(tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -2927,7 +2933,9 @@ finish_add_generic_xattr:
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_xattrs_btree_object(tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -3414,7 +3422,9 @@ finish_change_generic_xattr:
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_xattrs_btree_object(tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -4043,7 +4053,9 @@ int ssdfs_xattrs_tree_delete(struct ssdfs_xattrs_btree_info *tree,
 		search->request.count = 1;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_xattrs_btree_object(tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_XATTR:
@@ -4143,7 +4155,9 @@ finish_delete_generic_xattr:
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_xattrs_btree_object(tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -10012,6 +10026,8 @@ void ssdfs_debug_xattrs_btree_object(struct ssdfs_xattrs_btree_info *tree)
 		  tree->owner,
 		  tree->fsi);
 
+	down_write(&tree->lock);
+
 	if (tree->generic_tree) {
 		/* debug dump of generic tree */
 		ssdfs_debug_btree_object(tree->generic_tree);
@@ -10096,6 +10112,8 @@ void ssdfs_debug_xattrs_btree_object(struct ssdfs_xattrs_btree_info *tree)
 				  le32_to_cpu(index->extent.len));
 		}
 	}
+
+	up_write(&tree->lock);
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 

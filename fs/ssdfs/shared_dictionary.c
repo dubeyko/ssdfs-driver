@@ -3435,59 +3435,68 @@ int ssdfs_shared_dict_btree_flush_node(struct ssdfs_btree_node *node)
  *          SPECIALIZED SHARED DICTIONARY BTREE NODE OPERATIONS               *
  ******************************************************************************/
 
+enum {
+	SSDFS_SHDIC_4KB_INDEX,
+	SSDFS_SHDIC_8KB_INDEX,
+	SSDFS_SHDIC_16KB_INDEX,
+	SSDFS_SHDIC_32KB_INDEX,
+	SSDFS_SHDIC_64KB_INDEX,
+	SSDFS_SHDIC_128KB_INDEX,
+	SSDFS_SHDIC_256KB_INDEX,
+	SSDFS_SHDIC_NODE_SIZE_MAX
+};
+
+static inline
+int SSDFS_SHDIC_NODE_SIZE2INDEX(u32 node_size)
+{
+	switch (node_size) {
+	case SSDFS_4KB:
+		return SSDFS_SHDIC_4KB_INDEX;
+	case SSDFS_8KB:
+		return SSDFS_SHDIC_8KB_INDEX;
+	case SSDFS_16KB:
+		return SSDFS_SHDIC_16KB_INDEX;
+	case SSDFS_32KB:
+		return SSDFS_SHDIC_32KB_INDEX;
+	case SSDFS_64KB:
+		return SSDFS_SHDIC_64KB_INDEX;
+	case SSDFS_128KB:
+		return SSDFS_SHDIC_128KB_INDEX;
+	case SSDFS_256KB:
+		return SSDFS_SHDIC_256KB_INDEX;
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return SSDFS_SHDIC_256KB_INDEX;
+}
+
 /*
  * The lookup1 table's capacity array
  */
 static
-const u16 lookup1_tbl_range_capacity[SSDFS_SHDIC_LTBL1_SIZE] = {
-	2,	/* 00 */
-	4,	/* 01 */
-	8,	/* 02 */
-	16,	/* 03 */
-	32,	/* 04 */
-	32,	/* 05 */
-	32,	/* 06 */
-	32,	/* 07 */
-	32,	/* 08 */
-	64,	/* 09 */
-	64,	/* 10 */
-	32,	/* 11 */
-	32,	/* 12 */
-	32,	/* 13 */
-	32,	/* 14 */
-	32,	/* 15 */
-	16,	/* 16 */
-	8,	/* 17 */
-	4,	/* 18 */
-	2,	/* 19 */
+const u16 lookup1_tbl_range_capacity[SSDFS_SHDIC_NODE_SIZE_MAX] = {
+	16,	/* SSDFS_SHDIC_4KB_INDEX */
+	32,	/* SSDFS_SHDIC_8KB_INDEX */
+	64,	/* SSDFS_SHDIC_16KB_INDEX */
+	128,	/* SSDFS_SHDIC_32KB_INDEX */
+	256,	/* SSDFS_SHDIC_64KB_INDEX */
+	512,	/* SSDFS_SHDIC_128KB_INDEX */
+	1024,	/* SSDFS_SHDIC_256KB_INDEX */
 };
 
 /*
- * The lookup1 table's threshold array
+ * The lookup1 table's thresholds
  */
-static
-const u16 lookup1_tbl_threshold[SSDFS_SHDIC_LTBL1_SIZE] = {
-	2,	/* 00 */
-	6,	/* 01 */
-	14,	/* 02 */
-	30,	/* 03 */
-	62,	/* 04 */
-	94,	/* 05 */
-	126,	/* 06 */
-	158,	/* 07 */
-	190,	/* 08 */
-	254,	/* 09 */
-	318,	/* 10 */
-	350,	/* 11 */
-	382,	/* 12 */
-	414,	/* 13 */
-	446,	/* 14 */
-	478,	/* 15 */
-	494,	/* 16 */
-	502,	/* 17 */
-	506,	/* 18 */
-	508,	/* 19 */
-};
+static inline
+u16 lookup1_tbl_threshold(u32 node_size, u16 lookup1_tbl_index)
+{
+	int node_size_index = SSDFS_SHDIC_NODE_SIZE2INDEX(node_size);
+	u16 capacity = lookup1_tbl_range_capacity[node_size_index];
+
+	return (lookup1_tbl_index + 1) * capacity;
+}
 
 typedef int (*convert_hash64_to_hash_key_fn)(struct ssdfs_btree_search *search,
 					union ssdfs_shdict_search_key *value);
@@ -4697,18 +4706,18 @@ int ssdfs_shared_dict_node_find_lookup1_index(struct ssdfs_btree_node *node,
 	down_read(&node->header_lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
-for (i = 0; i < array_size; i++) {
-	err = ssdfs_get_lookup1_table_search_key(node, i, &found);
-	if (err)
-		break;
+	for (i = 0; i < array_size; i++) {
+		err = ssdfs_get_lookup1_table_search_key(node, i, &found);
+		if (err)
+			break;
 
-	SSDFS_DBG("LTBL1 item[%d]: hash_lo %#x, "
-		  "start_index %u, range_len %u\n",
-		  i,
-		  le32_to_cpu(found.ltbl1_item.hash_lo),
-		  le16_to_cpu(found.ltbl1_item.start_index),
-		  le16_to_cpu(found.ltbl1_item.range_len));
-}
+		SSDFS_DBG("LTBL1 item[%d]: hash_lo %#x, "
+			  "start_index %u, range_len %u\n",
+			  i,
+			  le32_to_cpu(found.ltbl1_item.hash_lo),
+			  le16_to_cpu(found.ltbl1_item.start_index),
+			  le16_to_cpu(found.ltbl1_item.range_len));
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_shared_dict_node_find_index_nolock(node, search,
@@ -4984,6 +4993,7 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 	struct ssdfs_name_string *name;
 	size_t ldesc_size = sizeof(struct ssdfs_lookup_descriptor);
 	size_t ltbl2_item_len = sizeof(struct ssdfs_shdict_ltbl2_item);
+	int node_size_index;
 	int table_size;
 	int array_size;
 	u16 start_index;
@@ -5014,8 +5024,8 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 	down_read(&node->header_lock);
 
 	table_size = node->lookup_tbl_area.index_capacity;
-
-	array_size = lookup1_tbl_range_capacity[*index];
+	node_size_index = SSDFS_SHDIC_NODE_SIZE2INDEX(node->node_size);
+	array_size = lookup1_tbl_range_capacity[node_size_index];
 	buf = &search->result.name_buf;
 	start_index = le16_to_cpu(buf->place.name->lookup.desc.start_index);
 	range_len = le16_to_cpu(buf->place.name->lookup.desc.range_len);
@@ -5087,7 +5097,7 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 			     0, sizeof(struct ssdfs_shdict_ltbl1_item),
 			     sizeof(struct ssdfs_shdict_ltbl1_item));
 
-		array_size = lookup1_tbl_range_capacity[*index];
+		array_size = lookup1_tbl_range_capacity[node_size_index];
 		buf = &search->result.name_buf;
 		start_index =
 		    le16_to_cpu(buf->place.name->lookup.desc.start_index);
@@ -5192,7 +5202,7 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 			     0, sizeof(struct ssdfs_shdict_ltbl1_item),
 			     sizeof(struct ssdfs_shdict_ltbl1_item));
 
-		array_size = lookup1_tbl_range_capacity[*index];
+		array_size = lookup1_tbl_range_capacity[node_size_index];
 		buf = &search->result.name_buf;
 		start_index =
 		    le16_to_cpu(buf->place.name->lookup.desc.start_index);
@@ -5202,8 +5212,11 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 		if (range_len > array_size) {
 			err = -ERANGE;
 			SSDFS_ERR("invalid request: "
-				  "range_len %u > array_size %d\n",
-				  range_len, array_size);
+				  "range_len %u, array_size %d, "
+				  "start_index %u, table_size %d, "
+				  "req_hash %#llx, found_hash %#llx\n",
+				  range_len, array_size, start_index,
+				  table_size, req_hash, found_hash);
 			goto finish_lookup1_tbl_check;
 		}
 
@@ -5211,8 +5224,10 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 			err = -ERANGE;
 			SSDFS_ERR("invalid request: "
 				  "start_index %u, range_len %u, "
-				  "table_size %d\n",
-				  start_index, range_len, table_size);
+				  "table_size %d, req_hash %#llx, "
+				  "found_hash %#llx\n",
+				  start_index, range_len, table_size,
+				  req_hash, found_hash);
 			goto finish_lookup1_tbl_check;
 		}
 	} while (req_hash > found_hash);
@@ -11214,33 +11229,22 @@ int ssdfs_lookup2_table_insert_descriptor(struct ssdfs_btree_node *node,
 }
 
 /*
- * ssdfs_lookup1_table_get_range_capacity() - get the capacity for an index
- * @index: lookup1 table's index
- */
-static inline
-u16 ssdfs_lookup1_table_get_range_capacity(u16 index)
-{
-	if (index >= SSDFS_SHDIC_LTBL1_SIZE)
-		return U16_MAX;
-
-	return lookup1_tbl_range_capacity[index];
-}
-
-/*
  * ssdfs_convert_lookup2_to_lookup1_index() - convert lookup2 to lookup1 index
+ * @node_size: node size in bytes
  * @lookup2_index: lookup2 index
  */
 static inline
-u16 ssdfs_convert_lookup2_to_lookup1_index(u16 lookup2_index)
+u16 ssdfs_convert_lookup2_to_lookup1_index(u32 node_size, u16 lookup2_index)
 {
+	int node_size_index = SSDFS_SHDIC_NODE_SIZE2INDEX(node_size);
 	int cur_index;
 	u16 lower_bound, upper_bound;
 	u16 range_capacity;
 	u16 threshold;
 	u16 found_index = U16_MAX;
 
-	threshold = lookup1_tbl_threshold[0];
-	range_capacity = lookup1_tbl_range_capacity[0];
+	threshold = lookup1_tbl_threshold(node_size, 0);
+	range_capacity = lookup1_tbl_range_capacity[node_size_index];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lookup2_index %u, threshold %u, "
@@ -11253,7 +11257,8 @@ u16 ssdfs_convert_lookup2_to_lookup1_index(u16 lookup2_index)
 		return 0;
 	}
 
-	threshold = lookup1_tbl_threshold[SSDFS_SHDIC_LTBL1_SIZE - 1];
+	threshold = lookup1_tbl_threshold(node_size,
+					  SSDFS_SHDIC_LTBL1_SIZE - 1);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lookup2_index %u, threshold %u\n",
@@ -11270,8 +11275,8 @@ u16 ssdfs_convert_lookup2_to_lookup1_index(u16 lookup2_index)
 	cur_index = SSDFS_SHDIC_LTBL1_SIZE / 2;
 
 	do {
-		threshold = lookup1_tbl_threshold[cur_index];
-		range_capacity = lookup1_tbl_range_capacity[cur_index];
+		threshold = lookup1_tbl_threshold(node_size, cur_index);
+		range_capacity = lookup1_tbl_range_capacity[node_size_index];
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("lower_bound %u, upper_bound %u, "
@@ -11326,6 +11331,7 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 	struct ssdfs_shdict_ltbl1_item read_desc;
 	struct ssdfs_btree_search_buffer *buf;
 	size_t item_size = sizeof(struct ssdfs_shdict_ltbl1_item);
+	int node_size_index;
 	u16 items_count;
 	u16 items_capacity;
 	u16 lookup2_index;
@@ -11351,6 +11357,7 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+	node_size_index = SSDFS_SHDIC_NODE_SIZE2INDEX(node->node_size);
 	items_count = le16_to_cpu(node->raw.dict_header.lookup_table1_items);
 	items_capacity = SSDFS_SHDIC_LTBL1_SIZE;
 
@@ -11381,7 +11388,8 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 
 	lookup2_index = buf->place.name->placement.lookup2_index;
 	calculated_index =
-		ssdfs_convert_lookup2_to_lookup1_index(lookup2_index);
+		ssdfs_convert_lookup2_to_lookup1_index(node->node_size,
+							lookup2_index);
 	if (calculated_index >= U16_MAX) {
 		SSDFS_ERR("invalid lookup1_index: "
 			  "lookup2_index %u\n",
@@ -11409,7 +11417,7 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	range_capacity = lookup1_tbl_range_capacity[calculated_index];
+	range_capacity = lookup1_tbl_range_capacity[node_size_index];
 
 	if (lookup2_index < start_lookup2_index ||
 	    lookup2_index > (start_lookup2_index + range_len + 1)) {
@@ -11451,7 +11459,8 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 		     &read_desc, 0, item_size,
 		     item_size);
 
-	start_lookup2_index = lookup1_tbl_threshold[calculated_index];
+	start_lookup2_index = lookup1_tbl_threshold(node->node_size,
+						    calculated_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("calculated_index %u, items_count %u, "
@@ -11588,7 +11597,7 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 				     1);
 		}
 
-		start_lookup2_index = lookup1_tbl_threshold[i];
+		start_lookup2_index = lookup1_tbl_threshold(node->node_size, i);
 	}
 
 set_node_header_dirty:
@@ -11653,6 +11662,7 @@ int ssdfs_lookup1_table_add_descriptor(struct ssdfs_btree_node *node,
 	struct ssdfs_shdict_ltbl1_item read_desc;
 	struct ssdfs_btree_search_buffer *buf;
 	size_t item_size = sizeof(struct ssdfs_shdict_ltbl1_item);
+	int node_size_index;
 	u16 items_count;
 	u16 lookup2_index = 0;
 	u16 calculated_index = 0;
@@ -11676,6 +11686,7 @@ int ssdfs_lookup1_table_add_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+	node_size_index = SSDFS_SHDIC_NODE_SIZE2INDEX(node->node_size);
 	items_count = le16_to_cpu(node->raw.dict_header.lookup_table1_items);
 
 	if (items_count > SSDFS_SHDIC_LTBL1_SIZE) {
@@ -11710,7 +11721,8 @@ int ssdfs_lookup1_table_add_descriptor(struct ssdfs_btree_node *node,
 	} else {
 		lookup2_index = buf->place.name->placement.lookup2_index;
 		calculated_index =
-			ssdfs_convert_lookup2_to_lookup1_index(lookup2_index);
+			ssdfs_convert_lookup2_to_lookup1_index(node->node_size,
+								lookup2_index);
 		if (calculated_index >= U16_MAX) {
 			SSDFS_ERR("invalid lookup1_index: "
 				  "lookup2_index %u\n",
@@ -11718,7 +11730,7 @@ int ssdfs_lookup1_table_add_descriptor(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		range_capacity = lookup1_tbl_range_capacity[calculated_index];
+		range_capacity = lookup1_tbl_range_capacity[node_size_index];
 	}
 
 	if (calculated_index == items_count) {
@@ -16065,6 +16077,7 @@ int ssdfs_rebuild_lookup1_table(struct ssdfs_btree_node *node)
 	struct ssdfs_shdict_ltbl1_item ltbl1_desc;
 	union ssdfs_shdict_search_key ltbl2_desc;
 	size_t item_size = sizeof(struct ssdfs_shdict_ltbl1_item);
+	int node_size_index;
 	u16 ltbl1_items_count;
 	u16 ltbl2_items_count;
 	u16 ltbl2_items_capacity;
@@ -16156,7 +16169,8 @@ int ssdfs_rebuild_lookup1_table(struct ssdfs_btree_node *node)
 
 		ltbl1_desc.start_index = cpu_to_le16((u16)ltbl2_index);
 
-		range_len = ssdfs_lookup1_table_get_range_capacity(ltbl1_index);
+		node_size_index = SSDFS_SHDIC_NODE_SIZE2INDEX(node->node_size);
+		range_len = lookup1_tbl_range_capacity[node_size_index];
 
 		if (range_len >= U16_MAX) {
 			SSDFS_ERR("invalid range len: ltbl1_index %d\n",
@@ -16186,7 +16200,8 @@ int ssdfs_rebuild_lookup1_table(struct ssdfs_btree_node *node)
 			     &ltbl1_desc, 0, item_size,
 			     item_size);
 
-		ltbl2_index = lookup1_tbl_threshold[ltbl1_index];
+		ltbl2_index = lookup1_tbl_threshold(node->node_size,
+						    ltbl1_index);
 		ltbl1_index++;
 	}
 
@@ -20192,7 +20207,8 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 
 	lookup2_index = name_range->lookup2_table.index;
 	name_range->lookup1.index =
-		ssdfs_convert_lookup2_to_lookup1_index(lookup2_index);
+		ssdfs_convert_lookup2_to_lookup1_index(node->node_size,
+							lookup2_index);
 
 	down_read(&node->header_lock);
 	err = ssdfs_get_lookup1_table_search_key(node,

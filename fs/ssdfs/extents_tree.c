@@ -6227,8 +6227,6 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("forks_count %lld\n", forks_count);
-
-	ssdfs_debug_extents_btree_object(tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (forks_count == 0) {
@@ -15254,6 +15252,8 @@ void ssdfs_debug_extents_btree_object(struct ssdfs_extents_btree_info *tree)
 		  tree->owner,
 		  tree->fsi);
 
+	down_write(&tree->lock);
+
 	if (tree->generic_tree) {
 		/* debug dump of generic tree */
 		ssdfs_debug_btree_object(tree->generic_tree);
@@ -15313,6 +15313,8 @@ void ssdfs_debug_extents_btree_object(struct ssdfs_extents_btree_info *tree)
 				  le32_to_cpu(index->extent.len));
 		}
 	}
+
+	up_write(&tree->lock);
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 

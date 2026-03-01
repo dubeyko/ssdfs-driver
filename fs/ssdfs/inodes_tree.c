@@ -819,7 +819,9 @@ void ssdfs_inodes_btree_destroy(struct ssdfs_fs_info *fsi)
 	if (!fsi->inodes_tree)
 		return;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_inodes_btree_object(fsi->inodes_tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_sysfs_delete_inodes_tree_group(fsi);
 
@@ -921,7 +923,9 @@ int ssdfs_inodes_btree_flush(struct ssdfs_inodes_btree_info *tree)
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_inodes_btree_object(fsi->inodes_tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
