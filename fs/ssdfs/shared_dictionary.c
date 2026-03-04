@@ -175,6 +175,8 @@ struct ssdfs_name_info *ssdfs_name_info_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ssdfs_dict_cache_leaks_increment(ptr);
+
 	return ptr;
 }
 
@@ -190,6 +192,7 @@ void ssdfs_name_info_free(struct ssdfs_name_info *ni)
 	if (!ni)
 		return;
 
+	ssdfs_dict_cache_leaks_decrement(ni);
 	kmem_cache_free(ssdfs_name_info_cachep, ni);
 }
 

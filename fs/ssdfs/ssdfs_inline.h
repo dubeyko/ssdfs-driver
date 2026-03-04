@@ -3005,7 +3005,7 @@ void ssdfs_check_jiffies_left_till_timeout(unsigned long value)
 	int err = 0; \
 	res = wait_for_completion_timeout(end, SSDFS_DEFAULT_TIMEOUT); \
 	if (res == 0) { \
-		err = -ERANGE; \
+		err = -ETIMEDOUT; \
 	} else { \
 		ssdfs_check_jiffies_left_till_timeout(res); \
 	} \

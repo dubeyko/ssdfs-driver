@@ -141,6 +141,9 @@ finish_read_child_node:
 		up_write(&tree->generic_tree.lock);
 		up_write(&tree->lock);
 
+		ssdfs_name_info_free(ni);
+		ni = NULL;
+
 		if (unlikely(err))
 			goto finish_init;
 
@@ -294,6 +297,7 @@ try_process_queue:
 				/* name exist -> do nothing */
 				err = 0;
 				ssdfs_name_info_free(ni);
+				ni = NULL;
 				continue;
 			} else if (unlikely(err)) {
 				ssdfs_fs_error(tree->generic_tree.fsi->sb,
@@ -306,9 +310,12 @@ try_process_queue:
 						ni->desc.name.len,
 						err);
 				ssdfs_name_info_free(ni);
+				ni = NULL;
 				goto repeat;
-			} else
+			} else {
 				ssdfs_name_info_free(ni);
+				ni = NULL;
+			}
 			break;
 
 		case SSDFS_NAME_CHANGE:
@@ -319,6 +326,7 @@ try_process_queue:
 				  ni->desc.name.hash,
 				  ni->desc.name.len);
 			ssdfs_name_info_free(ni);
+			ni = NULL;
 			break;
 
 		default:
@@ -328,6 +336,7 @@ try_process_queue:
 				  ni->desc.name.hash,
 				  ni->desc.name.len);
 			ssdfs_name_info_free(ni);
+			ni = NULL;
 			break;
 		};
 	} while (has_queue_unprocessed_names(tree));
