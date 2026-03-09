@@ -1581,6 +1581,15 @@ int ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
 			blk_bmap->used_blks +
 			blk_bmap->invalid_blks;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("metadata_items %u, used_blks %u, "
+		  "invalid_blks %u, used_space %zu\n",
+		  blk_bmap->metadata_items,
+		  blk_bmap->used_blks,
+		  blk_bmap->invalid_blks,
+		  used_space);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	new_items_capacity = used_space + free_items;
 
 	return __ssdfs_block_bmap_inflate(blk_bmap, new_items_capacity);

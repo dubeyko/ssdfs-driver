@@ -280,7 +280,7 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 
 	err = ssdfs_block_bmap_create(fsi,
 				      &bmap->buffer[SSDFS_PEB_BLK_BMAP1],
-				      items_count, bmap->pages_per_peb,
+				      items_count, items_count,
 				      init_flag, init_state);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create source block bitmap: "
@@ -293,7 +293,7 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 
 	err = ssdfs_block_bmap_create(fsi,
 				      &bmap->buffer[SSDFS_PEB_BLK_BMAP2],
-				      items_count, bmap->pages_per_peb,
+				      items_count, items_count,
 				      SSDFS_BLK_BMAP_CREATE,
 				      SSDFS_BLK_FREE);
 	if (unlikely(err)) {
@@ -1218,6 +1218,12 @@ finish_block_bitmap_preparation:
 
 	peb_free_blks = atomic_read(&bmap->peb_free_blks);
 	atomic_set(&bmap->peb_free_blks, free_items);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_free_blks %u, free_items %u, seg_free_blks %d\n",
+		  peb_free_blks, free_items,
+		  atomic_read(&bmap->parent->seg_free_blks));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	atomic_sub(peb_free_blks, &bmap->parent->seg_free_blks);
 	atomic_add(free_items, &bmap->parent->seg_free_blks);
