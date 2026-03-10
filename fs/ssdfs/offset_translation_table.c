@@ -9602,7 +9602,7 @@ unlock_fragment:
 			/*
 			 * Ignore the case
 			 */
-		} else if (id == pos->id) {
+		} else if (id == pos->id && peb_index == pos->peb_index) {
 			if (!err)
 				err = -ERANGE;
 
@@ -9611,10 +9611,10 @@ unlock_fragment:
 				  pos->sequence_id, *last_sequence_id,
 				  id, offset_index);
 			SSDFS_WARN("corrupted table: "
-				   "logical_blk %u, id %d, "
-				   "cur_blk %d, id %u\n",
-				   logical_blk, id,
-				   i, pos->id);
+				   "BLK: (logical_blk %u, id %d, peb_index %u), "
+				   "CUR_BLK: (cur_blk %d, id %u, peb_index %u)\n",
+				   logical_blk, id, peb_index,
+				   i, pos->id, pos->peb_index);
 		}
 
 		ssdfs_dynamic_array_release(&table->lblk2off, i, pos);
