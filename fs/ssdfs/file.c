@@ -195,10 +195,12 @@ void ssdfs_destroy_inline_file_buffer(struct inode *inode)
 /*
  * ssdfs_read_block_async() - read block async
  * @fsi: pointer on shared file system object
+ * @inode: pointer on VFS inode
  * @req: request object
  */
 static
 int ssdfs_read_block_async(struct ssdfs_fs_info *fsi,
+			   struct inode *inode,
 			   struct ssdfs_segment_request *req)
 {
 	struct ssdfs_segment_info *si;
@@ -206,13 +208,13 @@ int ssdfs_read_block_async(struct ssdfs_fs_info *fsi,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !req);
+	BUG_ON(!fsi || !inode || !req);
 	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
 
 	SSDFS_DBG("fsi %p, req %p\n", fsi, req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_prepare_volume_extent(fsi, req);
+	err = ssdfs_prepare_volume_extent(fsi, inode, req);
 	if (err == -EAGAIN) {
 		err = 0;
 		SSDFS_DBG("logical extent processed partially\n");
@@ -272,10 +274,12 @@ int ssdfs_read_block_async(struct ssdfs_fs_info *fsi,
 /*
  * ssdfs_read_block_by_current_thread() - read block by current thread
  * @fsi: pointer on shared file system object
+ * @inode: pointer on VFS inode
  * @req: request object
  */
 static
 int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
+					struct inode *inode,
 					struct ssdfs_segment_request *req)
 {
 	struct ssdfs_segment_info *si;
@@ -289,13 +293,13 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !req);
+	BUG_ON(!fsi || !inode || !req);
 	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
 
 	SSDFS_DBG("fsi %p, req %p\n", fsi, req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_prepare_volume_extent(fsi, req);
+	err = ssdfs_prepare_volume_extent(fsi, inode, req);
 	if (err == -EAGAIN) {
 		err = 0;
 		SSDFS_DBG("logical extent processed partially\n");
@@ -562,7 +566,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 
 	switch (read_mode) {
 	case SSDFS_CURRENT_THREAD_READ:
-		err = ssdfs_read_block_by_current_thread(fsi, req);
+		err = ssdfs_read_block_by_current_thread(fsi, inode, req);
 		if (err == -ENOENT) {
 			SSDFS_DBG("empty block has been prepared\n");
 
@@ -610,7 +614,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 		break;
 
 	case SSDFS_DELEGATE_TO_READ_THREAD:
-		err = ssdfs_read_block_async(fsi, req);
+		err = ssdfs_read_block_async(fsi, inode, req);
 		if (err) {
 			SSDFS_ERR("fail to read block: err %d\n", err);
 			goto fail_read_block;
@@ -679,13 +683,21 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 			cur_folio = folio;
 			ssdfs_account_locked_folio(folio);
 		} else {
-			fgp_flags |= fgf_set_order(fsi->pagesize -
-						   processed_bytes);
+			cur_folio = filemap_lock_folio(mapping, index);
+			if (!cur_folio || IS_ERR(cur_folio)) {
+				unsigned int nofs_flags;
 
-			cur_folio = __filemap_get_folio(mapping,
+				fgp_flags |= fgf_set_order(fsi->pagesize -
+							   processed_bytes);
+
+				nofs_flags = memalloc_nofs_save();
+				cur_folio = __filemap_get_folio(mapping,
 						    index,
 						    fgp_flags,
 						    mapping_gfp_mask(mapping));
+				memalloc_nofs_restore(nofs_flags);
+			}
+
 			if (!cur_folio) {
 				SSDFS_ERR("fail to grab folio: page_index %lu\n",
 					  index);
@@ -1398,10 +1410,18 @@ static ssize_t ssdfs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 			fgp_flags |= fgf_set_order(fsi->pagesize -
 						   processed_bytes);
 
-			folio = __filemap_get_folio(mapping,
+			folio = filemap_lock_folio(mapping, page_index);
+			if (!folio || IS_ERR(folio)) {
+				unsigned int nofs_flags;
+
+				nofs_flags = memalloc_nofs_save();
+				folio = __filemap_get_folio(mapping,
 						    page_index,
 						    fgp_flags,
 						    mapping_gfp_mask(mapping));
+				memalloc_nofs_restore(nofs_flags);
+			}
+
 			if (!folio) {
 				SSDFS_ERR("fail to grab folio: page_index %lu\n",
 					  page_index);
@@ -1692,7 +1712,7 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("seg_id %llu, i %d, pool->count %u, "
 				  "request's reference count %d\n",
-				  si->seg_id, i, pool->count,
+				  req->place.start.seg_id, i, pool->count,
 				  atomic_read(&req->private.refs_count));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1729,7 +1749,7 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("seg_id %llu, i %d, pool->count %u, "
 				  "request's reference count %d\n",
-				  si->seg_id, i, pool->count,
+				  req->place.start.seg_id, i, pool->count,
 				  atomic_read(&req->private.refs_count));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -3623,12 +3643,15 @@ struct folio *ssdfs_get_block_folio(struct file *file,
 		  inode->i_ino, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	fgp_flags |= fgf_set_order(fsi->pagesize);
+	folio = filemap_lock_folio(mapping, index);
+	if (!folio || IS_ERR(folio)) {
+		fgp_flags |= fgf_set_order(fsi->pagesize);
 
-	nofs_flags = memalloc_nofs_save();
-	folio = __filemap_get_folio(mapping, index, fgp_flags,
-				    mapping_gfp_mask(mapping));
-	memalloc_nofs_restore(nofs_flags);
+		nofs_flags = memalloc_nofs_save();
+		folio = __filemap_get_folio(mapping, index, fgp_flags,
+					    mapping_gfp_mask(mapping));
+		memalloc_nofs_restore(nofs_flags);
+	}
 
 	if (!folio) {
 		SSDFS_ERR("fail to grab folio: index %lu\n",
@@ -3945,6 +3968,8 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 		SSDFS_DBG("change from inline to regular file\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		len = pos + len;
+		pos = 0;
 		last_blk = U64_MAX;
 	} else if (i_size_read(inode) > 0) {
 		last_blk = (i_size_read(inode) - 1) >>
@@ -3954,8 +3979,8 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 	cur_blk = pos >> fsi->log_pagesize;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("cur_blk %llu, last_blk %llu\n",
-		  (u64)cur_blk, (u64)last_blk);
+	SSDFS_DBG("cur_blk %llu, last_blk %llu, index %llu\n",
+		  (u64)cur_blk, (u64)last_blk, (u64)index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	first_folio = ssdfs_get_block_folio(file, mapping, index);
@@ -3972,16 +3997,6 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 	if (pos % folio_size(first_folio)) {
 		if (folio_test_uptodate(first_folio))
 			return first_folio;
-		else {
-			SSDFS_ERR("invalid request: "
-				  "pos %llu, pagesize %u, "
-				  "folio_size %zu\n",
-				  pos, fsi->pagesize,
-				  folio_size(first_folio));
-			ssdfs_folio_unlock(first_folio);
-			ssdfs_folio_put(first_folio);
-			return ERR_PTR(-ERANGE);
-		}
 	}
 
 	if (last_blk >= U64_MAX) {
@@ -4235,12 +4250,319 @@ out:
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio %p, count %d, "
-		  "folio_test_dirty %#x\n",
+		  "folio_test_dirty %#x, folio_test_uptodate %#x\n",
 		  folio, folio_ref_count(folio),
-		  folio_test_dirty(folio));
+		  folio_test_dirty(folio),
+		  folio_test_uptodate(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err ? err : copied;
+}
+
+/*
+ * ssdfs_direct_IO_inline_read() - DIO inline read
+ * @iocb: IO control block
+ * @iter: destination iov_iter for user-space
+ *
+ * Execute direct IO inline read.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static inline
+int ssdfs_direct_IO_inline_read(struct kiocb *iocb, struct iov_iter *iter)
+{
+	struct file *file = iocb->ki_filp;
+	struct inode *inode = file->f_mapping->host;
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	void *buf;
+	loff_t pos = iocb->ki_pos;
+	ssize_t count = iov_iter_count(iter);
+	loff_t isize = i_size_read(inode);
+	size_t inline_capacity = ssdfs_inode_inline_file_capacity(inode);
+	ssize_t data_bytes;
+	ssize_t done = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %lu, pos %llu, count %zu, "
+		  "isize %llu, inline_capacity %zd\n",
+		  inode->i_ino, pos, (size_t)count,
+		  isize, inline_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pos >= isize)
+		return 0;
+
+	if (pos < inline_capacity) {
+		data_bytes = min_t(ssize_t, inline_capacity - pos, count);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("ii->inline_file %px, data_bytes %zd\n",
+			  ii->inline_file, data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		buf = ssdfs_file_kzalloc(data_bytes, GFP_NOFS);
+		if (!buf) {
+			SSDFS_ERR("fail to allocate: data_bytes %zu\n",
+				  data_bytes);
+			return -ENOMEM;
+		}
+
+		ssdfs_memcpy(buf, 0, data_bytes,
+			     ii->inline_file, pos, inline_capacity,
+			     data_bytes);
+		done = copy_to_iter(buf, data_bytes, iter);
+		ssdfs_file_kfree(buf);
+
+		if (done == 0) {
+			SSDFS_ERR("fail to copy data: "
+				  "pos %llu, data_bytes %zd\n",
+				   pos, data_bytes);
+			return -EFAULT;
+		}
+
+		iocb->ki_pos += done;
+	} else {
+		SSDFS_ERR("read out of inline capacity: "
+			  "pos %llu, inline_capacity %zu\n",
+			  pos, inline_capacity);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_direct_read_block() - DIO read one logical block
+ * @iocb: IO control block
+ * @inode: inode object
+ * @pos: logical byte offset in file
+ * @data_bytes: number of bytes to copy to @iter
+ * @iter: destination iov_iter for user-space
+ *
+ * Allocates a private bounce folio (not in page cache), issues a
+ * synchronous block read via ssdfs_read_block_by_current_thread(),
+ * waits for completion, then copies the data to @iter.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static int ssdfs_direct_read_block(struct kiocb *iocb,
+				   struct inode *inode,
+				   loff_t pos, u32 data_bytes,
+				   struct iov_iter *iter)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct ssdfs_segment_request *req = NULL;
+	struct folio *folio;
+	size_t copied;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %lu, pos %llu, data_bytes %u\n",
+		  inode->i_ino, pos, data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (is_ssdfs_file_inline(ii))
+		return ssdfs_direct_IO_inline_read(iocb, iter);
+
+	folio = ssdfs_file_alloc_folio(GFP_KERNEL | __GFP_ZERO,
+					get_order(fsi->pagesize));
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("fail to allocate bounce folio: "
+			  "ino %lu, pos %llu, err %d\n",
+			  inode->i_ino, pos, err);
+		return err;
+	}
+
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate segment request: "
+			  "ino %lu, pos %llu, err %d\n",
+			  inode->i_ino, pos, err);
+		goto free_folio;
+	}
+
+	ssdfs_request_init(req, fsi->pagesize);
+	ssdfs_get_request(req);
+	req->private.flags |= SSDFS_REQ_DONT_FREE_FOLIOS;
+
+	ssdfs_request_prepare_logical_extent(inode->i_ino,
+					     (u64)pos,
+					     data_bytes,
+					     0, 0, req);
+
+	ssdfs_folio_lock(folio);
+
+	err = ssdfs_request_add_folio(folio, 0, req);
+	if (err) {
+		SSDFS_ERR("fail to add folio into request: "
+			  "ino %lu, pos %llu, err %d\n",
+			  inode->i_ino, pos, err);
+		goto cleanup;
+	}
+
+	err = ssdfs_read_block_by_current_thread(fsi, inode, req);
+	if (err == -ENOENT) {
+		/*
+		 * Block is unallocated; folio is already zeroed (GFP_ZERO).
+		 * Treat as a successful read of zero bytes from sparse area.
+		 */
+		err = 0;
+		goto copy_to_user;
+	} else if (err) {
+		SSDFS_ERR("fail to read block: "
+			  "ino %lu, pos %llu, err %d\n",
+			  inode->i_ino, pos, err);
+		goto cleanup;
+	}
+
+	err = SSDFS_WAIT_COMPLETION(&req->result.wait);
+	if (unlikely(err)) {
+		SSDFS_ERR("read request failed: "
+			  "ino %lu, pos %llu, err %d\n",
+			  inode->i_ino, pos, err);
+		goto cleanup;
+	}
+
+	if (req->result.err) {
+		err = req->result.err;
+		SSDFS_ERR("read request result failed: "
+			  "ino %lu, pos %llu, err %d\n",
+			  inode->i_ino, pos, err);
+		goto cleanup;
+	}
+
+copy_to_user:
+	copied = copy_folio_to_iter(folio, 0, data_bytes, iter);
+	if (copied != data_bytes) {
+		err = -EFAULT;
+		SSDFS_ERR("fail to copy folio to iter: "
+			  "ino %lu, pos %llu, data_bytes %u, copied %zu\n",
+			  inode->i_ino, pos, data_bytes, copied);
+	}
+
+cleanup:
+	ssdfs_folio_unlock(folio);
+	ssdfs_put_request(req);
+	ssdfs_request_free(req, NULL);
+
+free_folio:
+	ssdfs_file_free_folio(folio);
+	return err;
+}
+
+/*
+ * ssdfs_direct_write_block() - DIO write one logical block
+ * @iocb: IO control block
+ * @mapping: file address space
+ * @pos: logical byte offset in file
+ * @data_bytes: number of bytes to write from @iter
+ * @iter: source iov_iter from user-space
+ *
+ * Write-through approach: temporarily places data into the page cache
+ * via ssdfs_write_begin()/ssdfs_write_end(), then forces synchronous
+ * writeback and invalidates the cache range so the page cache is clean
+ * on return.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static int ssdfs_direct_write_block(struct kiocb *iocb,
+				    struct address_space *mapping,
+				    loff_t pos, u32 data_bytes,
+				    struct iov_iter *iter)
+{
+	struct inode *inode = mapping->host;
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct folio *folio = NULL;
+	void *fsdata = NULL;
+	size_t copied_from_iter;
+	int written;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %lu, pos %llu, data_bytes %u\n",
+		  inode->i_ino, pos, data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_write_begin(iocb, mapping, pos, data_bytes,
+				&folio, &fsdata);
+	if (err) {
+		SSDFS_ERR("fail to begin write: "
+			  "ino %lu, pos %llu, data_bytes %u, err %d\n",
+			  inode->i_ino, pos, data_bytes, err);
+		return err;
+	}
+
+	if (is_ssdfs_file_inline(ii)) {
+		void *buf;
+		size_t inline_capacity =
+			ssdfs_inode_inline_file_capacity(inode);
+
+		buf = ssdfs_file_kzalloc(data_bytes, GFP_NOFS);
+		if (!buf) {
+			SSDFS_ERR("fail to allocate: data_bytes %u\n",
+				  data_bytes);
+			return -ENOMEM;
+		}
+
+		copied_from_iter = copy_from_iter(buf, data_bytes, iter);
+
+		ssdfs_memcpy(ii->inline_file, pos, inline_capacity,
+			     buf, 0, data_bytes,
+			     data_bytes);
+		ssdfs_file_kfree(buf);
+	} else {
+		copied_from_iter =
+			copy_folio_from_iter(folio, 0, data_bytes, iter);
+	}
+
+	written = ssdfs_write_end(iocb, mapping, pos, data_bytes,
+				  (unsigned)copied_from_iter, folio, fsdata);
+	if (written < 0) {
+		SSDFS_ERR("fail to end write: "
+			  "ino %lu, pos %llu, data_bytes %u, err %d\n",
+			  inode->i_ino, pos, data_bytes, written);
+		return written;
+	}
+
+	if (written == 0) {
+		SSDFS_ERR("zero bytes written: "
+			  "ino %lu, pos %llu, data_bytes %u\n",
+			  inode->i_ino, pos, data_bytes);
+		return -EIO;
+	}
+
+	/* Force synchronous writeback to storage */
+	err = filemap_write_and_wait_range(mapping, pos,
+					   pos + fsi->pagesize - 1);
+	if (err) {
+		SSDFS_ERR("fail to writeback block: "
+			  "ino %lu, pos %llu, err %d\n",
+			  inode->i_ino, pos, err);
+		return err;
+	}
+
+	/* Invalidate page cache so DIO and cache stay coherent */
+	invalidate_inode_pages2_range(mapping,
+				      pos >> PAGE_SHIFT,
+				      (pos + fsi->pagesize - 1) >> PAGE_SHIFT);
+
+	return written;
 }
 
 /*
@@ -4251,8 +4573,75 @@ out:
  */
 static ssize_t ssdfs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 {
-	/* TODO: implement */
-	return -ERANGE;
+	struct file *file = iocb->ki_filp;
+	struct inode *inode = file->f_mapping->host;
+	struct address_space *mapping = file->f_mapping;
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	loff_t pos = iocb->ki_pos;
+	ssize_t count = iov_iter_count(iter);
+	ssize_t done = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %lu, pos %llu, count %zu, type %#x, rw %u\n",
+		  inode->i_ino, pos, (size_t)count,
+		  iov_iter_type(iter),
+		  (unsigned)iov_iter_rw(iter));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (iov_iter_rw(iter) == WRITE) {
+		if (inode->i_sb->s_flags & SB_RDONLY)
+			return -EROFS;
+	}
+
+	if (iov_iter_rw(iter) == READ) {
+		loff_t isize = i_size_read(inode);
+
+		if (pos >= isize)
+			return 0;
+
+		count = min_t(ssize_t, count, isize - pos);
+
+		/*
+		 * Flush and invalidate any dirty page-cache data in this
+		 * range so that the DIO read sees the latest version.
+		 */
+		err = filemap_write_and_wait_range(mapping, pos,
+						   pos + count - 1);
+		if (err)
+			return err;
+
+		invalidate_inode_pages2_range(mapping,
+					      pos >> PAGE_SHIFT,
+					      (pos + count - 1) >> PAGE_SHIFT);
+	}
+
+	while (done < count) {
+		loff_t block_pos = pos + done;
+		u32 data_bytes = (u32)min_t(ssize_t, fsi->pagesize,
+					    count - done);
+
+		if (iov_iter_rw(iter) == READ) {
+			err = ssdfs_direct_read_block(iocb, inode, block_pos,
+						      data_bytes, iter);
+		} else {
+			err = ssdfs_direct_write_block(iocb, mapping,
+						       block_pos,
+						       data_bytes, iter);
+		}
+
+		if (err)
+			break;
+
+		done += data_bytes;
+	}
+
+	if (done > 0) {
+		iocb->ki_pos += done;
+		return done;
+	}
+
+	return err;
 }
 
 /*

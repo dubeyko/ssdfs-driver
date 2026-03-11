@@ -2139,6 +2139,7 @@ finish_prepare_volume_extent:
 /*
  * ssdfs_prepare_volume_extent() - convert requested byte stream into extent
  * @fsi: pointer on shared file system object
+ * @inode: pointer on VFS inode
  * @req: request object
  *
  * This method tries to convert logical byte stream into extent of blocks.
@@ -2152,14 +2153,11 @@ finish_prepare_volume_extent:
  * %-ENODATA     - unable to convert byte stream into extent.
  */
 int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
+				struct inode *inode,
 				struct ssdfs_segment_request *req)
 {
-	struct ssdfs_request_content_block *block;
-	struct ssdfs_content_block *blk_state;
-	struct inode *inode;
-
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !req);
+	BUG_ON(!fsi || !inode || !req);
 	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
 
 	SSDFS_DBG("fsi %p, req %p, ino %llu, "
@@ -2173,15 +2171,6 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 
 	BUG_ON(req->result.content.count == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	block = &req->result.content.blocks[0];
-	blk_state = &block->new_state;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(folio_batch_count(&blk_state->batch) == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	inode = blk_state->batch.folios[0]->mapping->host;
 
 	return __ssdfs_prepare_volume_extent(fsi, inode,
 					     &req->extent, &req->place);

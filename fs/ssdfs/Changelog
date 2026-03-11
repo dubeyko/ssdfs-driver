@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.54 [March 10, 2026]
+    (*) Introduce direct IO support.
+
 v.5.53 [February 28, 2026]
     (*) Rework lookup1 table capacity and threshold limits
         for the case of shared dictionary.

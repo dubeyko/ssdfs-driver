@@ -133,6 +133,7 @@ int __ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 				  struct ssdfs_logical_extent *requested,
 				  struct ssdfs_volume_extent *place);
 int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
+				struct inode *inode,
 				struct ssdfs_segment_request *req);
 int ssdfs_recommend_migration_extent(struct ssdfs_fs_info *fsi,
 				     struct ssdfs_segment_request *req,
