@@ -2274,9 +2274,13 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 		default:
 			SSDFS_ERR("invalid PEB state: "
-				  "source %#x, destination %#x\n",
+				  "seg %llu, source %#x, destination %#x\n",
+				  pebc->parent_si->seg_id,
 				  src_peb_state, dst_peb_state);
 			err = -ERANGE;
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto fail_start_threads;
 		}
 		break;
@@ -2382,9 +2386,13 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 		default:
 			SSDFS_ERR("invalid PEB state: "
-				  "source %#x, destination %#x\n",
+				  "seg %llu, source %#x, destination %#x\n",
+				  pebc->parent_si->seg_id,
 				  src_peb_state, dst_peb_state);
 			err = -ERANGE;
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto fail_start_threads;
 		}
 		break;
@@ -2435,9 +2443,13 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 		default:
 			SSDFS_ERR("invalid PEB state: "
-				  "source %#x, destination %#x\n",
+				  "seg %llu, source %#x, destination %#x\n",
+				  pebc->parent_si->seg_id,
 				  src_peb_state, dst_peb_state);
 			err = -ERANGE;
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto fail_start_threads;
 		}
 		break;
@@ -2487,6 +2499,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 			break;
 
 		case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+		case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
 			if (peb_has_ext_ptr) {
 				err = ssdfs_create_pre_dirty_peb_container(pebc,
 								SSDFS_SRC_PEB);
@@ -2509,9 +2522,13 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 		default:
 			SSDFS_ERR("invalid PEB state: "
-				  "source %#x, destination %#x\n",
+				  "seg %llu, source %#x, destination %#x\n",
+				  pebc->parent_si->seg_id,
 				  src_peb_state, dst_peb_state);
 			err = -ERANGE;
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto fail_start_threads;
 		}
 		break;
@@ -2625,18 +2642,26 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 		default:
 			SSDFS_ERR("invalid PEB state: "
-				  "source %#x, destination %#x\n",
+				  "seg %llu, source %#x, destination %#x\n",
+				  pebc->parent_si->seg_id,
 				  src_peb_state, dst_peb_state);
 			err = -ERANGE;
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto fail_start_threads;
 		}
 		break;
 
 	default:
 		SSDFS_ERR("invalid PEB state: "
-			  "source %#x, destination %#x\n",
+			  "seg %llu, source %#x, destination %#x\n",
+			  pebc->parent_si->seg_id,
 			  src_peb_state, dst_peb_state);
 		err = -ERANGE;
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto fail_start_threads;
 	};
 
@@ -5868,6 +5893,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		is_first_log_created = pebi->current_log.start_block > 0;
 		ssdfs_peb_current_log_unlock(pebi);
 
+		if (is_peb_exhausted)
+			free_pages = 0;
+
 #ifdef CONFIG_SSDFS_DEBUG
 		metadata_pages =
 			ssdfs_peb_blk_bmap_get_metadata_pages(peb_blkbmap);
@@ -6022,6 +6050,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
 		is_first_log_created = pebi->current_log.start_block > 0;
 		ssdfs_peb_current_log_unlock(pebi);
+
+		if (is_peb_exhausted)
+			free_pages = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		metadata_pages =
@@ -6195,6 +6226,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
 		ssdfs_peb_current_log_unlock(pebi);
 
+		if (is_peb_exhausted)
+			free_pages = 0;
+
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("source PEB: free_pages %d, used_pages %d, "
 			  "invalid_pages %d, metadata_pages %d, "
@@ -6363,6 +6397,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
 		is_first_log_created = pebi->current_log.start_block > 0;
 		ssdfs_peb_current_log_unlock(pebi);
+
+		if (is_peb_exhausted)
+			free_pages = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		metadata_pages =

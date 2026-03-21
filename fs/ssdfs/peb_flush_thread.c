@@ -2806,6 +2806,39 @@ free_array:
 }
 
 /*
+ * is_area_empty() - check that area is empty
+ * @pebi: pointer on PEB object
+ * @area_type: area type
+ */
+static inline
+bool is_area_empty(struct ssdfs_peb_info *pebi, int area_type)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_log *current_log;
+	struct ssdfs_peb_area *area;
+	unsigned long folios_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc);
+	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
+	BUG_ON(area_type >= SSDFS_LOG_AREA_MAX);
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+
+	SSDFS_DBG("area_type %#x\n", area_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+	current_log = &pebi->current_log;
+	area = &current_log->area[area_type];
+
+	down_read(&area->array.lock);
+	folios_count = area->array.folios_count;
+	up_read(&area->array.lock);
+
+	return folios_count == 0;
+}
+
+/*
  * ssdfs_area_free_space() - calculate area's free space
  * @pebi: pointer on PEB object
  * @area_type: area type
@@ -8099,6 +8132,13 @@ check_block_state:
 	}
 
 finish_make_decision:
+#ifdef CONFIG_SSDFS_DEBUG
+	if (need_move_out) {
+		SSDFS_DBG("Data needs to be move out: "
+			  "peb %llu\n", pebi->peb_id);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return need_move_out;
 }
 
@@ -11256,15 +11296,13 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 		if (free_data_blocks <
 				((rest_bytes + page_size - 1) / page_size)) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("try again to update block/extent: "
+			SSDFS_DBG("try partially update block/extent: "
 				  "seg %llu, peb %llu, free_data_blocks %u, "
 				  "rest_bytes %u, page_size %u\n",
 				  req->place.start.seg_id, pebi->peb_id,
 				  free_data_blocks, rest_bytes,
 				  page_size);
 #endif /* CONFIG_SSDFS_DEBUG */
-			err = -EAGAIN;
-			goto finish_process_update_request;
 		}
 		break;
 
@@ -22819,6 +22857,186 @@ finish_method:
 }
 
 /*
+ * ssdfs_stimulate_migration() - stimulate migration
+ * @pebi: pointer on PEB object
+ *
+ * This function tries to stimulate migration of valid blocks
+ * from source PEB in migration chain.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_stimulate_migration(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_peb_container *pebc;
+	bool is_empty1, is_empty2;
+	u32 free_space1, free_space2;
+	u16 free_data_blocks;
+	int err1, err2;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi);
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_id %llu\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->pebc->peb_index,
+		  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pebc = pebi->pebc;
+
+	ssdfs_peb_current_log_lock(pebi);
+	is_empty1 = is_area_empty(pebi, SSDFS_LOG_JOURNAL_AREA);
+	is_empty2 = is_area_empty(pebi, SSDFS_LOG_DIFFS_AREA);
+	free_space1 = ssdfs_area_free_space(pebi, SSDFS_LOG_JOURNAL_AREA);
+	free_space2 = ssdfs_area_free_space(pebi, SSDFS_LOG_DIFFS_AREA);
+	free_data_blocks = pebi->current_log.free_data_blocks;
+	ssdfs_peb_current_log_unlock(pebi);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_id %llu, "
+		  "is_empty1 %#x, is_empty2 %#x, "
+		  "free_space1 %u, free_space2 %u, "
+		  "free_data_blocks %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->pebc->peb_index,
+		  pebi->peb_id,
+		  is_empty1, is_empty2,
+		  free_space1, free_space2,
+		  free_data_blocks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (free_data_blocks == 0) {
+		/*
+		 * No free space for shadow migration.
+		 */
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("No free space for shadow migration: "
+			  "seg_id %llu, peb_index %u, peb_id %llu\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index,
+			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+	}
+
+	if (!has_ssdfs_source_peb_valid_blocks(pebc)) {
+		/*
+		 * No used blocks in the source PEB.
+		 */
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("No used blocks in the source PEB: "
+			  "seg_id %llu, peb_index %u, peb_id %llu\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index,
+			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+	}
+
+	if (is_empty1 && is_empty2) {
+		err1 = ssdfs_peb_prepare_range_migration(pebc, 1,
+						SSDFS_BLK_PRE_ALLOCATED);
+		if (err1 == -ENODATA) {
+			SSDFS_DBG("unable to migrate: "
+				  "no pre-allocated blocks: "
+				  "seg_id %llu, peb_index %u, peb_id %llu\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index,
+				  pebi->peb_id);
+		} else if (unlikely(err1)) {
+			SSDFS_ERR("fail to migrate pre-allocated blocks: "
+				  "err %d\n", err1);
+			return err1;
+		}
+
+		err2 = ssdfs_peb_prepare_range_migration(pebc, 1,
+						SSDFS_BLK_VALID);
+		if (err2 == -ENODATA) {
+			SSDFS_DBG("unable to migrate: "
+				  "no valid blocks: "
+				  "seg_id %llu, peb_index %u, peb_id %llu\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index,
+				  pebi->peb_id);
+		} else if (unlikely(err2)) {
+			SSDFS_ERR("fail to migrate valid blocks: "
+				  "err %d\n", err2);
+			return err2;
+		}
+
+		if (err1 == -ENODATA && err2 == -ENODATA)
+			err = -ENODATA;
+	} else if (free_space1 < (PAGE_SIZE / 2) &&
+		   free_space2 < (PAGE_SIZE / 2)) {
+		/*
+		 * No free space for shadow migration.
+		 */
+		err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("No free space for shadow migration: "
+			  "seg_id %llu, peb_index %u, peb_id %llu\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index,
+			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else {
+		if (free_space1 >= (PAGE_SIZE / 2)) {
+			err1 = ssdfs_peb_prepare_range_migration(pebc, 1,
+							SSDFS_BLK_PRE_ALLOCATED);
+			if (err1 == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to migrate: "
+					  "no pre-allocated blocks: "
+					  "seg_id %llu, peb_index %u, "
+					  "peb_id %llu\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index,
+					  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else if (unlikely(err1)) {
+				SSDFS_ERR("fail to migrate pre-allocated blocks: "
+					  "err %d\n", err1);
+				return err1;
+			}
+		} else
+			err1 = -ENODATA;
+
+		if (free_space2 >= (PAGE_SIZE / 2)) {
+			err2 = ssdfs_peb_prepare_range_migration(pebc, 1,
+							SSDFS_BLK_VALID);
+			if (err2 == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to migrate: "
+					  "no valid blocks: "
+					  "seg_id %llu, peb_index %u, "
+					  "peb_id %llu\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index,
+					  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else if (unlikely(err2)) {
+				SSDFS_ERR("fail to migrate valid blocks: "
+					  "err %d\n", err2);
+				return err2;
+			}
+		} else
+			err2 = -ENODATA;
+
+		if (err1 == -ENODATA && err2 == -ENODATA)
+			err = -ENODATA;
+	}
+
+	return err;
+}
+
+/*
  * ssdfs_process_check_migration_state() - stimulate migration
  * @pebc: pointer on PEB container
  *
@@ -22838,7 +23056,6 @@ int ssdfs_process_check_migration_state(struct ssdfs_peb_container *pebc)
 	struct ssdfs_thread_state *thread_state = NULL;
 	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_peb_info *pebi = NULL;
-	bool peb_has_dirty_folios = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -22895,9 +23112,6 @@ int ssdfs_process_check_migration_state(struct ssdfs_peb_container *pebc)
 	}
 
 	if (is_peb_under_migration(pebc)) {
-		u32 free_space1, free_space2;
-		u16 free_data_blocks;
-
 		pebi = ssdfs_get_current_peb_locked(pebc);
 		if (IS_ERR_OR_NULL(pebi)) {
 			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
@@ -22910,96 +23124,7 @@ int ssdfs_process_check_migration_state(struct ssdfs_peb_container *pebc)
 			goto finish_method;
 		}
 
-		ssdfs_peb_current_log_lock(pebi);
-		free_space1 = ssdfs_area_free_space(pebi,
-					SSDFS_LOG_JOURNAL_AREA);
-		free_space2 = ssdfs_area_free_space(pebi,
-					SSDFS_LOG_DIFFS_AREA);
-		free_data_blocks = pebi->current_log.free_data_blocks;
-		peb_has_dirty_folios = ssdfs_peb_has_dirty_folios(pebi);
-		ssdfs_peb_current_log_unlock(pebi);
-		ssdfs_unlock_current_peb(pebc);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("free_space1 %u, free_space2 %u, "
-			  "free_data_blocks %u, peb_has_dirty_folios %#x\n",
-			  free_space1, free_space2,
-			  free_data_blocks, peb_has_dirty_folios);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (!peb_has_dirty_folios) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("PEB has no dirty pages: "
-				  "seg_id %llu, peb_index %u\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_check_migration_need;
-		}
-
-		if (free_data_blocks == 0) {
-			/*
-			 * No free space for shadow migration.
-			 */
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("No free space for shadow migration: "
-				  "seg_id %llu, peb_index %u\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_check_migration_need;
-		}
-
-		if (free_space1 < (PAGE_SIZE / 2) &&
-		    free_space2 < (PAGE_SIZE / 2)) {
-			/*
-			 * No free space for shadow migration.
-			 */
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("No free space for shadow migration: "
-				  "seg_id %llu, peb_index %u\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_check_migration_need;
-		}
-
-		if (!has_ssdfs_source_peb_valid_blocks(pebc)) {
-			/*
-			 * No used blocks in the source PEB.
-			 */
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("No used blocks in the source PEB: "
-				  "seg_id %llu, peb_index %u\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_check_migration_need;
-		}
-
-		ssdfs_peb_container_lock(pebc);
-
-		if (free_space1 >= (PAGE_SIZE / 2)) {
-			err = ssdfs_peb_prepare_range_migration(pebc, 1,
-						SSDFS_BLK_PRE_ALLOCATED);
-			if (err == -ENODATA) {
-				err = 0;
-				SSDFS_DBG("unable to migrate: "
-					  "no pre-allocated blocks\n");
-			} else
-				goto stimulate_migration_done;
-		}
-
-		if (free_space2 >= (PAGE_SIZE / 2)) {
-			err = ssdfs_peb_prepare_range_migration(pebc, 1,
-						SSDFS_BLK_VALID);
-			if (err == -ENODATA) {
-				SSDFS_DBG("unable to migrate: "
-					  "no valid blocks\n");
-			}
-		}
-
-stimulate_migration_done:
+		err = ssdfs_stimulate_migration(pebi);
 		ssdfs_peb_container_unlock(pebc);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -23432,9 +23557,16 @@ int should_be_thread_metadata_structure_user(struct ssdfs_peb_container *pebc,
 			 * Unexpected state.
 			 */
 			SSDFS_ERR("unexpected global FS state: "
-				  "state %#x, maptbl_users %d\n",
+				  "seg %llu, peb_index %u, "
+				  "state %#x, maptbl_users %d, "
+				  "has_dirty_folios %#x, "
+				  "has_flush_requests %#x\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index,
 				  state,
-				  atomic_read(&fsi->maptbl_users));
+				  atomic_read(&fsi->maptbl_users),
+				  has_dirty_folios,
+				  has_flush_requests);
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG();
 #else

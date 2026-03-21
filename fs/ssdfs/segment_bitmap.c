@@ -3179,6 +3179,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		case SSDFS_SEG_USED:
 		case SSDFS_SEG_PRE_DIRTY:
 		case SSDFS_SEG_DIRTY:
+		case SSDFS_SEG_RESERVED:
 			/* expected state */
 			break;
 
@@ -3234,6 +3235,10 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 
 	case SSDFS_SEG_RESERVED:
 		switch (new_state) {
+		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_LEAF_NODE_USING:
+		case SSDFS_SEG_HYBRID_NODE_USING:
+		case SSDFS_SEG_INDEX_NODE_USING:
 		case SSDFS_SEG_DIRTY:
 			/* expected state */
 			break;
@@ -3256,6 +3261,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		case SSDFS_SEG_INDEX_NODE_USING:
 		case SSDFS_SEG_USED:
 		case SSDFS_SEG_PRE_DIRTY:
+		case SSDFS_SEG_RESERVED:
 			/* expected state */
 			break;
 
@@ -4964,9 +4970,9 @@ try_to_find_seg_id:
 	if (res == new_state) {
 		/* everything is done */
 		goto finish_find_set;
-	} else if (res == SSDFS_SEG_CLEAN) {
+	} else if (res == SSDFS_SEG_CLEAN || res == SSDFS_SEG_DIRTY) {
 		/*
-		 * We can change clean state on any other
+		 * We can change clean/dirty state on any other
 		 */
 	} else if (IS_STATE_GOOD_FOR_MASK(mask, res)) {
 		/*

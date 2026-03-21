@@ -623,6 +623,12 @@ repeat_valid_blocks_processing:
 	}
 
 invalidate_sub_range:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("invalidate range: "
+		  "(start %u, len %u)\n",
+		  sub_range.start, sub_range.len);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = ssdfs_peb_blk_bmap_invalidate(peb_blkbmap,
 					    SSDFS_PEB_BLK_BMAP_SOURCE,
 					    &sub_range);
@@ -915,8 +921,8 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	struct ssdfs_block_bmap_range range = {0, 0};
-	u32 pages_per_seg;
 	int used_pages;
+	int pages_capacity;
 	u32 mem_pages;
 	int err = 0;
 
@@ -967,7 +973,6 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	fsi = si->fsi;
 	seg_blkbmap = &si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
-	pages_per_seg = si->fsi->pages_per_seg;
 
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_UNDER_MIGRATION:
@@ -1011,13 +1016,22 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 		return err;
 	}
 
+	pages_capacity = ssdfs_src_blk_bmap_get_pages_capacity(peb_blkbmap);
+	if (pages_capacity < 0) {
+		err = pages_capacity;
+		SSDFS_ERR("fail to get pages capacity: err %d\n",
+			  err);
+		return err;
+	}
+
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("used_pages %d\n", used_pages);
+	SSDFS_DBG("used_pages %d, pages_capacity %d\n",
+		  used_pages, pages_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (used_pages > 0) {
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
-							 0, pages_per_seg,
+							 0, pages_capacity,
 							 blk_type,
 							 &range);
 
@@ -1029,9 +1043,13 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 		if (err == -ENODATA) {
 			/* no valid blocks */
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-			SSDFS_ERR("no valid blocks\n");
+			SSDFS_ERR("no valid blocks: used_pages %d, "
+				  "found range: (start %u, len %u)\n",
+				  used_pages, range.start, range.len);
 #else
-			SSDFS_DBG("no valid blocks\n");
+			SSDFS_DBG("no valid blocks: used_pages %d, "
+				  "found range: (start %u, len %u)\n",
+				  used_pages, range.start, range.len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 			return err;
 		} else if (unlikely(err)) {
@@ -1092,9 +1110,11 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 		}
 	} else {
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-		SSDFS_ERR("unable to find blocks for migration\n");
+		SSDFS_ERR("unable to find blocks for migration: "
+			  "used_pages %d\n", used_pages);
 #else
-		SSDFS_DBG("unable to find blocks for migration\n");
+		SSDFS_DBG("unable to find blocks for migration: "
+			  "used_pages %d\n", used_pages);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 		return -ENODATA;
 	}

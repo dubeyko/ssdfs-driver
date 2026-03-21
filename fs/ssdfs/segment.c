@@ -1370,6 +1370,273 @@ finish_search:
 }
 
 /*
+ * ssdfs_find_dirty_segment() - find dirty segment
+ * @fsi: pointer on shared file system object
+ * @seg_type: segment type
+ * @seg_id: found segment ID [out]
+ * @seg_state: found segment state [out]
+ *
+ * This method tries to find a segment in dirty state.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENOENT     - unable to find a new segment.
+ */
+static
+int ssdfs_find_dirty_segment(struct ssdfs_fs_info *fsi,
+				int seg_type,
+				u64 *seg_id,
+				int *seg_state)
+{
+	struct ssdfs_maptbl_peb_relation pebr;
+	struct ssdfs_maptbl_peb_descriptor *pebd;
+	struct completion *init_end;
+	int new_state;
+	u64 start_seg;
+	u64 end_seg;
+	u8 peb_type;
+	u32 pebs_per_seg;
+	u64 cur_leb;
+	int i;
+	int res;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !seg_id || !seg_state);
+
+	SSDFS_DBG("fsi %p, seg_type %#x\n",
+		  fsi, seg_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*seg_id = U64_MAX;
+	*seg_state = SSDFS_SEG_STATE_MAX;
+
+	start_seg = 0;
+	end_seg = fsi->nsegs;
+
+	switch (seg_type) {
+	case SSDFS_USER_DATA_SEG_TYPE:
+		new_state = SSDFS_SEG_DATA_USING;
+		break;
+
+	case SSDFS_LEAF_NODE_SEG_TYPE:
+		new_state = SSDFS_SEG_LEAF_NODE_USING;
+		break;
+
+	case SSDFS_HYBRID_NODE_SEG_TYPE:
+		new_state = SSDFS_SEG_HYBRID_NODE_USING;
+		break;
+
+	case SSDFS_INDEX_NODE_SEG_TYPE:
+		new_state = SSDFS_SEG_INDEX_NODE_USING;
+		break;
+
+	default:
+		BUG();
+	};
+
+	res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+					 start_seg, end_seg,
+					 SSDFS_SEG_DIRTY,
+					 SSDFS_SEG_DIRTY_STATE_FLAG,
+					 SSDFS_SEG_RESERVED,
+					 seg_id, &init_end);
+	if (res >= 0) {
+		/* Define segment state */
+		*seg_state = res;
+	} else if (res == -EAGAIN) {
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
+			SSDFS_ERR("segbmap init failed: "
+				  "err %d\n", err);
+			goto finish_search;
+		}
+
+		res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+						 start_seg, end_seg,
+						 SSDFS_SEG_DIRTY,
+						 SSDFS_SEG_DIRTY_STATE_FLAG,
+						 SSDFS_SEG_RESERVED,
+						 seg_id, &init_end);
+		if (res >= 0) {
+			/* Define segment state */
+			*seg_state = res;
+		} else if (res == -ENODATA) {
+			err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find segment in range: "
+				  "start_seg %llu, end_seg %llu\n",
+				  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_search;
+		} else {
+			err = res;
+			SSDFS_ERR("fail to find segment in range: "
+				  "start_seg %llu, end_seg %llu, err %d\n",
+				  start_seg, end_seg, res);
+			goto finish_search;
+		}
+	} else if (res == -ENODATA) {
+		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to find segment in range: "
+			  "start_seg %llu, end_seg %llu\n",
+			  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_search;
+	} else {
+		SSDFS_ERR("fail to find segment in range: "
+			  "start_seg %llu, end_seg %llu, err %d\n",
+			  start_seg, end_seg, res);
+		goto finish_search;
+	}
+
+finish_search:
+	if (err == -ENOENT) {
+		*seg_id = end_seg;
+	} else if (unlikely(err)) {
+		/* do nothing */
+	} else {
+		err = 0;
+		peb_type = SEG2PEB_TYPE(seg_type);
+		pebs_per_seg = fsi->pebs_per_seg;
+
+		for (i = 0; i < pebs_per_seg; i++) {
+			cur_leb = ssdfs_get_leb_id_for_peb_index(fsi,
+								 *seg_id,
+								 i);
+			if (cur_leb >= U64_MAX) {
+				err = -ERANGE;
+				SSDFS_ERR("invalid leb_id for seg_id %llu\n",
+					  *seg_id);
+				break;
+			}
+
+			err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
+							   peb_type, &pebr,
+							   &init_end);
+			if (err == -EAGAIN) {
+				err = SSDFS_WAIT_COMPLETION(init_end);
+				if (unlikely(err)) {
+					SSDFS_ERR("maptbl init failed: "
+						  "err %d\n", err);
+					break;
+				}
+
+				err = ssdfs_maptbl_convert_leb2peb(fsi,
+								   cur_leb,
+								   peb_type,
+								   &pebr,
+								   &init_end);
+			}
+
+			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
+					  cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
+				err = 0;
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, err %d\n",
+					  cur_leb, err);
+				break;
+			}
+
+			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+
+			switch (pebd->state) {
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				/* PEB is dirty */
+				break;
+
+			default:
+				err = -ERANGE;
+				SSDFS_ERR("LEB %llu is not dirty: "
+					  "pebd->state %u\n",
+					  cur_leb, pebd->state);
+				goto finish_prepare_segment;
+			}
+
+			err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
+								   cur_leb,
+								   pebd->type,
+								   &init_end);
+			if (err == -EAGAIN) {
+				err = SSDFS_WAIT_COMPLETION(init_end);
+				if (unlikely(err)) {
+					SSDFS_ERR("maptbl init failed: "
+						  "err %d\n", err);
+					goto finish_prepare_segment;
+				}
+
+				err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
+								    cur_leb,
+								    pebd->type,
+								    &init_end);
+			}
+
+			if (err == -EBUSY) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to prepare pre-erase state: "
+					  "leb_id %llu\n",
+					  cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
+				break;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare pre-erase state: "
+					  "leb_id %llu, err %d\n",
+					  cur_leb, err);
+				goto finish_prepare_segment;
+			}
+		}
+
+		if (unlikely(err)) {
+			ssdfs_segbmap_change_state(fsi->segbmap,
+						   *seg_id,
+						   SSDFS_SEG_DIRTY,
+						   &init_end);
+			goto finish_prepare_segment;
+		} else {
+			err = ssdfs_segbmap_change_state(fsi->segbmap,
+							 *seg_id,
+							 new_state,
+							 &init_end);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change segment state: "
+					  "seg_id %llu, err %d\n",
+					  *seg_id, err);
+				goto finish_prepare_segment;
+			}
+		}
+
+		res = ssdfs_segbmap_get_state(fsi->segbmap,
+					      *seg_id, &init_end);
+		if (res < 0) {
+			err = res;
+			SSDFS_ERR("fail to define segment state: "
+				  "seg %llu, err %d\n",
+				  *seg_id, err);
+			goto finish_prepare_segment;
+		} else
+			*seg_state = res;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu\n",
+		  *seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
+finish_prepare_segment:
+	return err;
+}
+
+/*
  * ssdfs_find_new_segment() - find a new segment
  * @fsi: pointer on shared file system object
  * @state: segment search state [in|out]
@@ -1600,6 +1867,27 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_search;
 		}
+	}
+
+	err = ssdfs_find_dirty_segment(fsi,
+					state->request.seg_type,
+					&state->result.seg_id,
+					&state->result.seg_state);
+	if (err == -ENOENT) {
+		err = 0;
+		/* continue logic */
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find a new segment: "
+			  "start_id %llu, err %d\n",
+			  start_id, err);
+		goto finish_search;
+	} else {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("found seg_id %llu, state %#x\n",
+			  state->result.seg_id,
+			  state->result.seg_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_search;
 	}
 
 	if (state->request.search_clean_segment_only) {
@@ -2636,6 +2924,7 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 	struct ssdfs_blk2off_table *blk2off_tbl;
 	u16 used_logical_blks;
 	int free_pages, invalid_pages;
+	int used_pages;
 	int pages_capacity;
 	int physical_capacity;
 	bool is_inflated = false;
@@ -2684,8 +2973,20 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 	free_pages = ssdfs_segment_blk_bmap_get_free_pages(&si->blk_bmap);
 	invalid_pages = ssdfs_segment_blk_bmap_get_invalid_pages(&si->blk_bmap);
 	pages_capacity = ssdfs_segment_blk_bmap_get_capacity(&si->blk_bmap);
+	used_pages = ssdfs_segment_blk_bmap_get_used_pages(&si->blk_bmap);
 	physical_capacity = fsi->pages_per_seg;
 	is_inflated = physical_capacity < pages_capacity;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_state %#x, used_pages %d, used_logical_blks %u, "
+		  "free_pages %d, invalid_pages %d, "
+		  "pages_capacity %d, physical_capacity %d\n",
+		  seg_state, used_pages, used_logical_blks,
+		  free_pages, invalid_pages,
+		  pages_capacity, physical_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	used_logical_blks = max_t(int, used_logical_blks, used_pages);
 
 	if (pages_capacity < physical_capacity) {
 		SSDFS_ERR("pages_capacity %d > physical_capacity %d\n",
@@ -2994,8 +3295,10 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 		break;
 	}
 
-	if (new_seg_state == SSDFS_SEG_DATA_USING && used_logical_blks == 0)
+	if (new_seg_state == SSDFS_SEG_DATA_USING && used_logical_blks == 0) {
 		new_seg_state = SSDFS_SEG_DATA_USING_INVALIDATED;
+		need_change_state = true;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("old_state %#x, new_state %#x, "
