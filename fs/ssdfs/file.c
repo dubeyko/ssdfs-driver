@@ -1480,6 +1480,7 @@ static
 int ssdfs_check_async_write_request(struct ssdfs_segment_request *req)
 {
 	wait_queue_head_t *wq = NULL;
+	int number_of_tries = 0;
 	int res;
 	int err = 0;
 
@@ -1508,8 +1509,14 @@ check_req_state:
 			goto check_req_state;
 		} else {
 			/* timeout is elapsed */
-			err = -ERANGE;
-			WARN_ON(1);
+			if (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
+				err = 0;
+				number_of_tries++;
+				goto check_req_state;
+			} else {
+				err = -ERANGE;
+				WARN_ON(1);
+			}
 		}
 		break;
 
@@ -1558,6 +1565,7 @@ static
 int ssdfs_check_sync_write_request(struct ssdfs_fs_info *fsi,
 				   struct ssdfs_segment_request *req)
 {
+	int number_of_tries = 0;
 	int i, j;
 	int err;
 
@@ -1567,8 +1575,25 @@ int ssdfs_check_sync_write_request(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("req %p\n", req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+try_to_wait:
 	err = SSDFS_WAIT_COMPLETION(&req->result.wait);
-	if (unlikely(err)) {
+	if (err == -ETIMEDOUT) {
+		switch (atomic_read(&req->result.state)) {
+		case SSDFS_REQ_CREATED:
+		case SSDFS_REQ_STARTED:
+			if (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
+				err = 0;
+				number_of_tries++;
+				goto try_to_wait;
+			} else
+				goto request_failed;
+			break;
+
+		default:
+			break;
+		}
+	} else if (unlikely(err)) {
+request_failed:
 		SSDFS_ERR("write request failed: err %d\n",
 			  err);
 		return err;

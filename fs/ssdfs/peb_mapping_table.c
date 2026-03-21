@@ -1016,6 +1016,10 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 
 	ptr->fsi = fsi;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ptr->dirty_fragments, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	init_rwsem(&ptr->tbl_lock);
 	init_completion(&ptr->flush_end);
 
@@ -2853,6 +2857,13 @@ finish_fragment_update:
 		if (state != SSDFS_MAPTBL_FRAG_DIRTY) {
 			err = -ERANGE;
 			SSDFS_ERR("invalid fragment state %#x\n", state);
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			atomic64_dec(&tbl->dirty_fragments);
+			SSDFS_DBG("fragment %u is under flush: dirty_fragments %lld\n",
+				  fragment_index,
+				  atomic64_read(&tbl->dirty_fragments));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4183,6 +4194,12 @@ finish_prepare_migration:
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finish commit logs\n");
+
+	if (atomic64_read(&tbl->dirty_fragments) != 0) {
+		SSDFS_ERR("invalid state: dirty_fragments %lld\n",
+			  atomic64_read(&tbl->dirty_fragments));
+		BUG();
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	downgrade_write(&tbl->tbl_lock);
@@ -5870,9 +5887,17 @@ void ssdfs_maptbl_set_fragment_dirty(struct ssdfs_peb_mapping_table *tbl,
 	bytes_count = tbl->fragments_count + BITS_PER_LONG - 1;
 	bytes_count /= BITS_PER_BYTE;
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-			tbl->dirty_bmap, bytes_count);
+			     tbl->dirty_bmap, bytes_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 	atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
+#ifdef CONFIG_SSDFS_DEBUG
+	if (bitmap_read(tbl->dirty_bmap, fragment_index, 1) == 0) {
+		atomic64_inc(&tbl->dirty_fragments);
+		SSDFS_DBG("fragment %u is dirty: dirty_fragments %lld\n",
+			  fragment_index,
+			  atomic64_read(&tbl->dirty_fragments));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 	bitmap_set(tbl->dirty_bmap, fragment_index, 1);
 	mutex_unlock(&tbl->bmap_lock);
 

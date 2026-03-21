@@ -193,6 +193,10 @@ struct ssdfs_peb_mapping_table {
 	struct completion flush_end;
 	struct ssdfs_thread_info thread;
 	struct ssdfs_fs_info *fsi;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_t dirty_fragments;
+#endif /* CONFIG_SSDFS_DEBUG */
 };
 
 /* PEB mapping table's state */

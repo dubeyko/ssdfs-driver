@@ -611,6 +611,13 @@ static int ssdfs_find_latest_valid_sb_snap_info(struct ssdfs_fs_info *fsi)
 	high_off = (u32)pages_per_peb;
 	cur_off = low_off;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("last_log.page_offset %u, log_pages %u, "
+		  "low_off %u, high_off %u\n",
+		  fsi->sb_snapi.last_log.page_offset,
+		  log_pages, low_off, high_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	checking_page.leb_id = leb;
 	checking_page.peb_id = peb;
 	checking_page.page_offset = cur_off;
@@ -667,6 +674,13 @@ static int ssdfs_find_latest_valid_sb_snap_info(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(peb_pages_off >= U32_MAX);
+
+	SSDFS_DBG("last_log.page_offset %u, log_pages %u, "
+		  "low_off %u, high_off %u, "
+		  "cur_off %u, peb_pages_off %u\n",
+		  fsi->sb_snapi.last_log.page_offset,
+		  log_pages, low_off, high_off,
+		  cur_off, peb_pages_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	found_log_off = cur_off;

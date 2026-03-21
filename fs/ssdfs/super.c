@@ -1173,8 +1173,6 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 		return -ERANGE;
 	}
 
-	log_size = max_t(u32, log_size, fsi->sbi.last_log.pages_count);
-
 	if (offset > pages_per_peb || offset > (UINT_MAX - log_size)) {
 		SSDFS_ERR("inconsistent metadata state: "
 			  "last_sb_log.page_offset %u, "
@@ -2423,6 +2421,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	u32 written = 0;
 	u64 seg_id;
 	u32 log_pages_count;
+	u32 log_bytes;
 	unsigned i;
 	int err;
 
@@ -2602,12 +2601,14 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		hdr->peb_id = cpu_to_le64(SSDFS_INITIAL_SNAPSHOT_SEG_PEB_ID);
 		hdr->seg_type = cpu_to_le16(SSDFS_INITIAL_SNAPSHOT_SEG_TYPE);
 		hdr->seg_flags = cpu_to_le32(SSDFS_LOG_HAS_FOOTER);
-		hdr->volume_hdr.check.bytes =
-			cpu_to_le16(sizeof(struct ssdfs_segment_header));
+		log_pages_count = PAGE_SIZE; /* header size */
+		log_pages_count += PAGE_SIZE; /* footer size */
+		log_pages_count >>= PAGE_SHIFT;
+		hdr->log_pages = cpu_to_le16(log_pages_count);
+		hdr->volume_hdr.check.bytes = cpu_to_le16(hdr_size);
 		hdr->volume_hdr.check.flags = cpu_to_le16(SSDFS_CRC32);
 		err = ssdfs_calculate_csum(&hdr->volume_hdr.check,
-					   hdr,
-					   sizeof(struct ssdfs_segment_header));
+					   hdr, hdr_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to calculate checksum: err %d\n", err);
 		} else {
@@ -2728,9 +2729,26 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_folio_lock(folio);
-		folio_mark_uptodate(folio);
-		folio_set_dirty(folio);
+		footer = SSDFS_LF(kmap_local_folio(folio, 0));
+		log_bytes = PAGE_SIZE; /* header size */
+		log_bytes += PAGE_SIZE; /* footer size */
+		footer->log_bytes = cpu_to_le32(log_bytes);
+		footer->volume_state.check.bytes = cpu_to_le16(footer_size);
+		footer->volume_state.check.flags = cpu_to_le16(SSDFS_CRC32);
+		err = ssdfs_calculate_csum(&footer->volume_state.check,
+					   footer, footer_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("unable to calculate checksum: err %d\n",
+				  err);
+		} else {
+			folio_mark_uptodate(folio);
+			folio_set_dirty(folio);
+		}
+		kunmap_local(footer);
 		ssdfs_folio_unlock(folio);
+
+		if (err)
+			goto cleanup_after_failure;
 
 		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
 		if (err) {
@@ -2789,6 +2807,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	u32 flags = 0;
 	u64 seg_id;
 	u32 log_pages_count;
+	u32 log_bytes;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3028,12 +3047,14 @@ free_payload_buffer:
 		hdr->peb_id = cpu_to_le64(SSDFS_INITIAL_SNAPSHOT_SEG_PEB_ID);
 		hdr->seg_type = cpu_to_le16(SSDFS_INITIAL_SNAPSHOT_SEG_TYPE);
 		hdr->seg_flags = cpu_to_le32(SSDFS_LOG_HAS_FOOTER);
-		hdr->volume_hdr.check.bytes =
-			cpu_to_le16(sizeof(struct ssdfs_segment_header));
+		log_pages_count = PAGE_SIZE; /* header size */
+		log_pages_count += PAGE_SIZE; /* footer size */
+		log_pages_count >>= PAGE_SHIFT;
+		hdr->log_pages = cpu_to_le16(log_pages_count);
+		hdr->volume_hdr.check.bytes = cpu_to_le16(hdr_size);
 		hdr->volume_hdr.check.flags = cpu_to_le16(SSDFS_CRC32);
 		err = ssdfs_calculate_csum(&hdr->volume_hdr.check,
-					   hdr,
-					   sizeof(struct ssdfs_segment_header));
+					   hdr, hdr_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to calculate checksum: err %d\n", err);
 		} else {
@@ -3104,9 +3125,26 @@ free_payload_buffer:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_folio_lock(folio);
-		folio_mark_uptodate(folio);
-		folio_set_dirty(folio);
+		footer = SSDFS_LF(kmap_local_folio(folio, 0));
+		log_bytes = PAGE_SIZE; /* header size */
+		log_bytes += PAGE_SIZE; /* footer size */
+		footer->log_bytes = cpu_to_le32(log_bytes);
+		footer->volume_state.check.bytes = cpu_to_le16(footer_size);
+		footer->volume_state.check.flags = cpu_to_le16(SSDFS_CRC32);
+		err = ssdfs_calculate_csum(&footer->volume_state.check,
+					   footer, footer_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("unable to calculate checksum: err %d\n",
+				  err);
+		} else {
+			folio_mark_uptodate(folio);
+			folio_set_dirty(folio);
+		}
+		kunmap_local(footer);
 		ssdfs_folio_unlock(folio);
+
+		if (err)
+			goto cleanup_after_failure;
 
 		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
 		if (err) {

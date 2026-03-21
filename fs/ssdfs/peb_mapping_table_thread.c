@@ -985,6 +985,14 @@ finish_fragment_correction:
 
 		mutex_lock(&tbl->bmap_lock);
 		atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
+#ifdef CONFIG_SSDFS_DEBUG
+		if (bitmap_read(tbl->dirty_bmap, fragment_index, 1) == 0) {
+			atomic64_inc(&tbl->dirty_fragments);
+			SSDFS_DBG("fragment %u is dirty: dirty_fragments %lld\n",
+				  fragment_index,
+				  atomic64_read(&tbl->dirty_fragments));
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
 		bitmap_set(tbl->dirty_bmap, fragment_index, 1);
 		mutex_unlock(&tbl->bmap_lock);
 
@@ -1137,6 +1145,14 @@ int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,
 
 	mutex_lock(&tbl->bmap_lock);
 	atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
+#ifdef CONFIG_SSDFS_DEBUG
+		if (bitmap_read(tbl->dirty_bmap, fdesc->fragment_id, 1) == 0) {
+			atomic64_inc(&tbl->dirty_fragments);
+			SSDFS_DBG("fragment %u is dirty: dirty_fragments %lld\n",
+				  fdesc->fragment_id,
+				  atomic64_read(&tbl->dirty_fragments));
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
 	bitmap_set(tbl->dirty_bmap, fdesc->fragment_id, 1);
 	mutex_unlock(&tbl->bmap_lock);
 
@@ -1861,6 +1877,14 @@ finish_fragment_correction:
 
 		mutex_lock(&tbl->bmap_lock);
 		atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
+#ifdef CONFIG_SSDFS_DEBUG
+		if (bitmap_read(tbl->dirty_bmap, fragment_index, 1) == 0) {
+			atomic64_inc(&tbl->dirty_fragments);
+			SSDFS_DBG("fragment %u is dirty: dirty_fragments %lld\n",
+				  fragment_index,
+				  atomic64_read(&tbl->dirty_fragments));
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
 		bitmap_set(tbl->dirty_bmap, fragment_index, 1);
 		mutex_unlock(&tbl->bmap_lock);
 		err = err2;

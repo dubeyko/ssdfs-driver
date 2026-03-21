@@ -478,6 +478,7 @@ int ssdfs_find_last_sb_seg_outside_fragment(struct ssdfs_recovery_env *env)
 	u64 leb_id;
 	u64 peb_id;
 	bool magic_valid = false;
+	bool is_prev_sb_peb_exhausted = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -502,15 +503,19 @@ int ssdfs_find_last_sb_seg_outside_fragment(struct ssdfs_recovery_env *env)
 		vh = SSDFS_VH(env->sbi.vh_buf);
 		magic_valid = is_ssdfs_magic_valid(&vh->magic);
 
-		if (err == -ENODATA)
+		if (err == -ENODATA) {
+			if (is_prev_sb_peb_exhausted)
+				err = 0;
 			goto finish_search;
-		else if (err) {
+		} else if (err) {
 			SSDFS_ERR("fail to read peb %llu\n",
 				  peb_id);
 			goto finish_search;
 		} else {
 			u64 new_leb_id;
 			u64 new_peb_id;
+
+			is_prev_sb_peb_exhausted = false;
 
 			new_leb_id =
 				SSDFS_MAIN_SB_LEB(SSDFS_VH(env->sbi.vh_buf),
@@ -538,6 +543,7 @@ int ssdfs_find_last_sb_seg_outside_fragment(struct ssdfs_recovery_env *env)
 			if (IS_SB_PEB(env)) {
 				if (is_cur_main_sb_peb_exhausted(env)) {
 					err = -ENOENT;
+					is_prev_sb_peb_exhausted = true;
 #ifdef CONFIG_SSDFS_DEBUG
 					SSDFS_DBG("peb %llu is exhausted\n",
 						  peb_id);
@@ -743,6 +749,7 @@ int ssdfs_find_last_sb_seg_inside_fragment(struct ssdfs_recovery_env *env)
 #ifdef CONFIG_SSDFS_DEBUG
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 #endif /* CONFIG_SSDFS_DEBUG */
+	bool is_cur_peb_exhausted = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -763,9 +770,10 @@ try_next_peb:
 	err = ssdfs_check_cur_main_sb_peb(env);
 	if (err == -ENODATA)
 		goto try_cur_copy_sb_peb;
-	else if (err == -ENOENT)
+	else if (err == -ENOENT) {
+		is_cur_peb_exhausted = true;
 		goto check_next_sb_pebs_pair;
-	else if (err)
+	} else if (err)
 		goto finish_search;
 	else
 		goto finish_search;
@@ -777,9 +785,12 @@ try_cur_copy_sb_peb:
 	}
 
 	err = ssdfs_check_cur_copy_sb_peb(env);
-	if (err == -ENODATA || err == -ENOENT)
+	if (err == -ENODATA)
 		goto check_next_sb_pebs_pair;
-	else if (err)
+	else if (err == -ENOENT) {
+		is_cur_peb_exhausted = true;
+		goto check_next_sb_pebs_pair;
+	} else if (err)
 		goto finish_search;
 	else
 		goto finish_search;
@@ -791,7 +802,11 @@ check_next_sb_pebs_pair:
 	}
 
 	err = ssdfs_check_next_sb_pebs_pair(env);
-	if (err == -E2BIG) {
+	if (err == -ENODATA && is_cur_peb_exhausted) {
+		/* current SB PEB is found */
+		err = 0;
+		goto finish_search;
+	} else if (err == -E2BIG) {
 		err = ssdfs_find_last_sb_seg_outside_fragment(env);
 		if (err == -ENODATA || err == -ENOENT) {
 			/* unable to find anything */
