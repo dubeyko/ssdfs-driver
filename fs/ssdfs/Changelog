@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.57 [March 23, 2026]
+    (*) Fix issue in offsets translation table.
+
 v.5.56 [March 21, 2026]
     (*) Rework migration stimulation logic.
 

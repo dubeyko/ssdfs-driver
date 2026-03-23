@@ -1981,8 +1981,21 @@ int ssdfs_peb_read_block_descriptor_from_volume(struct ssdfs_peb_info *pebi,
 	area_size = le32_to_cpu(meta_desc->size);
 	blk_desc_off = le32_to_cpu(blk_state->byte_offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("area_offset %u, area_size %u\n",
+		  area_offset, area_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	folio_index = area_offset / pebi->cache.folio_size;
 	folios_count = (area_size + fsi->pagesize - 1) / pebi->cache.folio_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio_size %zu, pagesize %u, "
+		  "folio_index %u, folios_count %u\n",
+		  pebi->cache.folio_size,
+		  fsi->pagesize,
+		  folio_index, folios_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	folio_batch_init(&batch);
 
@@ -11938,19 +11951,21 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 	last_folio_idx = ssdfs_folio_array_get_last_folio_index(&pebi->cache);
 
 	if (last_folio_idx >= SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO) {
+		err = -ERANGE;
 		SSDFS_ERR("empty folio array: last_folio_idx %lu\n",
 			  last_folio_idx);
-		return -ERANGE;
+		goto finish_init_blk2off_table;
 	}
 
 	block_index = last_folio_idx * pebi->cache.folio_size;
 	block_index >>= fsi->log_pagesize;
 
 	if (block_index >= fsi->pages_per_peb) {
+		err = -ERANGE;
 		SSDFS_ERR("corrupted folio array: "
 			  "block_index %lu, fsi->pages_per_peb %u\n",
 			  block_index, fsi->pages_per_peb);
-		return -ERANGE;
+		goto finish_init_blk2off_table;
 	}
 
 	pebi->env.log.offset = (u32)block_index + 1;
@@ -11978,6 +11993,26 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 	}
 
 finish_init_blk2off_table:
+#ifdef CONFIG_SSDFS_DEBUG
+	switch (atomic_read(&blk2off_table->peb[pebi->peb_index].state)) {
+	case SSDFS_BLK2OFF_TABLE_PARTIAL_INIT:
+	case SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT:
+		SSDFS_DBG("seg %llu, peb %llu, log_diff %d, "
+			  "class %#x, cmd %#x, type %#x\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, log_diff,
+			  req->private.class,
+			  req->private.cmd,
+			  req->private.type);
+		BUG();
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	ssdfs_destroy_init_env(&pebi->env);
 	return err;
 }

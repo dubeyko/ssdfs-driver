@@ -3099,6 +3099,7 @@ int ssdfs_maptbl_check_request(struct ssdfs_maptbl_fragment_desc *fdesc,
 				struct ssdfs_maptbl_flush_pair *pair)
 {
 	wait_queue_head_t *wq = NULL;
+	int number_of_tries = 0;
 	int res;
 	int err = 0;
 
@@ -3131,6 +3132,11 @@ check_req_state:
 			goto check_req_state;
 		} else {
 			struct ssdfs_request_internal_data *ptr;
+
+			if (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
+				number_of_tries++;
+				goto check_req_state;
+			}
 
 			/* timeout is elapsed */
 			err = -ERANGE;

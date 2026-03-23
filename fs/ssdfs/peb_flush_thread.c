@@ -8234,6 +8234,16 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	seg_blkbmap = &pebi->pebc->parent_si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebi->pebc->peb_index];
 
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			goto finish_update_block;
+		}
+	}
+
 #ifdef CONFIG_SSDFS_DEBUG
 	if (req->extent.logical_offset >= U64_MAX) {
 		SSDFS_ERR("seg %llu, peb %llu, logical_block %u, "
