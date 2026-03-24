@@ -8941,7 +8941,9 @@ int ssdfs_maptbl_recommend_search_range(struct ssdfs_fs_info *fsi,
 								      fdesc);
 			if (err == -ENOENT) {
 				err = 0;
-				SSDFS_DBG("unable to decrease reserved pebs\n");
+				SSDFS_DBG("unable to decrease reserved pebs: "
+					  "found_start_leb %llu, found_end_leb %llu\n",
+					  found_start_leb, found_end_leb);
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to decrease reserved pebs: "
 					  "err %d\n", err);

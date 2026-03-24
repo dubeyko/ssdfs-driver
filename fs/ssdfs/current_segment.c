@@ -270,8 +270,10 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 
 	if (!need_select_flush_threads(seg_state) || available_free_pages == 0) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("segment %llu can't be used as current: \n",
-			  si->seg_id);
+		SSDFS_DBG("segment %llu can't be used as current: "
+			  "seg_state %#x, available_free_pages %d\n",
+			  si->seg_id, seg_state,
+			  available_free_pages);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOSPC;
 	}

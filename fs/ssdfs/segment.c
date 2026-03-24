@@ -1719,6 +1719,36 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_search;
 		}
+
+		start_id = 0;
+		upper_bound = state->request.start_search_id;
+
+		if (start_id >= upper_bound)
+			upper_bound = start_id + 1;
+
+		while (start_id < state->request.start_search_id) {
+			err = ssdfs_find_clean_segment(fsi,
+						state->request.seg_type,
+						start_id, upper_bound,
+						&state->result.seg_id,
+						&state->result.seg_state);
+			if (err == -ENOENT) {
+				err = 0;
+				start_id = state->result.seg_id;
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to find a new segment: "
+					  "start_id %llu, err %d\n",
+					  start_id, err);
+				goto finish_search;
+			} else {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("found seg_id %llu\n",
+					  state->result.seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_search;
+			}
+		}
 	}
 
 	if (state->result.number_of_tries < threshold &&
@@ -1806,35 +1836,6 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 			SSDFS_DBG("found seg_id %llu, state %#x\n",
 				  state->result.seg_id,
 				  state->result.seg_state);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_search;
-		}
-	}
-
-	start_id = 0;
-	upper_bound = state->request.start_search_id;
-
-	if (start_id >= upper_bound)
-		upper_bound = start_id + 1;
-
-	while (start_id < state->request.start_search_id) {
-		err = ssdfs_find_clean_segment(fsi, state->request.seg_type,
-						start_id, upper_bound,
-						&state->result.seg_id,
-						&state->result.seg_state);
-		if (err == -ENOENT) {
-			err = 0;
-			start_id = state->result.seg_id;
-			continue;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find a new segment: "
-				  "start_id %llu, err %d\n",
-				  start_id, err);
-			goto finish_search;
-		} else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("found seg_id %llu\n",
-				  state->result.seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_search;
 		}
