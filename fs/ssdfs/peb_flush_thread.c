@@ -19580,6 +19580,13 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 					thread_state->err = err;
 					goto finish_method;
 				}
+			} else if (is_ssdfs_maptbl_start_migration(fsi)) {
+				/*
+				 * Continue to work.
+				 * Mapping table logic prepares migration
+				 * before starting to flush the dirty
+				 * fragments.
+				 */
 			} else if (have_flush_requests(pebc)) {
 				SSDFS_ERR("maptbl is flushing: "
 					  "unprocessed requests: "
@@ -22260,9 +22267,10 @@ int ssdfs_process_start_migration_now_state(struct ssdfs_peb_container *pebc)
 	ssdfs_peb_current_log_unlock(pebi);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("is_peb_exhausted %#x, "
+	SSDFS_DBG("seg_id %llu, is_peb_exhausted %#x, "
 		  "is_peb_ready_to_exhaust %#x, "
 		  "has_partial_empty_log %#x\n",
+		  pebc->parent_si->seg_id,
 		  is_peb_exhausted, is_peb_ready_to_exhaust,
 		  has_partial_empty_log);
 #endif /* CONFIG_SSDFS_DEBUG */
