@@ -621,6 +621,7 @@ struct ssdfs_fs_info {
 	u64 updated_user_data_pages;
 	u64 read_user_data_requests;
 	u64 flushing_user_data_requests;
+	u64 max_user_data_flush_reqs;
 	u64 commit_log_requests;
 	wait_queue_head_t pending_wq;
 	wait_queue_head_t finish_user_data_read_wq;

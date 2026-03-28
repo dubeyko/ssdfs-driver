@@ -672,9 +672,47 @@ void ssdfs_forget_user_data_flush_request(struct ssdfs_segment_info *si,
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (flush_requests == 0)
-			wake_up_all(&si->fsi->finish_user_data_flush_wq);
+		wake_up_all(&si->fsi->finish_user_data_flush_wq);
 	}
+}
+
+/*
+ * ssdfs_flush_capacity_available() - check if flush slots are available
+ *
+ * Returns true when the number of in-flight user data flush requests is
+ * below the configured ceiling.
+ */
+static inline
+bool ssdfs_flush_capacity_available(struct ssdfs_fs_info *fsi)
+{
+	u64 flush_requests;
+	u64 max_reqs;
+
+	spin_lock(&fsi->volume_state_lock);
+	flush_requests = fsi->flushing_user_data_requests;
+	max_reqs = fsi->max_user_data_flush_reqs;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return flush_requests < max_reqs;
+}
+
+/*
+ * ssdfs_wait_for_flush_capacity() - throttle write path under memory pressure
+ *
+ * Blocks the caller until the number of in-flight user data flush requests
+ * drops below the ceiling set at mount time.  Returns 0 on success or
+ * -EINTR / -ERESTARTSYS if interrupted by a fatal signal.
+ */
+static inline
+int ssdfs_wait_for_flush_capacity(struct ssdfs_fs_info *fsi)
+{
+	might_sleep();
+
+	if (ssdfs_flush_capacity_available(fsi))
+		return 0;
+
+	return wait_event_killable(fsi->finish_user_data_flush_wq,
+				   ssdfs_flush_capacity_available(fsi));
 }
 
 static inline

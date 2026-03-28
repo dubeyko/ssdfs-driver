@@ -4143,6 +4143,10 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 			goto finish_write_begin;
 	} else {
 try_regular_write:
+		err = ssdfs_wait_for_flush_capacity(fsi);
+		if (err)
+			goto finish_write_begin;
+
 		cur_pos = pos;
 		start_blk = pos >> fsi->log_pagesize;
 		end_blk = (pos + len + fsi->pagesize - 1) >> fsi->log_pagesize;
@@ -4617,6 +4621,10 @@ static ssize_t ssdfs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	if (iov_iter_rw(iter) == WRITE) {
 		if (inode->i_sb->s_flags & SB_RDONLY)
 			return -EROFS;
+
+		err = ssdfs_wait_for_flush_capacity(fsi);
+		if (err)
+			return err;
 	}
 
 	if (iov_iter_rw(iter) == READ) {

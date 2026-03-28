@@ -3565,6 +3565,30 @@ static void ssdfs_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
+/*
+ * Limit in-flight user data flush requests to keep peak memory
+ * consumption bounded.  Each request may hold up to
+ * SSDFS_EXTENT_LEN_MAX folios of fsi->pagesize bytes; we cap the
+ * total at 1/8 of available RAM, with a floor of 16 so that
+ * small-RAM systems do not stall completely.
+ */
+static inline
+u64 ssdfs_calculate_max_user_data_flush_reqs(struct ssdfs_fs_info *fsi)
+{
+	u64 ram_pages = totalram_pages();
+	u32 mem_pages_per_block = fsi->pagesize >> PAGE_SHIFT;
+	u64 max_reqs;
+
+	mem_pages_per_block = max(mem_pages_per_block, 1u);
+	max_reqs = div64_u64(ram_pages,
+			(u64)8 * SSDFS_EXTENT_LEN_MAX * mem_pages_per_block);
+
+	if (max_reqs < 16)
+		max_reqs = 16;
+
+	return max_reqs;
+}
+
 static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 {
 	struct ssdfs_fs_info *fs_info;
@@ -3723,6 +3747,8 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
 	spin_lock(&fs_info->volume_state_lock);
 	fs_feature_compat = fs_info->fs_feature_compat;
+	fs_info->max_user_data_flush_reqs =
+			ssdfs_calculate_max_user_data_flush_reqs(fs_info);
 	spin_unlock(&fs_info->volume_state_lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL

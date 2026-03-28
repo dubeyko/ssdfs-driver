@@ -1155,6 +1155,9 @@ int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 		return SSDFS_UNDEFINED_GC_STATE;
 	}
 
+	if (!ssdfs_flush_capacity_available(fsi))
+		return SSDFS_STOP_GC_ACTIVITY_NOW;
+
 	reqs_count = atomic64_read(&fsi->flush_reqs);
 
 	if (reqs_count < 0) {
