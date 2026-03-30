@@ -2172,6 +2172,40 @@ out:
 	return err;
 }
 
+/*
+ * The ssdfs_tmpfile() is called by the open(2) system call with O_TMPFILE
+ * to create a temporary file not linked into any directory.
+ */
+static int ssdfs_tmpfile(struct mnt_idmap *idmap,
+			 struct inode *dir, struct file *file,
+			 umode_t mode)
+{
+	static const struct qstr empty_name = QSTR_INIT("", 0);
+	struct inode *inode;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("dir %lu, mode %o\n", (unsigned long)dir->i_ino, mode);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	inode = ssdfs_new_inode(idmap, dir, mode, &empty_name);
+	if (IS_ERR(inode)) {
+		err = PTR_ERR(inode);
+		goto failed_tmpfile;
+	}
+
+	d_tmpfile(file, inode);
+	mark_inode_dirty(inode);
+	unlock_new_inode(inode);
+
+failed_tmpfile:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return finish_open_simple(file, err);
+}
+
 const struct inode_operations ssdfs_dir_inode_operations = {
 	.create		= ssdfs_create,
 	.lookup		= ssdfs_lookup,
@@ -2186,6 +2220,7 @@ const struct inode_operations ssdfs_dir_inode_operations = {
 	.listxattr	= ssdfs_listxattr,
 	.get_inode_acl	= ssdfs_get_acl,
 	.set_acl	= ssdfs_set_acl,
+	.tmpfile	= ssdfs_tmpfile,
 };
 
 const struct file_operations ssdfs_dir_operations = {

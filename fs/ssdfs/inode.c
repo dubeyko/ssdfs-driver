@@ -556,7 +556,10 @@ static void ssdfs_init_inode(struct mnt_idmap *idmap,
 	set_nlink(inode, 1);
 
 	down_write(&ii->lock);
-	ii->name_hash = ssdfs_generate_name_hash(qstr);
+	if (qstr->len > 0)
+		ii->name_hash = ssdfs_generate_name_hash(qstr);
+	else
+		ii->name_hash = U64_MAX;
 	ii->name_len = (u16)qstr->len;
 	ssdfs_init_raw_inode(ii);
 	up_write(&ii->lock);

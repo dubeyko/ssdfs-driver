@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.58 [March 29, 2026]
+    (*) Introduce O_TMPFILE support.
+
 v.5.57 [March 23, 2026]
     (*) Fix issue in offsets translation table.
 
