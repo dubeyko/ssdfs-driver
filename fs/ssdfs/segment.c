@@ -4243,17 +4243,20 @@ int ssdfs_add_new_current_segment(struct ssdfs_current_segment *cur_seg,
 		}
 
 		if (cur_seg->seg_id == si->seg_id) {
+			err = -ENOSPC;
+			cur_seg->seg_id = si->seg_id;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("the same segment has been found: "
+				  "cur_seg %llu, found_seg %llu\n",
+				  cur_seg->seg_id, si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			/*
 			 * ssdfs_grab_segment() has got object already.
 			 */
 			ssdfs_segment_put_object(si);
-			err = -ENOSPC;
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("there is no more clean segments: "
-				  "cur_seg %llu, found_seg %llu\n",
-				  cur_seg->seg_id, si->seg_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			continue;
 		}
 
 		switch (atomic_read(&si->obj_state)) {
@@ -4790,56 +4793,18 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 try_current_segment:
 	if (is_ssdfs_current_segment_empty(cur_seg)) {
 add_new_current_segment:
-		seg_search.request.start_search_id = cur_seg->seg_id;
-		seg_search.request.need_find_new_segment = true;
-
-		if (cur_seg->type == SSDFS_CUR_DATA_UPDATE_SEG)
-			seg_search.request.search_clean_segment_only = true;
-
-		si = ssdfs_grab_segment(cur_seg->fsi, &seg_search);
-		if (IS_ERR_OR_NULL(si)) {
-			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-			if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to create segment object: "
-					  "err %d\n", err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			} else {
-				SSDFS_ERR("fail to create segment object: "
-					  "err %d\n", err);
-			}
-
-			goto finish_add_block;
-		}
-
-		if (cur_seg->seg_id == si->seg_id) {
-			/*
-			 * ssdfs_grab_segment() has got object already.
-			 */
-			ssdfs_segment_put_object(si);
-			err = -ENOSPC;
-			SSDFS_DBG("there is no more clean segments\n");
-			goto finish_add_block;
-		}
-
-		err = ssdfs_current_segment_add(cur_seg, si, &seg_search);
-		/*
-		 * ssdfs_grab_segment() has got object already.
-		 */
-		ssdfs_segment_put_object(si);
-
+		err = ssdfs_add_new_current_segment(cur_seg,
+						    &seg_search,
+						    seg_type);
 		if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to add segment %llu as current: "
-				  "err %d\n",
-				  si->seg_id, err);
+			SSDFS_DBG("unable to add current segment: "
+				  "err %d\n", err);
 #endif /* CONFIG_SSDFS_DEBUG */
-			cur_seg->seg_id = si->seg_id;
-			goto add_new_current_segment;
+			goto finish_add_block;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to add segment %llu as current: "
-				  "err %d\n",
-				  si->seg_id, err);
+			SSDFS_ERR("fail to add current segment: "
+				  "err %d\n", err);
 			goto finish_add_block;
 		}
 
@@ -5828,58 +5793,18 @@ try_current_segment:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 add_new_current_segment:
-		seg_search.request.start_search_id = cur_seg->seg_id;
-		seg_search.request.need_find_new_segment = true;
-
-		if (cur_seg->type == SSDFS_CUR_DATA_UPDATE_SEG)
-			seg_search.request.search_clean_segment_only = true;
-
-		si = ssdfs_grab_segment(fsi, &seg_search);
-		if (IS_ERR_OR_NULL(si)) {
-			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-			if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to create segment object: "
-					  "err %d\n", err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			} else {
-				SSDFS_ERR("fail to create segment object: "
-					  "err %d\n", err);
-			}
-
-			goto finish_add_extent;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("add current segment: seg_id %llu\n",
-			  si->seg_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_current_segment_add(cur_seg, si, &seg_search);
-		/*
-		 * ssdfs_grab_segment() has got object already.
-		 */
-		ssdfs_segment_put_object(si);
-
+		err = ssdfs_add_new_current_segment(cur_seg,
+						    &seg_search,
+						    seg_type);
 		if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to add segment %llu as current: "
-				  "err %d\n",
-				  si->seg_id, err);
+			SSDFS_DBG("unable to add current segment: "
+				  "err %d\n", err);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-			if (cur_seg->seg_id == si->seg_id) {
-				err = -ENOSPC;
-				SSDFS_DBG("there is no more clean segments\n");
-				goto finish_add_extent;
-			} else {
-				cur_seg->seg_id = si->seg_id;
-				goto add_new_current_segment;
-			}
+			goto finish_add_extent;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to add segment %llu as current: "
-				  "err %d\n",
-				  si->seg_id, err);
+			SSDFS_ERR("fail to add current segment: "
+				  "err %d\n", err);
 			goto finish_add_extent;
 		}
 

@@ -2560,8 +2560,22 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	sb_offset += peb_offset;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu\n", sb_offset);
+	SSDFS_DBG("offset %llu, peb_offset %llu, erasesize %u\n",
+		  sb_offset, peb_offset, fsi->erasesize);
+
+	BUG_ON(sb_offset >= (peb_offset + fsi->erasesize));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->devops->can_write_block) {
+		err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+						   sb_offset, true);
+		if (err) {
+			SSDFS_ERR("page already contain data: "
+				  "sb_offset %llu, err %d\n",
+				  (u64)sb_offset, err);
+			goto cleanup_after_failure;
+		}
+	}
 
 	err = fsi->devops->write_block(sb, sb_offset, folio);
 	if (err) {
@@ -2621,6 +2635,25 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		if (err)
 			goto cleanup_after_failure;
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("sb_snap_offset %llu, peb_offset %llu, erasesize %u\n",
+			  sb_snap_offset, peb_offset, fsi->erasesize);
+
+		BUG_ON(sb_snap_offset >= (peb_offset + fsi->erasesize));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (fsi->devops->can_write_block) {
+			err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+							   sb_snap_offset,
+							   true);
+			if (err) {
+				SSDFS_ERR("page already contain data: "
+					  "sb_snap_offset %llu, err %d\n",
+					  (u64)sb_snap_offset, err);
+				goto cleanup_after_failure;
+			}
+		}
+
 		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
 		if (err) {
 			SSDFS_ERR("fail to write segment header: "
@@ -2634,6 +2667,9 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	ssdfs_folio_lock(folio);
 	folio_clear_uptodate(folio);
 	ssdfs_folio_unlock(folio);
+
+	peb_offset = last_sb_log->peb_id * fsi->pages_per_peb;
+	peb_offset <<= fsi->log_pagesize;
 
 	sb_offset += PAGE_SIZE;
 	written = 0;
@@ -2667,8 +2703,22 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		ssdfs_folio_unlock(payload_folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("offset %llu\n", sb_offset);
+	SSDFS_DBG("offset %llu, peb_offset %llu, erasesize %u\n",
+		  sb_offset, peb_offset, fsi->erasesize);
+
+		BUG_ON(sb_offset >= (peb_offset + fsi->erasesize));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		if (fsi->devops->can_write_block) {
+			err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+							   sb_offset, true);
+			if (err) {
+				SSDFS_ERR("page already contain data: "
+					  "sb_offset %llu, err %d\n",
+					  (u64)sb_offset, err);
+				goto cleanup_after_failure;
+			}
+		}
 
 		err = fsi->devops->write_block(sb, sb_offset, payload_folio);
 		if (err) {
@@ -2707,8 +2757,22 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	ssdfs_folio_unlock(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu\n", sb_offset);
+	SSDFS_DBG("offset %llu, peb_offset %llu, erasesize %u\n",
+		  sb_offset, peb_offset, fsi->erasesize);
+
+	BUG_ON(sb_offset >= (peb_offset + fsi->erasesize));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->devops->can_write_block) {
+		err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+						   sb_offset, true);
+		if (err) {
+			SSDFS_ERR("page already contain data: "
+				  "sb_offset %llu, err %d\n",
+				  (u64)sb_offset, err);
+			goto cleanup_after_failure;
+		}
+	}
 
 	err = fsi->devops->write_block(sb, sb_offset, folio);
 	if (err) {
@@ -2719,6 +2783,13 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	}
 
 	if (fsi->sb_snapi.need_snapshot_sb) {
+		struct ssdfs_peb_extent *last_sb_snap_log;
+
+		last_sb_snap_log = &fsi->sb_snapi.last_log;
+
+		peb_offset = last_sb_snap_log->peb_id * fsi->pages_per_peb;
+		peb_offset <<= fsi->log_pagesize;
+
 		sb_snap_offset += PAGE_SIZE;
 
 		/* ->writepage() calls put_folio() */
@@ -2749,6 +2820,25 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 		if (err)
 			goto cleanup_after_failure;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("sb_snap_offset %llu, peb_offset %llu, erasesize %u\n",
+			  sb_snap_offset, peb_offset, fsi->erasesize);
+
+		BUG_ON(sb_snap_offset >= (peb_offset + fsi->erasesize));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (fsi->devops->can_write_block) {
+			err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+							   sb_snap_offset,
+							   true);
+			if (err) {
+				SSDFS_ERR("page already contain data: "
+					  "sb_snap_offset %llu, err %d\n",
+					  (u64)sb_snap_offset, err);
+				goto cleanup_after_failure;
+			}
+		}
 
 		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
 		if (err) {
@@ -3006,8 +3096,22 @@ free_payload_buffer:
 	sb_offset += peb_offset;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu\n", sb_offset);
+	SSDFS_DBG("offset %llu, peb_offset %llu, erasesize %u\n",
+		  sb_offset, peb_offset, fsi->erasesize);
+
+	BUG_ON(sb_offset >= (peb_offset + fsi->erasesize));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->devops->can_write_block) {
+		err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+						   sb_offset, true);
+		if (err) {
+			SSDFS_ERR("page already contain data: "
+				  "sb_offset %llu, err %d\n",
+				  (u64)sb_offset, err);
+			goto cleanup_after_failure;
+		}
+	}
 
 	err = fsi->devops->write_block(sb, sb_offset, folio);
 	if (err) {
@@ -3067,6 +3171,25 @@ free_payload_buffer:
 		if (err)
 			goto cleanup_after_failure;
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("sb_snap_offset %llu, peb_offset %llu, erasesize %u\n",
+			  sb_snap_offset, peb_offset, fsi->erasesize);
+
+		BUG_ON(sb_snap_offset >= (peb_offset + fsi->erasesize));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (fsi->devops->can_write_block) {
+			err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+							   sb_snap_offset,
+							   true);
+			if (err) {
+				SSDFS_ERR("page already contain data: "
+					  "sb_snap_offset %llu, err %d\n",
+					  (u64)sb_snap_offset, err);
+				goto cleanup_after_failure;
+			}
+		}
+
 		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
 		if (err) {
 			SSDFS_ERR("fail to write segment header: "
@@ -3100,11 +3223,28 @@ free_payload_buffer:
 	folio_set_dirty(folio);
 	ssdfs_folio_unlock(folio);
 
+	peb_offset = last_sb_log->peb_id * fsi->pages_per_peb;
+	peb_offset <<= fsi->log_pagesize;
+
 	sb_offset += PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu\n", sb_offset);
+	SSDFS_DBG("offset %llu, peb_offset %llu, erasesize %u\n",
+		  sb_offset, peb_offset, fsi->erasesize);
+
+	BUG_ON(sb_offset >= (peb_offset + fsi->erasesize));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->devops->can_write_block) {
+		err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+						   sb_offset, true);
+		if (err) {
+			SSDFS_ERR("page already contain data: "
+				  "sb_offset %llu, err %d\n",
+				  (u64)sb_offset, err);
+			goto cleanup_after_failure;
+		}
+	}
 
 	err = fsi->devops->write_block(sb, sb_offset, folio);
 	if (err) {
@@ -3115,6 +3255,13 @@ free_payload_buffer:
 	}
 
 	if (fsi->sb_snapi.need_snapshot_sb) {
+		struct ssdfs_peb_extent *last_sb_snap_log;
+
+		last_sb_snap_log = &fsi->sb_snapi.last_log;
+
+		peb_offset = last_sb_snap_log->peb_id * fsi->pages_per_peb;
+		peb_offset <<= fsi->log_pagesize;
+
 		sb_snap_offset += PAGE_SIZE;
 
 		/* ->writepage() calls put_folio() */
@@ -3145,6 +3292,25 @@ free_payload_buffer:
 
 		if (err)
 			goto cleanup_after_failure;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("sb_snap_offset %llu, peb_offset %llu, erasesize %u\n",
+			  sb_snap_offset, peb_offset, fsi->erasesize);
+
+		BUG_ON(sb_snap_offset >= (peb_offset + fsi->erasesize));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (fsi->devops->can_write_block) {
+			err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+							   sb_snap_offset,
+							   true);
+			if (err) {
+				SSDFS_ERR("page already contain data: "
+					  "sb_snap_offset %llu, err %d\n",
+					  (u64)sb_snap_offset, err);
+				goto cleanup_after_failure;
+			}
+		}
 
 		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
 		if (err) {
