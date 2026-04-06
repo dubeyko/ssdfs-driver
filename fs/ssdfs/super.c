@@ -3553,6 +3553,14 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_lzo_memory_leaks_init();
 #endif /* CONFIG_SSDFS_LZO */
 
+#ifdef CONFIG_SSDFS_LZ4
+	ssdfs_lz4_memory_leaks_init();
+#endif /* CONFIG_SSDFS_LZ4 */
+
+#ifdef CONFIG_SSDFS_ZSTD
+	ssdfs_zstd_memory_leaks_init();
+#endif /* CONFIG_SSDFS_ZSTD */
+
 	ssdfs_compr_memory_leaks_init();
 	ssdfs_cur_seg_memory_leaks_init();
 	ssdfs_dentries_memory_leaks_init();
@@ -3639,6 +3647,14 @@ static void ssdfs_check_memory_leaks(void)
 #ifdef CONFIG_SSDFS_LZO
 	ssdfs_lzo_check_memory_leaks();
 #endif /* CONFIG_SSDFS_LZO */
+
+#ifdef CONFIG_SSDFS_LZ4
+	ssdfs_lz4_check_memory_leaks();
+#endif /* CONFIG_SSDFS_LZ4 */
+
+#ifdef CONFIG_SSDFS_ZSTD
+	ssdfs_zstd_check_memory_leaks();
+#endif /* CONFIG_SSDFS_ZSTD */
 
 	ssdfs_compr_check_memory_leaks();
 	ssdfs_cur_seg_check_memory_leaks();

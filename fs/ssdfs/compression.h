@@ -29,12 +29,16 @@
  * SSDFS_COMPR_NONE: no compression
  * SSDFS_COMPR_ZLIB: ZLIB compression
  * SSDFS_COMPR_LZO: LZO compression
+ * SSDFS_COMPR_LZ4: LZ4 compression
+ * SSDFS_COMPR_ZSTD: ZSTD compression
  * SSDFS_COMPR_TYPES_CNT: count of supported compression types
  */
 enum {
 	SSDFS_COMPR_NONE,
 	SSDFS_COMPR_ZLIB,
 	SSDFS_COMPR_LZO,
+	SSDFS_COMPR_LZ4,
+	SSDFS_COMPR_ZSTD,
 	SSDFS_COMPR_TYPES_CNT,
 };
 
@@ -104,5 +108,23 @@ void ssdfs_lzo_exit(void);
 static inline int ssdfs_lzo_init(void) { return 0; }
 static inline void ssdfs_lzo_exit(void) { return; }
 #endif /* CONFIG_SSDFS_LZO */
+
+#ifdef CONFIG_SSDFS_LZ4
+/* compr_lz4.c */
+int ssdfs_lz4_init(void);
+void ssdfs_lz4_exit(void);
+#else
+static inline int ssdfs_lz4_init(void) { return 0; }
+static inline void ssdfs_lz4_exit(void) { return; }
+#endif /* CONFIG_SSDFS_LZ4 */
+
+#ifdef CONFIG_SSDFS_ZSTD
+/* compr_zstd.c */
+int ssdfs_zstd_init(void);
+void ssdfs_zstd_exit(void);
+#else
+static inline int ssdfs_zstd_init(void) { return 0; }
+static inline void ssdfs_zstd_exit(void) { return; }
+#endif /* CONFIG_SSDFS_ZSTD */
 
 #endif /* _SSDFS_COMPRESSION_H */

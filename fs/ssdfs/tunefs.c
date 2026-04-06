@@ -233,6 +233,8 @@ int ssdfs_tunefs_check_requested_compression(struct ssdfs_tunefs_option *option)
 		case SSDFS_COMPR_NONE:
 		case SSDFS_COMPR_ZLIB:
 		case SSDFS_COMPR_LZO:
+		case SSDFS_COMPR_LZ4:
+		case SSDFS_COMPR_ZSTD:
 			/* expected value */
 
 			/* TODO: currently functionality is not implemented */

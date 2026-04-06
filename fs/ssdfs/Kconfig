@@ -99,6 +99,50 @@ config SSDFS_LZO
 
 	  If unsure, say N.
 
+config SSDFS_LZ4
+	bool "SSDFS LZ4 compression support"
+	select LZ4_COMPRESS
+	select LZ4_DECOMPRESS
+	depends on SSDFS
+	default n
+	help
+	  LZ4 is an extremely fast lossless compression algorithm that
+	  provides a good trade-off between compression ratio and speed.
+	  It is particularly well suited for use cases where decompression
+	  speed is critical. LZ4 is typically faster than LZO while
+	  achieving comparable compression ratios.
+
+	  If unsure, say N.
+
+config SSDFS_ZSTD
+	bool "SSDFS ZSTD compression support"
+	select ZSTD_COMPRESS
+	select ZSTD_DECOMPRESS
+	depends on SSDFS
+	default n
+	help
+	  Zstandard (zstd) is a fast lossless compression algorithm that
+	  targets real-time compression scenarios at zlib-level and better
+	  compression ratios. It offers a wide range of compression/speed
+	  trade-offs and is backed by a very fast decoder. Zstd typically
+	  achieves better compression ratios than ZLIB at comparable or
+	  faster speeds, making it well suited for general-purpose use.
+
+	  If unsure, say N.
+
+config SSDFS_ZSTD_COMPR_LEVEL
+	int "Zstd compression level (1 => fastest, 22 => best compression)"
+	depends on SSDFS_ZSTD
+	range 1 22
+	default 3
+	help
+	  Select Zstd compression level.
+	  Lower levels favor speed; higher levels favor compression ratio.
+	  Examples:
+		     1  => fastest compression
+		     3  => default (good balance of speed and ratio)
+		    22  => best compression (very slow)
+
 config SSDFS_DIFF_ON_WRITE
 	bool "SSDFS Diff-On-Write support"
 	depends on SSDFS
@@ -393,7 +437,7 @@ config SSDFS_KUNIT_TEST
 	  This option enables KUnit tests for SSDFS implementation.
 	  This includes tests for folio vector, dynamic array, folio array,
 	  compression modules (general compression framework, ZLIB,
-	  and LZO), and block bitmap.
+	  LZO, LZ4, and ZSTD), and block bitmap.
 
 	  KUnit tests run during boot and output the results to the
 	  debug log in TAP format (http://testanything.org/). Only

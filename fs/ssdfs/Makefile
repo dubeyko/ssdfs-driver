@@ -43,6 +43,8 @@ ssdfs-$(CONFIG_SSDFS_POSIX_ACL)			+= acl.o
 ssdfs-$(CONFIG_SSDFS_SECURITY)			+= xattr_security.o
 ssdfs-$(CONFIG_SSDFS_ZLIB)			+= compr_zlib.o
 ssdfs-$(CONFIG_SSDFS_LZO)			+= compr_lzo.o
+ssdfs-$(CONFIG_SSDFS_LZ4)			+= compr_lz4.o
+ssdfs-$(CONFIG_SSDFS_ZSTD)			+= compr_zstd.o
 ssdfs-$(CONFIG_SSDFS_MTD_DEVICE)		+= dev_mtd.o
 ssdfs-$(CONFIG_SSDFS_BLOCK_DEVICE)		+= dev_bdev.o dev_zns.o
 ssdfs-$(CONFIG_SSDFS_TESTING)			+= testing.o
@@ -60,4 +62,6 @@ obj-$(CONFIG_SSDFS_KUNIT_TEST)			+= folio_vector_test.o \
 							compression_test.o \
 							compr_zlib_test.o \
 							compr_lzo_test.o \
+							compr_lz4_test.o \
+							compr_zstd_test.o \
 							block_bitmap_test.o

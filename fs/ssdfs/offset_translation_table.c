@@ -6165,6 +6165,8 @@ ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
 	switch (fsi->metadata_options.blk2off_tbl.compression) {
 	case SSDFS_BLK2OFF_TBL_ZLIB_COMPR_TYPE:
 	case SSDFS_BLK2OFF_TBL_LZO_COMPR_TYPE:
+	case SSDFS_BLK2OFF_TBL_LZ4_COMPR_TYPE:
+	case SSDFS_BLK2OFF_TBL_ZSTD_COMPR_TYPE:
 		flags |= SSDFS_BLK_DESC_TBL_COMPRESSED;
 		break;
 	default:
@@ -6426,6 +6428,18 @@ u8 ssdfs_blk2off_table_compression_type(struct ssdfs_peb_info *pebi,
 		else
 			compr_type = SSDFS_COMPR_LZO;
 		break;
+	case SSDFS_BLK2OFF_TBL_LZ4_COMPR_TYPE:
+		if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+			compr_type = SSDFS_COMPR_NONE;
+		else
+			compr_type = SSDFS_COMPR_LZ4;
+		break;
+	case SSDFS_BLK2OFF_TBL_ZSTD_COMPR_TYPE:
+		if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+			compr_type = SSDFS_COMPR_NONE;
+		else
+			compr_type = SSDFS_COMPR_ZSTD;
+		break;
 	default:
 		BUG();
 	}
@@ -6496,6 +6510,42 @@ u8 ssdfs_blk2off_table_fragment_type(struct ssdfs_peb_info *pebi,
 				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
 			else
 				fragment_type = SSDFS_BLK2OFF_DESC_LZO;
+			break;
+		default:
+			BUG();
+		}
+		break;
+	case SSDFS_BLK2OFF_TBL_LZ4_COMPR_TYPE:
+		switch (object_type) {
+		case SSDFS_BLK2OFF_EXTENT:
+			if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+			else
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC_LZ4;
+			break;
+		case SSDFS_BLK2OFF_PHYS_OFFSET:
+			if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+			else
+				fragment_type = SSDFS_BLK2OFF_DESC_LZ4;
+			break;
+		default:
+			BUG();
+		}
+		break;
+	case SSDFS_BLK2OFF_TBL_ZSTD_COMPR_TYPE:
+		switch (object_type) {
+		case SSDFS_BLK2OFF_EXTENT:
+			if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+			else
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC_ZSTD;
+			break;
+		case SSDFS_BLK2OFF_PHYS_OFFSET:
+			if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+			else
+				fragment_type = SSDFS_BLK2OFF_DESC_ZSTD;
 			break;
 		default:
 			BUG();
@@ -7116,6 +7166,16 @@ int ssdfs_peb_store_blk2off_table_header(struct ssdfs_peb_info *pebi, u16 flags)
 		blk2off_tbl->hdr.check.flags = cpu_to_le16(SSDFS_CRC32 |
 						SSDFS_BLK2OFF_TBL_LZO_COMPR);
 		blk2off_tbl->hdr.chain_hdr.type = SSDFS_BLK2OFF_LZO_CHAIN_HDR;
+		break;
+	case SSDFS_BLK2OFF_TBL_LZ4_COMPR_TYPE:
+		blk2off_tbl->hdr.check.flags = cpu_to_le16(SSDFS_CRC32 |
+						SSDFS_BLK2OFF_TBL_LZ4_COMPR);
+		blk2off_tbl->hdr.chain_hdr.type = SSDFS_BLK2OFF_LZ4_CHAIN_HDR;
+		break;
+	case SSDFS_BLK2OFF_TBL_ZSTD_COMPR_TYPE:
+		blk2off_tbl->hdr.check.flags = cpu_to_le16(SSDFS_CRC32 |
+						SSDFS_BLK2OFF_TBL_ZSTD_COMPR);
+		blk2off_tbl->hdr.chain_hdr.type = SSDFS_BLK2OFF_ZSTD_CHAIN_HDR;
 		break;
 	default:
 		BUG();
@@ -8461,6 +8521,14 @@ get_next_sequence_id:
 
 		case SSDFS_BLK2OFF_TBL_LZO_COMPR_TYPE:
 			metadata_flags |= SSDFS_LZO_COMPRESSED;
+			break;
+
+		case SSDFS_BLK2OFF_TBL_LZ4_COMPR_TYPE:
+			metadata_flags |= SSDFS_LZ4_COMPRESSED;
+			break;
+
+		case SSDFS_BLK2OFF_TBL_ZSTD_COMPR_TYPE:
+			metadata_flags |= SSDFS_ZSTD_COMPRESSED;
 			break;
 
 		default:

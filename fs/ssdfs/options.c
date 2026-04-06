@@ -64,6 +64,12 @@ static const struct constant_table ssdfs_param_compr[] = {
 #ifdef CONFIG_SSDFS_LZO
 	{"lzo",		SSDFS_MOUNT_COMPR_MODE_LZO},
 #endif
+#ifdef CONFIG_SSDFS_LZ4
+	{"lz4",		SSDFS_MOUNT_COMPR_MODE_LZ4},
+#endif
+#ifdef CONFIG_SSDFS_ZSTD
+	{"zstd",	SSDFS_MOUNT_COMPR_MODE_ZSTD},
+#endif
 	{}
 };
 
@@ -101,6 +107,8 @@ int ssdfs_parse_param(struct fs_context *fc, struct fs_parameter *param)
 		ssdfs_clear_opt(ctx->s_mount_opts, COMPR_MODE_NONE);
 		ssdfs_clear_opt(ctx->s_mount_opts, COMPR_MODE_ZLIB);
 		ssdfs_clear_opt(ctx->s_mount_opts, COMPR_MODE_LZO);
+		ssdfs_clear_opt(ctx->s_mount_opts, COMPR_MODE_LZ4);
+		ssdfs_clear_opt(ctx->s_mount_opts, COMPR_MODE_ZSTD);
 		ctx->s_mount_opts |= result.uint_32;
 		break;
 
@@ -153,6 +161,12 @@ int ssdfs_show_options(struct seq_file *seq, struct dentry *root)
 		seq_printf(seq, ",compress=%s", compress_type);
 	} else if (ssdfs_test_opt(fsi->mount_opts, COMPR_MODE_LZO)) {
 		compress_type = "lzo";
+		seq_printf(seq, ",compress=%s", compress_type);
+	} else if (ssdfs_test_opt(fsi->mount_opts, COMPR_MODE_LZ4)) {
+		compress_type = "lz4";
+		seq_printf(seq, ",compress=%s", compress_type);
+	} else if (ssdfs_test_opt(fsi->mount_opts, COMPR_MODE_ZSTD)) {
+		compress_type = "zstd";
 		seq_printf(seq, ",compress=%s", compress_type);
 	}
 

@@ -982,6 +982,18 @@ int SSDFS_FRAG_TYPE_TO_COMPR_TYPE(int frag_type)
 		compr_type = SSDFS_COMPR_LZO;
 		break;
 
+	case SSDFS_DATA_BLK_DESC_LZ4:
+	case SSDFS_BLK2OFF_EXTENT_DESC_LZ4:
+	case SSDFS_BLK2OFF_DESC_LZ4:
+		compr_type = SSDFS_COMPR_LZ4;
+		break;
+
+	case SSDFS_DATA_BLK_DESC_ZSTD:
+	case SSDFS_BLK2OFF_EXTENT_DESC_ZSTD:
+	case SSDFS_BLK2OFF_DESC_ZSTD:
+		compr_type = SSDFS_COMPR_ZSTD;
+		break;
+
 	default:
 		SSDFS_ERR("frag_type %#x\n", frag_type);
 		BUG();
@@ -1052,10 +1064,16 @@ int __ssdfs_decompress_blk2off_fragment(struct ssdfs_peb_info *pebi,
 	switch (frag->type) {
 	case SSDFS_BLK2OFF_EXTENT_DESC_ZLIB:
 	case SSDFS_BLK2OFF_EXTENT_DESC_LZO:
+	case SSDFS_BLK2OFF_EXTENT_DESC_LZ4:
+	case SSDFS_BLK2OFF_EXTENT_DESC_ZSTD:
 	case SSDFS_BLK2OFF_DESC_ZLIB:
 	case SSDFS_BLK2OFF_DESC_LZO:
+	case SSDFS_BLK2OFF_DESC_LZ4:
+	case SSDFS_BLK2OFF_DESC_ZSTD:
 	case SSDFS_DATA_BLK_DESC_ZLIB:
 	case SSDFS_DATA_BLK_DESC_LZO:
+	case SSDFS_DATA_BLK_DESC_LZ4:
+	case SSDFS_DATA_BLK_DESC_ZSTD:
 		cdata_buf = ssdfs_read_kzalloc(compr_size, GFP_KERNEL);
 		if (!cdata_buf) {
 			err = -ENOMEM;
@@ -1277,6 +1295,8 @@ int ssdfs_peb_check_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 	switch (frag->type) {
 	case SSDFS_DATA_BLK_DESC_ZLIB:
 	case SSDFS_DATA_BLK_DESC_LZO:
+	case SSDFS_DATA_BLK_DESC_LZ4:
+	case SSDFS_DATA_BLK_DESC_ZSTD:
 	case SSDFS_DATA_BLK_DESC:
 		/* expected type */
 		break;
@@ -1401,6 +1421,8 @@ int ssdfs_peb_find_blk_desc_portion(struct ssdfs_peb_info *pebi,
 		switch (table->chain_hdr.type) {
 		case SSDFS_BLK_DESC_ZLIB_CHAIN_HDR:
 		case SSDFS_BLK_DESC_LZO_CHAIN_HDR:
+		case SSDFS_BLK_DESC_LZ4_CHAIN_HDR:
+		case SSDFS_BLK_DESC_ZSTD_CHAIN_HDR:
 			/* expected type */
 			break;
 
@@ -1675,7 +1697,9 @@ int SSDFS_METADATA_DESC_COMPR_TYPE(struct ssdfs_metadata_descriptor *meta_desc)
 	flags = le16_to_cpu(meta_desc->check.flags);
 
 	if ((flags & SSDFS_ZLIB_COMPRESSED) &&
-	    (flags & SSDFS_LZO_COMPRESSED)) {
+	    (flags & SSDFS_LZO_COMPRESSED) &&
+	    (flags & SSDFS_LZ4_COMPRESSED) &&
+	    (flags & SSDFS_ZSTD_COMPRESSED)) {
 		SSDFS_ERR("invalid set of flags: "
 			  "flags %#x\n",
 			  flags);
@@ -1686,6 +1710,10 @@ int SSDFS_METADATA_DESC_COMPR_TYPE(struct ssdfs_metadata_descriptor *meta_desc)
 		compr_type = SSDFS_COMPR_ZLIB;
 	else if (flags & SSDFS_LZO_COMPRESSED)
 		compr_type = SSDFS_COMPR_LZO;
+	else if (flags & SSDFS_LZ4_COMPRESSED)
+		compr_type = SSDFS_COMPR_LZ4;
+	else if (flags & SSDFS_ZSTD_COMPRESSED)
+		compr_type = SSDFS_COMPR_ZSTD;
 
 	return compr_type;
 }
@@ -2631,7 +2659,9 @@ bool IS_SSDFS_FRAGMENT_COMPRESSED(struct ssdfs_fragment_desc *desc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return desc->type == SSDFS_FRAGMENT_ZLIB_BLOB ||
-		desc->type == SSDFS_FRAGMENT_LZO_BLOB;
+		desc->type == SSDFS_FRAGMENT_LZO_BLOB ||
+		desc->type == SSDFS_FRAGMENT_LZ4_BLOB ||
+		desc->type == SSDFS_FRAGMENT_ZSTD_BLOB;
 }
 
 /*
@@ -2650,6 +2680,10 @@ int SSDFS_GET_FRAGMENT_COMPR_TYPE(struct ssdfs_fragment_desc *desc)
 		compr_type = SSDFS_COMPR_ZLIB;
 	else if (desc->type == SSDFS_FRAGMENT_LZO_BLOB)
 		compr_type = SSDFS_COMPR_LZO;
+	else if (desc->type == SSDFS_FRAGMENT_LZ4_BLOB)
+		compr_type = SSDFS_COMPR_LZ4;
+	else if (desc->type == SSDFS_FRAGMENT_ZSTD_BLOB)
+		compr_type = SSDFS_COMPR_ZSTD;
 
 	return compr_type;
 }
@@ -7961,6 +7995,8 @@ int ssdfs_read_blk2off_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 	switch (frag->type) {
 	case SSDFS_BLK2OFF_EXTENT_DESC_ZLIB:
 	case SSDFS_BLK2OFF_EXTENT_DESC_LZO:
+	case SSDFS_BLK2OFF_EXTENT_DESC_LZ4:
+	case SSDFS_BLK2OFF_EXTENT_DESC_ZSTD:
 		stream = &env->log.blk2off_tbl.extents.stream;
 		folio = ssdfs_folio_vector_allocate(&stream->batch);
 		if (unlikely(IS_ERR_OR_NULL(folio))) {
@@ -7973,6 +8009,8 @@ int ssdfs_read_blk2off_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 
 	case SSDFS_BLK2OFF_DESC_ZLIB:
 	case SSDFS_BLK2OFF_DESC_LZO:
+	case SSDFS_BLK2OFF_DESC_LZ4:
+	case SSDFS_BLK2OFF_DESC_ZSTD:
 		stream = &env->log.blk2off_tbl.portion.fragments.stream;
 
 		if (ssdfs_folio_vector_space(&stream->batch) == 0) {
@@ -8041,6 +8079,8 @@ int ssdfs_read_blk2off_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 	switch (frag->type) {
 	case SSDFS_BLK2OFF_DESC_ZLIB:
 	case SSDFS_BLK2OFF_DESC_LZO:
+	case SSDFS_BLK2OFF_DESC_LZ4:
+	case SSDFS_BLK2OFF_DESC_ZSTD:
 		if (magic != SSDFS_PHYS_OFF_TABLE_MAGIC) {
 			SSDFS_ERR("invalid magic\n");
 			return -EIO;
@@ -8140,6 +8180,8 @@ int __ssdfs_read_blk2off_compressed_fragment(struct ssdfs_peb_info *pebi,
 	switch (hdr->chain_hdr.type) {
 	case SSDFS_BLK2OFF_ZLIB_CHAIN_HDR:
 	case SSDFS_BLK2OFF_LZO_CHAIN_HDR:
+	case SSDFS_BLK2OFF_LZ4_CHAIN_HDR:
+	case SSDFS_BLK2OFF_ZSTD_CHAIN_HDR:
 		/* expected type */
 		break;
 
@@ -8186,8 +8228,12 @@ int __ssdfs_read_blk2off_compressed_fragment(struct ssdfs_peb_info *pebi,
 		switch (frag->type) {
 		case SSDFS_BLK2OFF_EXTENT_DESC_ZLIB:
 		case SSDFS_BLK2OFF_EXTENT_DESC_LZO:
+		case SSDFS_BLK2OFF_EXTENT_DESC_LZ4:
+		case SSDFS_BLK2OFF_EXTENT_DESC_ZSTD:
 		case SSDFS_BLK2OFF_DESC_ZLIB:
 		case SSDFS_BLK2OFF_DESC_LZO:
+		case SSDFS_BLK2OFF_DESC_LZ4:
+		case SSDFS_BLK2OFF_DESC_ZSTD:
 			err = ssdfs_read_blk2off_compressed_byte_stream(pebi,
 							    req, frag, env,
 							    processed_bytes);
@@ -8691,7 +8737,10 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 
 	flags = le16_to_cpu(desc->check.flags);
 
-	if ((flags & SSDFS_ZLIB_COMPRESSED) && (flags & SSDFS_LZO_COMPRESSED)) {
+	if ((flags & SSDFS_ZLIB_COMPRESSED) &&
+	    (flags & SSDFS_LZO_COMPRESSED) &&
+	    (flags & SSDFS_LZ4_COMPRESSED) &&
+	    (flags & SSDFS_ZSTD_COMPRESSED)) {
 		SSDFS_ERR("invalid set of flags: "
 			  "flags %#x\n",
 			  flags);
@@ -8699,7 +8748,9 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 	}
 
 	is_compressed = (flags & SSDFS_ZLIB_COMPRESSED) ||
-			(flags & SSDFS_LZO_COMPRESSED);
+			(flags & SSDFS_LZO_COMPRESSED) ||
+			(flags & SSDFS_LZ4_COMPRESSED) ||
+			(flags & SSDFS_ZSTD_COMPRESSED);
 
 	if (is_compressed) {
 		err = ssdfs_read_blk2off_compressed_fragment(pebi, req,
@@ -8925,6 +8976,8 @@ int __ssdfs_read_blk_desc_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 	switch (table.chain_hdr.type) {
 	case SSDFS_BLK_DESC_ZLIB_CHAIN_HDR:
 	case SSDFS_BLK_DESC_LZO_CHAIN_HDR:
+	case SSDFS_BLK_DESC_LZ4_CHAIN_HDR:
+	case SSDFS_BLK_DESC_ZSTD_CHAIN_HDR:
 		/* expected type */
 		break;
 
@@ -8972,6 +9025,8 @@ int __ssdfs_read_blk_desc_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 		switch (frag->type) {
 		case SSDFS_DATA_BLK_DESC_ZLIB:
 		case SSDFS_DATA_BLK_DESC_LZO:
+		case SSDFS_DATA_BLK_DESC_LZ4:
+		case SSDFS_DATA_BLK_DESC_ZSTD:
 			folio = ssdfs_folio_vector_allocate(content);
 			if (unlikely(IS_ERR_OR_NULL(folio))) {
 				err = !folio ? -ENOMEM : PTR_ERR(folio);
@@ -9216,14 +9271,20 @@ int ssdfs_pre_fetch_blk_desc_table_area(struct ssdfs_peb_info *pebi,
 
 	flags = le16_to_cpu(desc->check.flags);
 
-	if ((flags & SSDFS_ZLIB_COMPRESSED) && (flags & SSDFS_LZO_COMPRESSED)) {
+	if ((flags & SSDFS_ZLIB_COMPRESSED) &&
+	    (flags & SSDFS_LZO_COMPRESSED)  &&
+	    (flags & SSDFS_LZ4_COMPRESSED) &&
+	    (flags & SSDFS_ZSTD_COMPRESSED)) {
 		SSDFS_ERR("invalid set of flags: "
 			  "flags %#x\n",
 			  flags);
 		return -ERANGE;
 	}
 
-	if ((flags & SSDFS_ZLIB_COMPRESSED) || (flags & SSDFS_LZO_COMPRESSED)) {
+	if ((flags & SSDFS_ZLIB_COMPRESSED) ||
+	    (flags & SSDFS_LZO_COMPRESSED) ||
+	    (flags & SSDFS_LZ4_COMPRESSED) ||
+	    (flags & SSDFS_ZSTD_COMPRESSED)) {
 		err = ssdfs_read_blk_desc_compressed_byte_stream(pebi, req,
 						      le32_to_cpu(desc->size),
 						      env);

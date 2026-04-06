@@ -217,11 +217,25 @@ int ssdfs_compressors_init(void)
 	if (err)
 		goto zlib_exit;
 
-	err = ssdfs_register_compressor(&ssdfs_none_compr);
+	err = ssdfs_lz4_init();
 	if (err)
 		goto lzo_exit;
 
+	err = ssdfs_zstd_init();
+	if (err)
+		goto lz4_exit;
+
+	err = ssdfs_register_compressor(&ssdfs_none_compr);
+	if (err)
+		goto zstd_exit;
+
 	return 0;
+
+zstd_exit:
+	ssdfs_zstd_exit();
+
+lz4_exit:
+	ssdfs_lz4_exit();
 
 lzo_exit:
 	ssdfs_lzo_exit();
@@ -273,8 +287,10 @@ void ssdfs_compressors_exit(void)
 
 	ssdfs_free_workspaces();
 	ssdfs_unregister_compressor(&ssdfs_none_compr);
-	ssdfs_zlib_exit();
+	ssdfs_zstd_exit();
+	ssdfs_lz4_exit();
 	ssdfs_lzo_exit();
+	ssdfs_zlib_exit();
 }
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_compressors_exit);
 
