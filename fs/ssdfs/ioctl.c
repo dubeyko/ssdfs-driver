@@ -31,6 +31,7 @@
 #include "ssdfs.h"
 #include "testing.h"
 #include "ioctl.h"
+#include "fscrypt.h"
 
 static int ssdfs_ioctl_getflags(struct file *file, void __user *arg)
 {
@@ -427,6 +428,24 @@ long ssdfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return ssdfs_ioctl_getflags(file, argp);
 	case FS_IOC_SETFLAGS:
 		return ssdfs_ioctl_setflags(file, argp);
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	case FS_IOC_SET_ENCRYPTION_POLICY:
+		return fscrypt_ioctl_set_policy(file, argp);
+	case FS_IOC_GET_ENCRYPTION_POLICY:
+		return fscrypt_ioctl_get_policy(file, argp);
+	case FS_IOC_GET_ENCRYPTION_POLICY_EX:
+		return fscrypt_ioctl_get_policy_ex(file, argp);
+	case FS_IOC_ADD_ENCRYPTION_KEY:
+		return fscrypt_ioctl_add_key(file, argp);
+	case FS_IOC_REMOVE_ENCRYPTION_KEY:
+		return fscrypt_ioctl_remove_key(file, argp);
+	case FS_IOC_REMOVE_ENCRYPTION_KEY_ALL_USERS:
+		return fscrypt_ioctl_remove_key_all_users(file, argp);
+	case FS_IOC_GET_ENCRYPTION_KEY_STATUS:
+		return fscrypt_ioctl_get_key_status(file, argp);
+	case FS_IOC_GET_ENCRYPTION_NONCE:
+		return fscrypt_ioctl_get_nonce(file, argp);
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	case SSDFS_IOC_DO_TESTING:
 		return ssdfs_ioctl_do_testing(file, argp);
 	case SSDFS_IOC_CREATE_SNAPSHOT:

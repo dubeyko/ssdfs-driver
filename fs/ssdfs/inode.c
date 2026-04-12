@@ -41,6 +41,7 @@
 #include "xattr_tree.h"
 #include "acl.h"
 #include "xattr.h"
+#include "fscrypt.h"
 
 #include <trace/events/ssdfs.h>
 
@@ -578,6 +579,9 @@ struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
 	struct ssdfs_btree_search *search;
 	struct ssdfs_inodes_btree_info *itree;
 	ino_t ino;
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	bool encrypt = false;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -649,6 +653,24 @@ struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
 			  "err %d\n", err);
 		goto fail_drop;
 	}
+
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	err = fscrypt_prepare_new_inode(dir, inode, &encrypt);
+	if (err) {
+		SSDFS_ERR("fail to prepare fscrypt for new inode: "
+			  "err %d\n", err);
+		goto fail_drop;
+	}
+
+	if (encrypt) {
+		err = fscrypt_set_context(inode, NULL);
+		if (err) {
+			SSDFS_ERR("fail to set fscrypt context: "
+				  "err %d\n", err);
+			goto fail_drop;
+		}
+	}
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 	mark_inode_dirty(inode);
 
@@ -846,6 +868,12 @@ int ssdfs_setattr(struct mnt_idmap *idmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	err = fscrypt_prepare_setattr(dentry, attr);
+	if (err)
+		return err;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 	err = setattr_prepare(idmap, dentry, attr);
 	if (err)

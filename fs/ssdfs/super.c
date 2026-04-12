@@ -63,6 +63,7 @@
 #include "acl.h"
 #include "snapshots_tree.h"
 #include "invalidated_extents_tree.h"
+#include "fscrypt.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
@@ -3949,6 +3950,9 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	sb->s_magic = SSDFS_SUPER_MAGIC;
 	sb->s_op = &ssdfs_super_operations;
 	sb->s_export_op = &ssdfs_export_ops;
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	sb->s_cop = &ssdfs_cryptops;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 	sb->s_xattr = ssdfs_xattr_handlers;
 	set_posix_acl_flag(sb);

@@ -29,6 +29,7 @@
 #include "shared_dictionary.h"
 #include "xattr.h"
 #include "acl.h"
+#include "fscrypt.h"
 
 #include <trace/events/ssdfs.h>
 
@@ -232,6 +233,11 @@ static struct dentry *ssdfs_lookup(struct inode *dir, struct dentry *target,
 	struct inode *inode = NULL;
 	ino_t ino;
 	int err;
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	struct fscrypt_name fname;
+	struct qstr disk_name;
+	const struct qstr *lookup_name;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dir %lu, flags %#x\n", (unsigned long)dir->i_ino, flags);
@@ -240,9 +246,28 @@ static struct dentry *ssdfs_lookup(struct inode *dir, struct dentry *target,
 	if (target->d_name.len > SSDFS_MAX_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
 
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	err = fscrypt_prepare_lookup(dir, target, &fname);
+	if (err)
+		return ERR_PTR(err);
+	if (fname.disk_name.name) {
+		disk_name = (struct qstr)QSTR_INIT(fname.disk_name.name,
+						   fname.disk_name.len);
+		lookup_name = &disk_name;
+	} else {
+		lookup_name = &target->d_name;
+	}
+#else
+	const struct qstr *lookup_name = &target->d_name;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
 	down_read(&SSDFS_I(dir)->lock);
-	err = ssdfs_inode_by_name(dir, &target->d_name, &ino);
+	err = ssdfs_inode_by_name(dir, lookup_name, &ino);
 	up_read(&SSDFS_I(dir)->lock);
+
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	fscrypt_free_filename(&fname);
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 	if (err == -ENOENT) {
 		err = 0;
@@ -279,6 +304,11 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 	struct ssdfs_btree_search *search;
 	int private_flags;
 	struct timespec64 cur_time;
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	struct fscrypt_name fname;
+	struct qstr disk_name;
+	const struct qstr *add_name;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -330,9 +360,32 @@ finish_create_dentries_tree:
 
 	ssdfs_btree_search_init(search);
 
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	if (IS_ENCRYPTED(dir)) {
+		err = fscrypt_setup_filename(dir, &dentry->d_name, 0, &fname);
+		if (err) {
+			ssdfs_btree_search_free(search);
+			goto finish_add_link;
+		}
+		disk_name = (struct qstr)QSTR_INIT(fname.disk_name.name,
+						   fname.disk_name.len);
+		add_name = &disk_name;
+	} else {
+		add_name = &dentry->d_name;
+	}
+#else
+	const struct qstr *add_name = &dentry->d_name;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
 	err = ssdfs_dentries_tree_add(dir_ii->dentries_tree,
-				      &dentry->d_name,
+				      add_name,
 				      ii, search);
+
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	if (IS_ENCRYPTED(dir))
+		fscrypt_free_filename(&fname);
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add the dentry: "
 			  "ino %lu, err %d\n",
@@ -480,6 +533,11 @@ static int ssdfs_symlink(struct mnt_idmap *idmap,
 	size_t target_len = strlen(target) + 1;
 	size_t raw_inode_size;
 	size_t inline_len;
+	const char *link_target = target;
+	size_t link_len = target_len;
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	struct fscrypt_str disk_link = FSTR_INIT(NULL, 0);
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -490,6 +548,13 @@ static int ssdfs_symlink(struct mnt_idmap *idmap,
 	if (target_len > dir->i_sb->s_blocksize)
 		return -ENAMETOOLONG;
 
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	err = fscrypt_prepare_symlink(dir, target, target_len,
+				      dir->i_sb->s_blocksize, &disk_link);
+	if (err)
+		return err;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
 	down_read(&fsi->volume_sem);
 	raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
 	up_read(&fsi->volume_sem);
@@ -499,32 +564,54 @@ static int ssdfs_symlink(struct mnt_idmap *idmap,
 	if (raw_inode_size <= inline_len) {
 		SSDFS_ERR("invalid raw inode size %zu\n",
 			  raw_inode_size);
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+		if (IS_ENCRYPTED(dir))
+			kfree(disk_link.name);
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 		return -EFAULT;
 	}
 
 	inline_len = raw_inode_size - inline_len;
 
 	inode = ssdfs_new_inode(idmap, dir, S_IFLNK | S_IRWXUGO, &dentry->d_name);
-	if (IS_ERR(inode))
+	if (IS_ERR(inode)) {
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+		if (IS_ENCRYPTED(dir))
+			kfree(disk_link.name);
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 		return PTR_ERR(inode);
+	}
 
-	if (target_len > inline_len) {
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	err = fscrypt_encrypt_symlink(inode, target, target_len, &disk_link);
+	if (err)
+		goto out_fail;
+	link_target = disk_link.name;
+	link_len    = disk_link.len;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
+	if (link_len > inline_len) {
 		/* slow symlink */
 		inode_nohighmem(inode);
 
-		err = page_symlink(inode, target, target_len);
+		err = page_symlink(inode, link_target, link_len);
 		if (err)
 			goto out_fail;
 	} else {
 		/* fast symlink */
 		down_write(&SSDFS_I(inode)->lock);
 		inode->i_link = (char *)SSDFS_I(inode)->raw_inode.internal;
-		memcpy(inode->i_link, target, target_len);
-		inode->i_size = target_len - 1;
+		memcpy(inode->i_link, link_target, link_len);
+		inode->i_size = link_len - 1;
 		atomic_or(SSDFS_INODE_HAS_INLINE_FILE,
 			  &SSDFS_I(inode)->private_flags);
 		up_write(&SSDFS_I(inode)->lock);
 	}
+
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	if (IS_ENCRYPTED(inode))
+		kfree(disk_link.name);
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 	mark_inode_dirty(inode);
 	err = ssdfs_add_nondir(dir, dentry, inode);
@@ -536,6 +623,10 @@ static int ssdfs_symlink(struct mnt_idmap *idmap,
 	return err;
 
 out_fail:
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	if (IS_ENCRYPTED(inode))
+		kfree(disk_link.name);
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	inode_dec_link_count(inode);
 	iget_failed(inode);
 	return err;
@@ -563,6 +654,12 @@ static int ssdfs_link(struct dentry *old_dentry, struct inode *dir,
 
 	if (!S_ISREG(inode->i_mode))
 		return -EPERM;
+
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	err = fscrypt_prepare_link(old_dentry, dir, dentry);
+	if (err)
+		return err;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 	inode_set_ctime_to_ts(inode, current_time(inode));
 	inode_inc_link_count(inode);
@@ -863,7 +960,7 @@ finish_unlink:
 	return err;
 }
 
-static inline bool ssdfs_empty_dir(struct inode *dir)
+bool ssdfs_empty_dir(struct inode *dir)
 {
 	struct ssdfs_inode_info *ii = SSDFS_I(dir);
 	bool is_empty = false;
@@ -997,6 +1094,12 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	ino_t old_ino, old_parent_ino, new_ino;
 	struct timespec64 time;
 	u64 name_hash;
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	struct fscrypt_name old_fname = {}, new_fname = {};
+	struct qstr old_disk_name, new_disk_name;
+	const struct qstr *old_name;
+	const struct qstr *new_name;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	int err = -ENOENT;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1017,9 +1120,41 @@ static int ssdfs_rename_target(struct inode *old_dir,
 
 	ssdfs_btree_search_init(search);
 
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	/* Set up encrypted disk names before acquiring locks. */
+	err = fscrypt_setup_filename(old_dir, &old_dentry->d_name, 1,
+				     &old_fname);
+	if (err)
+		goto out_free_search;
+	old_disk_name = old_fname.disk_name.name ?
+		(struct qstr)QSTR_INIT(old_fname.disk_name.name,
+				       old_fname.disk_name.len) :
+		old_dentry->d_name;
+	old_name = &old_disk_name;
+
+	if (unlink) {
+		err = fscrypt_setup_filename(new_dir, &new_dentry->d_name, 1,
+					     &new_fname);
+		if (err) {
+			fscrypt_free_filename(&old_fname);
+			goto out_free_search;
+		}
+		new_disk_name = new_fname.disk_name.name ?
+			(struct qstr)QSTR_INIT(new_fname.disk_name.name,
+					       new_fname.disk_name.len) :
+			new_dentry->d_name;
+		new_name = &new_disk_name;
+	} else {
+		new_name = old_name;
+	}
+#else
+	const struct qstr *old_name = &old_dentry->d_name;
+	const struct qstr *new_name = &new_dentry->d_name;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
 	lock_4_inodes(old_dir, new_dir, old_inode, new_inode);
 
-	err = ssdfs_inode_by_name(old_dir, &old_dentry->d_name, &old_ino);
+	err = ssdfs_inode_by_name(old_dir, old_name, &old_ino);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find old dentry: err %d\n", err);
 		goto finish_target_rename;
@@ -1072,8 +1207,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 		if (is_dir && !ssdfs_empty_dir(new_inode))
 			goto finish_target_rename;
 
-		err = ssdfs_inode_by_name(new_dir, &new_dentry->d_name,
-					  &new_ino);
+		err = ssdfs_inode_by_name(new_dir, new_name, &new_ino);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to find new dentry: err %d\n", err);
 			goto finish_target_rename;
@@ -1085,12 +1219,12 @@ static int ssdfs_rename_target(struct inode *old_dir,
 			goto finish_target_rename;
 		}
 
-		name_hash = ssdfs_generate_name_hash(&new_dentry->d_name);
+		name_hash = ssdfs_generate_name_hash(new_name);
 
 		err = ssdfs_dentries_tree_change(new_dir_ii->dentries_tree,
 						 name_hash,
 						 new_inode->i_ino,
-						 &old_dentry->d_name,
+						 old_name,
 						 old_ii,
 						 search);
 		if (unlikely(err)) {
@@ -1109,7 +1243,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 		}
 	}
 
-	name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
+	name_hash = ssdfs_generate_name_hash(old_name);
 
 	err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
 					 name_hash,
@@ -1198,6 +1332,11 @@ static int ssdfs_rename_target(struct inode *old_dir,
 
 finish_target_rename:
 	unlock_4_inodes(old_dir, new_dir, old_inode, new_inode);
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	fscrypt_free_filename(&old_fname);
+	fscrypt_free_filename(&new_fname);
+out_free_search:
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	ssdfs_btree_search_free(search);
 
 out:
@@ -1227,6 +1366,12 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 	ino_t old_ino, new_ino;
 	struct timespec64 time;
 	u64 name_hash;
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	struct fscrypt_name old_fname = {}, new_fname = {};
+	struct qstr old_disk_name, new_disk_name;
+	const struct qstr *old_name;
+	const struct qstr *new_name;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	int err = -ENOENT;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1245,9 +1390,36 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 
 	ssdfs_btree_search_init(search);
 
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	err = fscrypt_setup_filename(old_dir, &old_dentry->d_name, 1,
+				     &old_fname);
+	if (err)
+		goto out_free_search;
+	old_disk_name = old_fname.disk_name.name ?
+		(struct qstr)QSTR_INIT(old_fname.disk_name.name,
+				       old_fname.disk_name.len) :
+		old_dentry->d_name;
+	old_name = &old_disk_name;
+
+	err = fscrypt_setup_filename(new_dir, &new_dentry->d_name, 1,
+				     &new_fname);
+	if (err) {
+		fscrypt_free_filename(&old_fname);
+		goto out_free_search;
+	}
+	new_disk_name = new_fname.disk_name.name ?
+		(struct qstr)QSTR_INIT(new_fname.disk_name.name,
+				       new_fname.disk_name.len) :
+		new_dentry->d_name;
+	new_name = &new_disk_name;
+#else
+	const struct qstr *old_name = &old_dentry->d_name;
+	const struct qstr *new_name = &new_dentry->d_name;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
 	lock_4_inodes(old_dir, new_dir, old_inode, new_inode);
 
-	err = ssdfs_inode_by_name(old_dir, &old_dentry->d_name, &old_ino);
+	err = ssdfs_inode_by_name(old_dir, old_name, &old_ino);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find old dentry: err %d\n", err);
 		goto finish_cross_rename;
@@ -1258,7 +1430,7 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 		goto finish_cross_rename;
 	}
 
-	err = ssdfs_inode_by_name(new_dir, &new_dentry->d_name, &new_ino);
+	err = ssdfs_inode_by_name(new_dir, new_name, &new_ino);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find new dentry: err %d\n", err);
 		goto finish_cross_rename;
@@ -1324,11 +1496,11 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 	}
 
 	/* update directory entry info of old dir inode */
-	name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
+	name_hash = ssdfs_generate_name_hash(old_name);
 
 	err = ssdfs_dentries_tree_change(old_dir_ii->dentries_tree,
 					 name_hash, old_inode->i_ino,
-					 &new_dentry->d_name, new_ii,
+					 new_name, new_ii,
 					 search);
 	if (unlikely(err)) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
@@ -1338,11 +1510,11 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 	}
 
 	/* update directory entry info of new dir inode */
-	name_hash = ssdfs_generate_name_hash(&new_dentry->d_name);
+	name_hash = ssdfs_generate_name_hash(new_name);
 
 	err = ssdfs_dentries_tree_change(new_dir_ii->dentries_tree,
 					 name_hash, new_inode->i_ino,
-					 &old_dentry->d_name, old_ii,
+					 old_name, old_ii,
 					 search);
 	if (unlikely(err)) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
@@ -1380,6 +1552,11 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 
 finish_cross_rename:
 	unlock_4_inodes(old_dir, new_dir, old_inode, new_inode);
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	fscrypt_free_filename(&old_fname);
+	fscrypt_free_filename(&new_fname);
+out_free_search:
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	ssdfs_btree_search_free(search);
 
 out:
@@ -1400,6 +1577,10 @@ static int ssdfs_rename(struct mnt_idmap *idmap,
 			struct inode *new_dir, struct dentry *new_dentry,
 			unsigned int flags)
 {
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	int err;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("old_dir %lu, old_inode %lu, new_dir %lu\n",
 		  (unsigned long)old_dir->i_ino,
@@ -1411,6 +1592,13 @@ static int ssdfs_rename(struct mnt_idmap *idmap,
 		SSDFS_ERR("invalid flags %#x\n", flags);
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	err = fscrypt_prepare_rename(old_dir, old_dentry,
+					new_dir, new_dentry, flags);
+	if (err)
+		return err;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 	if (flags & RENAME_EXCHANGE) {
 		return ssdfs_cross_rename(old_dir, old_dentry,
@@ -1847,6 +2035,12 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 		SSDFS_DBG("ctx->pos %lld\n", ctx->pos);
 		return 0;
 	}
+
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	err = fscrypt_prepare_readdir(inode);
+	if (err)
+		return err;
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 	dict = fsi->shdictree;
 	if (!dict) {

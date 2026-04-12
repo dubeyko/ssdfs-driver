@@ -40,6 +40,7 @@
 #include "xattr.h"
 #include "acl.h"
 #include "peb_mapping_table.h"
+#include "fscrypt.h"
 
 #include <trace/events/ssdfs.h>
 
@@ -4731,13 +4732,34 @@ finish_fsync:
 	return err;
 }
 
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+static int ssdfs_file_open(struct inode *inode, struct file *filp)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = fscrypt_file_open(inode, filp);
+	if (err)
+		return err;
+
+	return generic_file_open(inode, filp);
+}
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
 const struct file_operations ssdfs_file_operations = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= ssdfs_file_read_iter,
 	.write_iter	= generic_file_write_iter,
 	.unlocked_ioctl	= ssdfs_ioctl,
 	.mmap		= generic_file_mmap,
+#ifdef CONFIG_SSDFS_FS_ENCRYPTION
+	.open		= ssdfs_file_open,
+#else
 	.open		= generic_file_open,
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	.fsync		= ssdfs_fsync,
 	.splice_read	= filemap_splice_read,
 	.splice_write	= iter_file_splice_write,

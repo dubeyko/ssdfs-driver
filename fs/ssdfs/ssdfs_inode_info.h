@@ -15,6 +15,8 @@
 #ifndef _SSDFS_INODE_INFO_H
 #define _SSDFS_INODE_INFO_H
 
+#include <linux/fscrypt.h>
+
 /*
  * Inode flags (GETFLAGS/SETFLAGS)
  */
@@ -83,6 +85,7 @@ static inline __u32 ssdfs_mask_flags(umode_t mode, __u32 flags)
  * @dentries_tree: dentries btree
  * @xattrs_tree: extended attributes tree
  * @inline_file: inline file buffer
+ * @i_crypt_info: fscrypt per-inode encryption state (NULL if not encrypted)
  * @raw_inode: raw inode
  */
 struct ssdfs_inode_info {
@@ -101,6 +104,7 @@ struct ssdfs_inode_info {
 	struct ssdfs_dentries_btree_info *dentries_tree;
 	struct ssdfs_xattrs_btree_info *xattrs_tree;
 	void *inline_file;
+	struct fscrypt_inode_info *i_crypt_info;
 	struct ssdfs_inode raw_inode;
 };
 

@@ -133,6 +133,7 @@ u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset);
 u64 ssdfs_zns_zone_write_pointer(struct super_block *sb, loff_t offset);
 
 /* dir.c */
+bool ssdfs_empty_dir(struct inode *dir);
 int ssdfs_inode_by_name(struct inode *dir,
 			const struct qstr *child,
 			ino_t *ino);

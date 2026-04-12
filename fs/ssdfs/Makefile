@@ -41,6 +41,7 @@ ssdfs-y	:= super.o fs_error.o recovery.o \
 
 ssdfs-$(CONFIG_SSDFS_POSIX_ACL)			+= acl.o
 ssdfs-$(CONFIG_SSDFS_SECURITY)			+= xattr_security.o
+ssdfs-$(CONFIG_SSDFS_FS_ENCRYPTION)		+= fscrypt.o
 ssdfs-$(CONFIG_SSDFS_ZLIB)			+= compr_zlib.o
 ssdfs-$(CONFIG_SSDFS_LZO)			+= compr_lzo.o
 ssdfs-$(CONFIG_SSDFS_LZ4)			+= compr_lz4.o

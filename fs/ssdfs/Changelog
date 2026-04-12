@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.60 [April 11, 2026]
+    (*) Introduce fscrypt support.
+
 v.5.59 [April 05, 2026]
     (*) Introduce LZ4 and ZSTD compression support.
 

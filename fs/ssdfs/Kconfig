@@ -248,6 +248,25 @@ config SSDFS_LONG_NAME_DEDUPLICATION
 
 endmenu
 
+menu "Data Protection"
+
+config SSDFS_FS_ENCRYPTION
+	bool "SSDFS Encryption (fscrypt)"
+	depends on SSDFS
+	select FS_ENCRYPTION
+	select FS_ENCRYPTION_ALGS
+	help
+	  Enable fscrypt (filesystem-level encryption) support for SSDFS.
+	  This allows individual files and directories to be encrypted
+	  using per-file keys, protecting data at rest.
+
+	  Enabling this option requires that extended attribute support
+	  is available. 
+
+	  If unsure, say N.
+
+endmenu
+
 menu "Performance"
 
 config SSDFS_FIXED_SUPERBLOCK_SEGMENTS_SET

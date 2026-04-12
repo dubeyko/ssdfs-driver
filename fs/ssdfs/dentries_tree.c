@@ -1250,7 +1250,7 @@ int ssdfs_check_dentry_for_request(struct ssdfs_fs_info *fsi,
 
 			name_len = min_t(u8, name_len,
 					 SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
-			res = strncmp(req_name, dentry->inline_string,
+			res = memcmp(req_name, dentry->inline_string,
 					name_len);
 			if (res < 0) {
 				/* hash collision case */
@@ -1287,7 +1287,7 @@ extract_full_name:
 		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
 			name_len = dentry->name_len;
 
-			res = strncmp(req_name, search->name.string.str,
+			res = memcmp(req_name, search->name.string.str,
 					name_len);
 			if (res < 0) {
 				/* hash collision case */
@@ -7406,7 +7406,7 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 
 			name_len = min_t(size_t, search->request.start.name_len,
 					 SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
-			res = strncmp(search->request.start.name,
+			res = memcmp(search->request.start.name,
 					dentry.inline_string,
 					name_len);
 			if (res < 0)
@@ -7531,7 +7531,7 @@ int ssdfs_find_correct_position_from_left(struct ssdfs_btree_node *node,
 				name_len = min_t(size_t,
 					    search->request.start.name_len,
 					    SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
-				res = strncmp(search->request.start.name,
+				res = memcmp(search->request.start.name,
 						dentry.inline_string,
 						name_len);
 				if (res == 0) {
@@ -7659,7 +7659,7 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 				name_len = min_t(size_t,
 					    search->request.start.name_len,
 					    SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
-				res = strncmp(search->request.start.name,
+				res = memcmp(search->request.start.name,
 						dentry.inline_string,
 						name_len);
 				if (res < 0)

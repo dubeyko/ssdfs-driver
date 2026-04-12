@@ -33,7 +33,10 @@
 #define SSDFS_SECURITY_XATTR_ID			5
 #define SSDFS_SYSTEM_XATTR_ID			6
 #define SSDFS_RICHACL_XATTR_ID			7
+#define SSDFS_ENCRYPTION_XATTR_ID		9
 #define SSDFS_XATTR_MAX_ID			255
+
+#define SSDFS_XATTR_NAME_ENCRYPTION_CONTEXT	"c"
 
 extern const struct xattr_handler ssdfs_xattr_user_handler;
 extern const struct xattr_handler ssdfs_xattr_trusted_handler;
