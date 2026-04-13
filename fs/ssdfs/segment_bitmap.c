@@ -3103,6 +3103,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 	case SSDFS_REGULAR_FS_OPERATIONS:
 	case SSDFS_METADATA_GOING_FLUSHING:
 	case SSDFS_METADATA_UNDER_FLUSH:
+	case SSDFS_FS_FROZEN:
 	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
 	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
 		/* continue logic */

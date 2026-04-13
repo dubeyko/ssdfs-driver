@@ -889,6 +889,19 @@ bool is_ssdfs_magic_valid(struct ssdfs_signature *magic)
 #define ssdfs_set_opt(o, opt)		((o) |= SSDFS_MOUNT_##opt)
 #define ssdfs_test_opt(o, opt)		((o) & SSDFS_MOUNT_##opt)
 
+/*
+ * Runtime state flags stored in ssdfs_fs_info.s_ssdfs_flags.
+ * Use set_bit/test_bit for atomic access.
+ */
+#define SSDFS_FLAGS_SHUTDOWN		0	/* forced shutdown in progress */
+
+static inline bool ssdfs_forced_shutdown(struct super_block *sb)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+
+	return test_bit(SSDFS_FLAGS_SHUTDOWN, &fsi->s_ssdfs_flags);
+}
+
 #define SSDFS_LOG_FOOTER_OFF(seg_hdr)({ \
 	u32 offset; \
 	int index; \

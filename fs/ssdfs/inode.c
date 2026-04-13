@@ -869,6 +869,9 @@ int ssdfs_setattr(struct mnt_idmap *idmap,
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(ssdfs_forced_shutdown(inode->i_sb)))
+		return -EIO;
+
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
 	err = fscrypt_prepare_setattr(dentry, attr);
 	if (err)
@@ -1028,6 +1031,9 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (ssdfs_forced_shutdown(inode->i_sb))
+		return -EIO;
 
 	down_read(&fsi->volume_sem);
 	raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);

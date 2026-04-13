@@ -20627,6 +20627,7 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 
 	case SSDFS_METADATA_GOING_FLUSHING:
 	case SSDFS_METADATA_UNDER_FLUSH:
+	case SSDFS_FS_FROZEN:
 	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
 	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
 	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
@@ -21344,6 +21345,7 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 
 	case SSDFS_METADATA_GOING_FLUSHING:
 	case SSDFS_METADATA_UNDER_FLUSH:
+	case SSDFS_FS_FROZEN:
 	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
 	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
 	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
@@ -21600,6 +21602,7 @@ int __ssdfs_restart_invalidate_processing(struct ssdfs_peb_container *pebc)
 
 	case SSDFS_METADATA_UNDER_FLUSH:
 	case SSDFS_METADATA_GOING_FLUSHING:
+	case SSDFS_FS_FROZEN:
 	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
 	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
 	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
@@ -23214,13 +23217,14 @@ int ssdfs_process_check_migration_state(struct ssdfs_peb_container *pebc)
 	}
 
 	switch (atomic_read(&si->fsi->global_fs_state)) {
+	case SSDFS_FS_FROZEN:
 	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
 	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
 	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
 	case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
 	case SSDFS_UNMOUNT_DESTROY_METADATA:
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("File system is unmounting: "
+		SSDFS_DBG("File system is frozen or unmounting: "
 			  "don't stimulate migration: "
 			  "seg_id %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id,
@@ -23577,6 +23581,7 @@ int should_be_thread_metadata_structure_user(struct ssdfs_peb_container *pebc,
 	case SSDFS_REGULAR_FS_OPERATIONS:
 	case SSDFS_METADATA_GOING_FLUSHING:
 	case SSDFS_METADATA_UNDER_FLUSH:
+	case SSDFS_FS_FROZEN:
 	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
 		if (has_dirty_folios || has_flush_requests) {
 			if (!*is_maptbl_user) {

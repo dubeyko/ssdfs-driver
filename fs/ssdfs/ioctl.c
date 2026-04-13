@@ -23,11 +23,14 @@
 #include <linux/kernel.h>
 #include <linux/rwsem.h>
 #include <linux/pagevec.h>
+#include <linux/blkdev.h>
 #include <linux/mount.h>
+#include <linux/fs.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
+#include "version.h"
 #include "ssdfs.h"
 #include "testing.h"
 #include "ioctl.h"
@@ -416,6 +419,52 @@ static int ssdfs_ioctl_tunefs_set_fs_config(struct file *file, void __user *arg)
 	return err;
 }
 
+static int ssdfs_ioctl_force_shutdown(struct file *file, void __user *arg)
+{
+	struct super_block *sb = file_inode(file)->i_sb;
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	u32 flags;
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (get_user(flags, (__u32 __user *)arg))
+		return -EFAULT;
+
+	if (ssdfs_forced_shutdown(sb))
+		return 0;
+
+	switch (flags) {
+	case SSDFS_GOING_DOWN_DEFAULT:
+	case SSDFS_GOING_DOWN_FULLSYNC:
+		/*
+		 * Use freeze_super/thaw_super rather than bdev_freeze/bdev_thaw
+		 * because SSDFS supports both block devices and MTD flash:
+		 * sb->s_bdev is NULL on an MTD mount, which would crash
+		 * bdev_freeze().  freeze_super works for any backing store.
+		 */
+		ret = freeze_super(sb, FREEZE_HOLDER_KERNEL, NULL);
+		if (ret)
+			return ret;
+		if (sb->s_bdev)
+			sync_blockdev(sb->s_bdev);
+		thaw_super(sb, FREEZE_HOLDER_KERNEL, NULL);
+		set_bit(SSDFS_FLAGS_SHUTDOWN, &fsi->s_ssdfs_flags);
+		break;
+	case SSDFS_GOING_DOWN_NOSYNC:
+		set_bit(SSDFS_FLAGS_SHUTDOWN, &fsi->s_ssdfs_flags);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	SSDFS_INFO("forced shutdown committed for %s on device %s\n",
+		   SSDFS_VERSION, fsi->devops->device_name(sb));
+
+	return 0;
+}
+
 /*
  * The ssdfs_ioctl() is called by the ioctl(2) system call.
  */
@@ -466,6 +515,8 @@ long ssdfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return ssdfs_ioctl_tunefs_get_fs_config(file, argp);
 	case SSDFS_IOC_TUNEFS_SET_CONFIG:
 		return ssdfs_ioctl_tunefs_set_fs_config(file, argp);
+	case SSDFS_IOC_SHUTDOWN:
+		return ssdfs_ioctl_force_shutdown(file, argp);
 	}
 
 	return -ENOTTY;

@@ -468,6 +468,9 @@ int ssdfs_create(struct mnt_idmap *idmap,
 	SSDFS_DBG("dir %lu, mode %o\n", (unsigned long)dir->i_ino, mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
+		return -EIO;
+
 	inode = ssdfs_new_inode(idmap, dir, mode, &dentry->d_name);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
@@ -500,6 +503,9 @@ static int ssdfs_mknod(struct mnt_idmap *idmap,
 	SSDFS_DBG("dir %lu, mode %o, rdev %#x\n",
 		  (unsigned long)dir->i_ino, mode, rdev);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
+		return -EIO;
 
 	if (dentry->d_name.len > SSDFS_MAX_NAME_LEN)
 		return -ENAMETOOLONG;
@@ -544,6 +550,9 @@ static int ssdfs_symlink(struct mnt_idmap *idmap,
 	SSDFS_DBG("dir %lu, target_len %zu\n",
 		  (unsigned long)dir->i_ino, target_len);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
+		return -EIO;
 
 	if (target_len > dir->i_sb->s_blocksize)
 		return -ENAMETOOLONG;
@@ -648,6 +657,9 @@ static int ssdfs_link(struct dentry *old_dentry, struct inode *dir,
 	SSDFS_DBG("dir %lu, inode %lu\n",
 		  (unsigned long)dir->i_ino, (unsigned long)inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
+		return -EIO;
 
 	if (inode->i_nlink >= SSDFS_LINK_MAX)
 		return -EMLINK;
@@ -805,6 +817,9 @@ static int __ssdfs_mkdir(struct mnt_idmap *idmap,
 		  (unsigned long)dir->i_ino, mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
+		return -EIO;
+
 	if (dentry->d_name.len > SSDFS_MAX_NAME_LEN)
 		return -ENAMETOOLONG;
 
@@ -884,6 +899,9 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 	SSDFS_DBG("dir %lu, inode %lu\n",
 		  (unsigned long)dir->i_ino, (unsigned long)inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
+		return -EIO;
 
 	trace_ssdfs_unlink_enter(dir, dentry);
 
@@ -1014,6 +1032,9 @@ static int ssdfs_rmdir(struct inode *dir, struct dentry *dentry)
 	SSDFS_DBG("dir %lu, subdir %lu\n",
 		  (unsigned long)dir->i_ino, (unsigned long)inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
+		return -EIO;
 
 	if (ssdfs_empty_dir(inode)) {
 		err = ssdfs_unlink(dir, dentry);
@@ -1587,6 +1608,9 @@ static int ssdfs_rename(struct mnt_idmap *idmap,
 		  (unsigned long)old_dentry->d_inode->i_ino,
 		  (unsigned long)new_dir->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(ssdfs_forced_shutdown(old_dir->i_sb)))
+		return -EIO;
 
 	if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT)) {
 		SSDFS_ERR("invalid flags %#x\n", flags);
@@ -2381,6 +2405,9 @@ static int ssdfs_tmpfile(struct mnt_idmap *idmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dir %lu, mode %o\n", (unsigned long)dir->i_ino, mode);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
+		return -EIO;
 
 	inode = ssdfs_new_inode(idmap, dir, mode, &empty_name);
 	if (IS_ERR(inode)) {

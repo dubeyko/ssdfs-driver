@@ -55,4 +55,25 @@
 #define SSDFS_IOC_TUNEFS_SET_CONFIG	_IOWR(SSDFS_IOCTL_MAGIC, 10, \
 					     struct ssdfs_tunefs_options)
 
+/*
+ * Force shutdown flags passed to SSDFS_IOC_SHUTDOWN.
+ *
+ * SSDFS_GOING_DOWN_DEFAULT  - write back all dirty data and metadata,
+ *                             then mark filesystem as shut down.
+ * SSDFS_GOING_DOWN_FULLSYNC - same as DEFAULT (alias).
+ * SSDFS_GOING_DOWN_NOSYNC   - mark filesystem as shut down immediately
+ *                             without flushing any data to disk.
+ */
+#define SSDFS_GOING_DOWN_DEFAULT	0x1
+#define SSDFS_GOING_DOWN_FULLSYNC	0x2
+#define SSDFS_GOING_DOWN_NOSYNC		0x4
+
+/*
+ * SSDFS_IOC_SHUTDOWN - force filesystem shutdown
+ *
+ * Accepts a __u32 flags argument (one of SSDFS_GOING_DOWN_*).
+ * Requires CAP_SYS_ADMIN.
+ */
+#define SSDFS_IOC_SHUTDOWN	_IOR(SSDFS_IOCTL_MAGIC, 11, __u32)
+
 #endif /* _SSDFS_IOCTL_H */

@@ -1174,12 +1174,14 @@ int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 	switch (state) {
 	case SSDFS_METADATA_GOING_FLUSHING:
 	case SSDFS_METADATA_UNDER_FLUSH:
+	case SSDFS_FS_FROZEN:
 		/*
 		 * Thread that is trying to flush metadata
 		 * waits the end of user data flush requests.
 		 * So, GC should not add any requests,
 		 * otherwise, the metadata flush could
 		 * never happened.
+		 * Filesystem frozen: do not add GC requests.
 		 */
 		SSDFS_DBG("don't add request before metadata flush\n");
 		return SSDFS_WAIT_IDLE_STATE;
@@ -1576,13 +1578,14 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 	}
 
 	switch (atomic_read(&si->fsi->global_fs_state)) {
+	case SSDFS_FS_FROZEN:
 	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
 	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
 	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
 	case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
 	case SSDFS_UNMOUNT_DESTROY_METADATA:
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("File system is unmounting: "
+		SSDFS_DBG("File system is frozen or unmounting: "
 			  "don't stimulate migration: "
 			  "seg_id %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id,
@@ -2031,6 +2034,7 @@ int should_be_thread_metadata_structure_user(struct ssdfs_fs_info *fsi,
 	case SSDFS_REGULAR_FS_OPERATIONS:
 	case SSDFS_METADATA_GOING_FLUSHING:
 	case SSDFS_METADATA_UNDER_FLUSH:
+	case SSDFS_FS_FROZEN:
 		if (!*is_maptbl_user) {
 			ssdfs_register_mapping_table_user(fsi,
 							is_maptbl_user);

@@ -153,6 +153,9 @@ static int ssdfs_snapshot_sb_log_payload(struct super_block *sb,
 static int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 				struct ssdfs_peb_extent *last_sb_log,
 				struct ssdfs_sb_log_payload *payload);
+static int ssdfs_freeze_fs(struct super_block *sb);
+static int ssdfs_unfreeze_fs(struct super_block *sb);
+static void ssdfs_shutdown(struct super_block *sb);
 static void ssdfs_put_super(struct super_block *sb);
 static void ssdfs_check_memory_leaks(void);
 
@@ -708,6 +711,9 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 	SSDFS_DBG("sb %p\n", sb);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+	if (ssdfs_forced_shutdown(sb))
+		return 0;
+
 #ifdef CONFIG_SSDFS_SHOW_CONSUMED_MEMORY
 	SSDFS_ERR("SYNCFS is starting...\n");
 	ssdfs_check_memory_leaks();
@@ -812,6 +818,9 @@ static const struct super_operations ssdfs_super_operations = {
 	.show_options	= ssdfs_show_options,
 	.put_super	= ssdfs_put_super,
 	.sync_fs	= ssdfs_sync_fs,
+	.freeze_fs	= ssdfs_freeze_fs,
+	.unfreeze_fs	= ssdfs_unfreeze_fs,
+	.shutdown	= ssdfs_shutdown,
 };
 
 static inline
@@ -4420,7 +4429,7 @@ void wait_unfinished_commit_log_requests(struct ssdfs_fs_info *fsi)
 	}
 }
 
-static void ssdfs_put_super(struct super_block *sb)
+static void ssdfs_quiesce(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct ssdfs_peb_extent last_sb_log = {0};
@@ -4804,12 +4813,6 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 	}
 
-	atomic_set(&fsi->global_fs_state, SSDFS_UNMOUNT_DESTROY_METADATA);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("SSDFS_UNMOUNT_DESTROY_METADATA\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("STOP GLOBAL FSCK THREAD...\n");
 #else
@@ -4842,8 +4845,145 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_super_folio_batch_release(&payload.maptbl_cache.batch);
 	fsi->devops->sync(sb);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+}
+
+static int ssdfs_freeze_fs(struct super_block *sb)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	int err;
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("sb %p\n", sb);
+#else
+	SSDFS_DBG("sb %p\n", sb);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	/*
-	 * Make sure all delayed rcu free inodes are flushed.
+	 * Read-only mounts have no dirty metadata to flush.
+	 * Skip the sync entirely; the VFS freeze mechanism still
+	 * quiesces new write attempts via sb->s_writers.
+	 */
+	if (sb_rdonly(sb))
+		return 0;
+
+	/*
+	 * sync_filesystem() was already called by the VFS freeze_super
+	 * before invoking this callback, so all user data and metadata
+	 * have been synced.  Drain any in-flight I/O from background
+	 * threads (GC, maptbl, shextree) that do not use sb_start_intwrite
+	 * and are therefore not blocked by the VFS freeze mechanism.
+	 */
+	wake_up_all(&fsi->pending_wq);
+	wait_unfinished_read_data_requests(fsi);
+	wait_unfinished_user_data_requests(fsi);
+	wait_unfinished_commit_log_requests(fsi);
+
+	err = ssdfs_sync_metadata(fsi);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to sync metadata: err %d\n", err);
+		return err;
+	}
+
+	wake_up_all(&fsi->pending_wq);
+	wait_unfinished_commit_log_requests(fsi);
+
+	atomic_set(&fsi->global_fs_state, SSDFS_FS_FROZEN);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return 0;
+}
+
+static int ssdfs_unfreeze_fs(struct super_block *sb)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("sb %p\n", sb);
+#else
+	SSDFS_DBG("sb %p\n", sb);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	/*
+	 * freeze_fs was a no-op for read-only mounts, so there is
+	 * no SSDFS_FS_FROZEN state to undo and no threads to wake.
+	 */
+	if (sb_rdonly(sb))
+		return 0;
+
+	atomic_set(&fsi->global_fs_state, SSDFS_REGULAR_FS_OPERATIONS);
+	wake_up_all(&fsi->pending_wq);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return 0;
+}
+
+static void ssdfs_shutdown(struct super_block *sb)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("sb %p\n", sb);
+#else
+	SSDFS_DBG("sb %p\n", sb);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	/*
+	 * Always quiesce the filesystem to flush outstanding metadata,
+	 * regardless of whether a forced shutdown was requested via ioctl.
+	 *
+	 * The SSDFS_FLAGS_SHUTDOWN flag (set by SSDFS_IOC_SHUTDOWN) only
+	 * gates new write operations (write_inode, sync_fs) so nothing
+	 * new enters the filesystem after the ioctl.  It does not mean
+	 * the quiesce can be skipped here:
+	 *
+	 *  - GOING_DOWN_DEFAULT/FULLSYNC: ioctl pre-synced via freeze_super,
+	 *    so quiesce will find little to do and return quickly.
+	 *  - GOING_DOWN_NOSYNC: ioctl skipped sync intentionally; the VFS
+	 *    shutdown path is responsible for the final metadata flush.
+	 */
+	ssdfs_quiesce(sb);
+
+	atomic_set(&fsi->global_fs_state, SSDFS_SHUTDOWN_COMMITTED);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	SSDFS_INFO("shutdown committed for %s on device %s\n",
+		   SSDFS_VERSION, fsi->devops->device_name(sb));
+}
+
+static void ssdfs_put_super(struct super_block *sb)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("sb %p\n", sb);
+#else
+	SSDFS_DBG("sb %p\n", sb);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (atomic_read(&fsi->global_fs_state) != SSDFS_SHUTDOWN_COMMITTED)
+		ssdfs_quiesce(sb);
+
+	atomic_set(&fsi->global_fs_state, SSDFS_UNMOUNT_DESTROY_METADATA);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("SSDFS_UNMOUNT_DESTROY_METADATA\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	/*
+	 * Make sure all delayed rcu free inodes are flushed
+	 * before destroying the metadata structures.
 	 */
 	rcu_barrier();
 

@@ -3333,6 +3333,9 @@ int ssdfs_writepages(struct address_space *mapping,
 		  wbc->range_cyclic);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(ssdfs_forced_shutdown(inode->i_sb)))
+		return -EIO;
+
 	batch = ssdfs_dirty_folios_batch_alloc();
 	if (IS_ERR_OR_NULL(batch)) {
 		ret = (batch == NULL ? -ENOMEM : PTR_ERR(batch));
@@ -4111,6 +4114,9 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 		  inode->i_ino, pos, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(ssdfs_forced_shutdown(inode->i_sb)))
+		return -EIO;
+
 	if (inode->i_sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
@@ -4692,6 +4698,9 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 		  (unsigned long)inode->i_ino, (unsigned long long)start,
 		  (unsigned long long)end, datasync);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(ssdfs_forced_shutdown(inode->i_sb)))
+		return -EIO;
 
 	trace_ssdfs_sync_file_enter(inode);
 

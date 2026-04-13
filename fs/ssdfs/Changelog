@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.61 [April 12, 2026]
+    (*) Introduce shutdown/freezing support.
+
 v.5.60 [April 11, 2026]
     (*) Introduce fscrypt support.
 

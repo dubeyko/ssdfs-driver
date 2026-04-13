@@ -25,6 +25,8 @@ enum {
 	SSDFS_UNMOUNT_METADATA_UNDER_FLUSH,
 	SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH,
 	SSDFS_UNMOUNT_COMMIT_SUPERBLOCK,
+	SSDFS_SHUTDOWN_COMMITTED,
+	SSDFS_FS_FROZEN,
 	SSDFS_UNMOUNT_DESTROY_METADATA,
 	SSDFS_GLOBAL_FS_STATE_MAX
 };
@@ -572,6 +574,7 @@ struct ssdfs_btree_nodes_list {
  * @snapshots_tree_kobj_unregister: completion state for snapshots_tree kernel object
  * @shared_dict_kobj: /sys/fs/<ssdfs>/<device>/shared_dict kernel object
  * @shared_dict_kobj_unregister: completion state for shared_dict kernel object
+ * @s_ssdfs_flags: runtime state flags (e.g. SSDFS_FLAGS_SHUTDOWN)
  * @invextree_kobj: /sys/fs/<ssdfs>/<device>/invextree kernel object
  * @invextree_kobj_unregister: completion state for invextree kernel object
  */
@@ -613,6 +616,7 @@ struct ssdfs_fs_info {
 	u16 user_data_log_pages;
 
 	atomic_t global_fs_state;
+	unsigned long s_ssdfs_flags;	/* runtime state flags */
 	struct completion mount_end;
 
 	spinlock_t volume_state_lock;

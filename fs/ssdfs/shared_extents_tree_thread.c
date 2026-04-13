@@ -307,6 +307,7 @@ try_invalidate_queue:
 		switch (state) {
 		case SSDFS_METADATA_GOING_FLUSHING:
 		case SSDFS_METADATA_UNDER_FLUSH:
+		case SSDFS_FS_FROZEN:
 			if (kthread_should_stop()) {
 				/*
 				 * continue logic
@@ -317,6 +318,7 @@ try_invalidate_queue:
 				 * waits the end of user data flush requests.
 				 * So, it needs to wait before adding
 				 * the new invalidation requests.
+				 * Filesystem frozen: do not add requests.
 				 */
 				SSDFS_DBG("don't add request\n");
 				wait_event_interruptible_timeout(*wait_queue,
@@ -548,6 +550,7 @@ try_invalidate_queue:
 		switch (state) {
 		case SSDFS_METADATA_GOING_FLUSHING:
 		case SSDFS_METADATA_UNDER_FLUSH:
+		case SSDFS_FS_FROZEN:
 			if (kthread_should_stop()) {
 				/*
 				 * continue logic
@@ -558,6 +561,7 @@ try_invalidate_queue:
 				 * waits the end of user data flush requests.
 				 * So, it needs to wait before adding
 				 * the new invalidation requests.
+				 * Filesystem frozen: do not add requests.
 				 */
 				SSDFS_DBG("don't add request\n");
 				wait_event_interruptible_timeout(*wait_queue,
