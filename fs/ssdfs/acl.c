@@ -174,22 +174,14 @@ int __ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 	}
 
 	if (acl) {
-		size = posix_acl_xattr_size(acl->a_count);
-		value = ssdfs_acl_kzalloc(size, GFP_KERNEL);
+		value = posix_acl_to_xattr(&init_user_ns, acl, &size, GFP_KERNEL);
 		if (!value) {
 			SSDFS_ERR("unable to allocate memory\n");
 			return -ENOMEM;
 		}
-		err = posix_acl_to_xattr(&init_user_ns, acl, value, size);
-		if (err < 0) {
-			SSDFS_ERR("unable to convert acl to xattr\n");
-			goto end_set_acl;
-		}
 	}
 
 	err = __ssdfs_setxattr(inode, name_index, xattr_name, value, size, 0);
-
-end_set_acl:
 	ssdfs_acl_kfree(value);
 
 	if (!err)
