@@ -1006,6 +1006,19 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 				SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 			blk_bmap->allocation_pool = blk_bmap->items_capacity;
 
+			if (blk_bmap->items_capacity >
+					SSDFS_BLK_BMAP_CAPACITY_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("block bitmap capacity cannot be bigger 64K: "
+					  "items_capacity %zu\n",
+					  blk_bmap->items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+				blk_bmap->items_capacity =
+						SSDFS_BLK_BMAP_CAPACITY_MAX;
+				blk_bmap->allocation_pool =
+						blk_bmap->items_capacity;
+			}
+
 			/*
 			 * Re-calculate bmap_bytes for items_capacity
 			 */
@@ -1592,6 +1605,15 @@ int ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
 
 	new_items_capacity = used_space + free_items;
 
+	if (new_items_capacity > SSDFS_BLK_BMAP_CAPACITY_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("block bitmap capacity cannot be bigger 64K: "
+			  "new_items_capacity %zu\n",
+			  new_items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+		new_items_capacity = SSDFS_BLK_BMAP_CAPACITY_MAX;
+	}
+
 	return __ssdfs_block_bmap_inflate(blk_bmap, new_items_capacity);
 }
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_inflate);
@@ -1669,6 +1691,15 @@ int ssdfs_block_bmap_correct_capacity(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	new_items_capacity = upper_bound;
+
+	if (new_items_capacity > SSDFS_BLK_BMAP_CAPACITY_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("block bitmap capacity cannot be bigger 64K: "
+			  "new_items_capacity %zu\n",
+			  new_items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+		new_items_capacity = SSDFS_BLK_BMAP_CAPACITY_MAX;
+	}
 
 	return __ssdfs_block_bmap_inflate(blk_bmap, new_items_capacity);
 }

@@ -471,7 +471,6 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	default:
 		SSDFS_WARN("invalid segment object's state %#x\n",
 			   atomic_read(&si->obj_state));
-		ssdfs_segment_free_object(si);
 		return -EINVAL;
 	}
 
@@ -711,7 +710,6 @@ fail_construct_seg_obj:
 		atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_FAILURE);
 
 	wake_up_all(&si->object_queue);
-	ssdfs_segment_free_object(si);
 
 	return err;
 }
@@ -2107,6 +2105,7 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 					   "seg %llu, err %d\n",
 					   si->seg_id, res);
 			}
+			ssdfs_segment_free_object(si);
 		}
 
 		if (err == -ENOSPC) {

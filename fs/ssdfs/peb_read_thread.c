@@ -12065,7 +12065,6 @@ finish_init_blk2off_table:
 			  req->private.class,
 			  req->private.cmd,
 			  req->private.type);
-		BUG();
 		break;
 
 	default:

@@ -3310,7 +3310,6 @@ int ssdfs_writepages(struct address_space *mapping,
 	struct ssdfs_segment_request_pool pool;
 	struct ssdfs_dirty_folios_batch *batch;
 	struct folio_batch fvec;
-	struct folio_batch block_vec;
 	int folios_count;
 	pgoff_t index = 0;
 	pgoff_t end;		/* Inclusive */
@@ -3346,14 +3345,13 @@ int ssdfs_writepages(struct address_space *mapping,
 	ssdfs_segment_request_pool_init(&pool);
 	ssdfs_dirty_folios_batch_init(batch);
 
+	folio_batch_init(&fvec);
+
 	/*
 	 * No folios to write?
 	 */
 	if (!mapping->nrpages || !mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
 		goto out_writepages;
-
-	folio_batch_init(&fvec);
-	folio_batch_init(&block_vec);
 
 	if (wbc->range_cyclic) {
 		index = mapping->writeback_index; /* prev offset */
@@ -3628,6 +3626,8 @@ continue_unlock:
 		done_index = 0;
 
 out_writepages:
+	folio_batch_release(&fvec);
+
 	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0))
 		mapping->writeback_index = done_index;
 

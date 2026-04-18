@@ -3621,6 +3621,18 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				  portion.capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+			if (portion.capacity > table->lbmap.bits_count) {
+				err = ssdfs_blk2off_table_resize_bitmap_array(
+							&table->lbmap,
+							portion.capacity);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to resize bitmap array: "
+						  "capacity %u, err %d\n",
+						  portion.capacity, err);
+					goto unlock_translation_table;
+				}
+			}
+
 			table->lblk2off_capacity = portion.capacity;
 		}
 
@@ -4060,6 +4072,17 @@ int ssdfs_blk2off_table_resize_nolock(struct ssdfs_blk2off_table *table,
 	}
 
 	diff = (int)new_items_count - table->lblk2off_capacity;
+
+	if (new_items_count > table->lbmap.bits_count) {
+		err = ssdfs_blk2off_table_resize_bitmap_array(&table->lbmap,
+							      new_items_count);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to resize bitmap array: "
+				  "new_items_count %u, err %d\n",
+				  new_items_count, err);
+			goto finish_table_resize;
+		}
+	}
 
 	table->lblk2off_capacity = new_items_count;
 	table->free_logical_blks += diff;

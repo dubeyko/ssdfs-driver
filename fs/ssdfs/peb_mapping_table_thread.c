@@ -748,6 +748,15 @@ int __ssdfs_maptbl_correct_peb_state(struct ssdfs_peb_mapping_table *tbl,
 		ptr->state = SSDFS_MAPTBL_RECOVERING_STATE;
 		bitmap_clear(dirty_bmap, item_index, 1);
 		bitmap_set(recover_bmap, item_index, 1);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(fdesc->pre_erase_pebs == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+		fdesc->pre_erase_pebs--;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("fdesc->pre_erase_pebs %u\n",
+			  fdesc->pre_erase_pebs);
+#endif /* CONFIG_SSDFS_DEBUG */
 		fdesc->recovering_pebs++;
 		if (!(hdr->flags & SSDFS_PEBTBL_UNDER_RECOVERING)) {
 			hdr->flags |= SSDFS_PEBTBL_UNDER_RECOVERING;
@@ -2037,7 +2046,10 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 	down_read(&tbl->tbl_lock);
 
-	if (is_ssdfs_maptbl_under_flush(fsi)) {
+	if (is_ssdfs_maptbl_start_migration(fsi)) {
+		/* continue logic */
+		SSDFS_DBG("mapping table is starting migration\n");
+	} else if (is_ssdfs_maptbl_under_flush(fsi)) {
 		err = -EBUSY;
 		SSDFS_DBG("mapping table is under flush\n");
 		goto finish_collect_dirty_pebs;
@@ -2081,7 +2093,10 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 		up_read(&tbl->tbl_lock);
 
-		if (is_ssdfs_maptbl_under_flush(fsi)) {
+		if (is_ssdfs_maptbl_start_migration(fsi)) {
+			/* continue logic */
+			SSDFS_DBG("mapping table is starting migration\n");
+		} else if (is_ssdfs_maptbl_under_flush(fsi)) {
 			err = -EBUSY;
 			SSDFS_DBG("mapping table is under flush\n");
 			goto finish_dirty_pebs_processing;
@@ -2179,7 +2194,10 @@ int __ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 	down_read(&tbl->tbl_lock);
 
-	if (is_ssdfs_maptbl_under_flush(fsi)) {
+	if (is_ssdfs_maptbl_start_migration(fsi)) {
+		/* continue logic */
+		SSDFS_DBG("mapping table is starting migration\n");
+	} else if (is_ssdfs_maptbl_under_flush(fsi)) {
 		err = -EBUSY;
 		SSDFS_DBG("mapping table is under flush\n");
 		goto finish_collect_recovering_pebs;
@@ -2214,7 +2232,10 @@ finish_collect_recovering_pebs:
 	if (err)
 		goto finish_pebs_recovering;
 
-	if (is_ssdfs_maptbl_under_flush(fsi)) {
+	if (is_ssdfs_maptbl_start_migration(fsi)) {
+		/* continue logic */
+		SSDFS_DBG("mapping table is starting migration\n");
+	} else if (is_ssdfs_maptbl_under_flush(fsi)) {
 		err = -EBUSY;
 		SSDFS_DBG("mapping table is under flush\n");
 		goto finish_pebs_recovering;
@@ -2429,7 +2450,10 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 
 	down_read(&tbl->tbl_lock);
 
-	if (is_ssdfs_maptbl_under_flush(fsi)) {
+	if (is_ssdfs_maptbl_start_migration(fsi)) {
+		/* continue logic */
+		SSDFS_DBG("mapping table is starting migration\n");
+	} else if (is_ssdfs_maptbl_under_flush(fsi)) {
 		err = -EBUSY;
 		SSDFS_DBG("mapping table is under flush\n");
 		goto finish_resolving;
@@ -2464,7 +2488,10 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 		down_read(&tbl->tbl_lock);
 	}
 
-	if (is_ssdfs_maptbl_under_flush(fsi)) {
+	if (is_ssdfs_maptbl_start_migration(fsi)) {
+		/* continue logic */
+		SSDFS_DBG("mapping table is starting migration\n");
+	} else if (is_ssdfs_maptbl_under_flush(fsi)) {
 		err = -EBUSY;
 		SSDFS_DBG("mapping table is under flush\n");
 		goto finish_resolving;
@@ -2844,8 +2871,7 @@ check_next_step:
 
 		wait_event_interruptible_timeout(*wait_queue,
 					kthread_should_stop(), HZ);
-	} else
-		goto sleep_maptbl_thread;
+	}
 
 	if (kthread_should_stop())
 		goto repeat;
@@ -2869,6 +2895,12 @@ check_next_step:
 		if (kthread_should_stop())
 			goto repeat;
 	}
+
+	if (kthread_should_stop())
+		goto repeat;
+
+	if (has_maptbl_pre_erase_pebs(tbl))
+		goto repeat;
 
 sleep_maptbl_thread:
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);

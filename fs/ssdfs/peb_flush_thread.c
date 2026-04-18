@@ -17059,6 +17059,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	si = pebi->pebc->parent_si;
 	log_state = atomic_read(&pebi->current_log.state);
 
 	switch (log_state) {
@@ -17074,6 +17075,15 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		break;
 
 	case SSDFS_LOG_COMMITTED:
+		SSDFS_ERR("has_dirty_blocks %#x, "
+			  "have_flush_requests %#x, "
+			  "blk_bmap_dirty %#x, "
+			  "kthread_should_stop %#x\n",
+			  ssdfs_peb_has_dirty_folios(pebi),
+			  have_flush_requests(pebi->pebc),
+			  is_ssdfs_segment_blk_bmap_dirty(&si->blk_bmap,
+						pebi->pebc->peb_index),
+			  kthread_should_stop());
 		SSDFS_WARN("peb %llu current log has been commited\n",
 			   pebi->peb_id);
 		return 0;
@@ -17096,7 +17106,6 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		  pebi->current_log.start_block);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	si = pebi->pebc->parent_si;
 	log_strategy = is_log_partial(pebi);
 	block_size = pebi->pebc->parent_si->fsi->pagesize;
 	pebs_per_seg = pebi->pebc->parent_si->fsi->pebs_per_seg;
@@ -19495,9 +19504,11 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_mapping_table *maptbl;
 	struct ssdfs_peb_info *pebi = NULL;
+	struct ssdfs_segment_blk_bmap *blk_bmap;
 	u64 peb_id = U64_MAX;
 	bool is_peb_exhausted = false;
 	bool peb_has_dirty_folios = false;
+	bool is_blk_bmap_dirty = false;
 	bool need_create_log = true;
 	int err = 0;
 
@@ -19524,6 +19535,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 	si = pebc->parent_si;
 	fsi = si->fsi;
 	maptbl = fsi->maptbl;
+	blk_bmap = &si->blk_bmap;
 
 	if (fsi->sb->s_flags & SB_RDONLY) {
 		thread_state->state = SSDFS_FLUSH_THREAD_RO_STATE;
@@ -19601,15 +19613,19 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 	ssdfs_peb_current_log_lock(pebi);
 	peb_id = pebi->peb_id;
 	peb_has_dirty_folios = ssdfs_peb_has_dirty_folios(pebi);
-	need_create_log = peb_has_dirty_folios || have_flush_requests(pebc);
+	is_blk_bmap_dirty = is_ssdfs_segment_blk_bmap_dirty(blk_bmap,
+							    pebc->peb_index);
+	need_create_log = peb_has_dirty_folios ||
+				have_flush_requests(pebc) || is_blk_bmap_dirty;
 	is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_id %llu, ssdfs_peb_has_dirty_folios %#x, "
-		  "have_flush_requests %#x, need_create_log %#x, "
-		  "is_peb_exhausted %#x\n",
+		  "have_flush_requests %#x, is_blk_bmap_dirty %#x, "
+		  "need_create_log %#x, is_peb_exhausted %#x\n",
 		  peb_id, peb_has_dirty_folios,
 		  have_flush_requests(pebc),
-		  need_create_log, is_peb_exhausted);
+		  is_blk_bmap_dirty, need_create_log,
+		  is_peb_exhausted);
 #endif /* CONFIG_SSDFS_DEBUG */
 	ssdfs_peb_current_log_unlock(pebi);
 
@@ -19621,7 +19637,8 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 	}
 
 	if (has_commit_log_now_requested(pebc) &&
-	    is_create_requests_queue_empty(pebc)) {
+	    is_create_requests_queue_empty(pebc) &&
+	    !is_blk_bmap_dirty) {
 		/*
 		 * If no other commands in the queue
 		 * then ignore the log creation now.
@@ -19639,7 +19656,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 		goto finish_method;
 	}
 
-	if (has_start_migration_now_requested(pebc)) {
+	if (has_start_migration_now_requested(pebc) && !is_blk_bmap_dirty) {
 		/*
 		 * No necessity to create log
 		 * for START_MIGRATION_NOW command.
@@ -22819,7 +22836,10 @@ int ssdfs_process_commit_log_state(struct ssdfs_peb_container *pebc)
 
 		if (is_peb_under_migration(pebc) &&
 		    !thread_state->has_migration_check_requested) {
-			SSDFS_DBG("Try to stimulate the migration\n");
+			SSDFS_DBG("Try to stimulate the migration: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_CHECK_MIGRATION_NEED;
 			thread_state->has_migration_check_requested = true;
@@ -24486,9 +24506,11 @@ next_partial_step:
 		if (is_ssdfs_segment_blk_bmap_dirty(&pebc->parent_si->blk_bmap,
 						    pebc->peb_index)) {
 			SSDFS_WARN("block bitmap is dirty: "
-				   "seg_id %llu, peb_index %u\n",
+				   "seg_id %llu, peb_index %u, "
+				   "have_flush_requests %#x\n",
 				   pebc->parent_si->seg_id,
-				   pebc->peb_index);
+				   pebc->peb_index,
+				   have_flush_requests(pebc));
 
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG();

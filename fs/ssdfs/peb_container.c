@@ -3366,10 +3366,18 @@ try_define_relation:
 
 			timeout = ktime_add_ns(ktime_get(),
 						jiffies_to_nsecs(HZ));
+			/*
+			 * Release the container lock before sleeping.
+			 * Holding pebc->lock (read) while calling
+			 * schedule_hrtimeout() would block any concurrent
+			 * down_write(&pebc->lock) caller, causing a deadlock.
+			 */
+			ssdfs_peb_container_unlock(ptr);
 			prepare_to_wait(&ptr->migration_wq, &wait,
 					TASK_INTERRUPTIBLE);
 			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 			finish_wait(&ptr->migration_wq, &wait);
+			ssdfs_peb_container_lock(ptr);
 			goto try_define_relation;
 		}
 		break;
@@ -3466,7 +3474,15 @@ finish_define_relation:
 							 dst_peb_index,
 							 &end);
 		if (err == -EAGAIN) {
+			/*
+			 * Release the container lock before waiting on the
+			 * maptbl init completion to avoid blocking concurrent
+			 * down_write(&pebc->lock) callers.
+			 */
+			ssdfs_peb_container_unlock(ptr);
 			err = SSDFS_WAIT_COMPLETION(end);
+			ssdfs_peb_container_lock(ptr);
+
 			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
@@ -3568,6 +3584,7 @@ int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	u64 seg;
 	u32 log_blocks;
 	u8 peb_migration_id;
+	int number_of_tries = 0;
 	struct completion *end;
 	int err = 0;
 
@@ -3618,7 +3635,16 @@ int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	err = ssdfs_maptbl_add_migration_peb(fsi, leb_id, ptr->peb_type,
 					     &pebr, &end);
 	if (err == -EAGAIN) {
+		/*
+		 * Release the container lock before waiting on the maptbl
+		 * init completion.  Holding pebc->lock (read) while sleeping
+		 * would block any concurrent down_write(&pebc->lock) caller
+		 * (e.g. ssdfs_peb_release_folios), causing a deadlock.
+		 */
+		ssdfs_peb_container_unlock(ptr);
 		err = SSDFS_WAIT_COMPLETION(end);
+		ssdfs_peb_container_lock(ptr);
+
 		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
@@ -3649,10 +3675,16 @@ wait_erase_operation_end:
 
 		wake_up_all(&fsi->maptbl->wait_queue);
 
-		prepare_to_wait(&fsi->maptbl->erase_ops_end_wq, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
-		finish_wait(&fsi->maptbl->erase_ops_end_wq, &wait);
+		ssdfs_peb_container_unlock(ptr);
+		{
+			ktime_t timeout = ktime_add_ns(ktime_get(),
+						       jiffies_to_nsecs(HZ));
+			prepare_to_wait(&fsi->maptbl->erase_ops_end_wq, &wait,
+					TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
+			finish_wait(&fsi->maptbl->erase_ops_end_wq, &wait);
+		}
+		ssdfs_peb_container_lock(ptr);
 
 		err = ssdfs_maptbl_add_migration_peb(fsi, leb_id, ptr->peb_type,
 						     &pebr, &end);
@@ -3668,7 +3700,16 @@ wait_erase_operation_end:
 			 * We still have pre-erased PEBs.
 			 * Let's wait more.
 			 */
-			goto wait_erase_operation_end;
+			number_of_tries++;
+			if (number_of_tries >= SSDFS_MAX_NUMBER_OF_TRIES) {
+				err = -EFAULT;
+				SSDFS_ERR("fail to add migration PEB: "
+					  "leb_id %llu, peb_type %#x, "
+					  "err %d\n",
+					  leb_id, ptr->peb_type, err);
+				goto fail_prepare_destination;
+			} else
+				goto wait_erase_operation_end;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add migration PEB: "
 				  "leb_id %llu, peb_type %#x, "

@@ -1141,6 +1141,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	struct ssdfs_peb_info *pebi = NULL;
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	struct ssdfs_segment_request *req;
 	int used_pages;
 	int peb_blks_capacity;
 	int old_migration_state;
@@ -1398,6 +1399,32 @@ try_finish_migration_now:
 				  used_pages);
 			goto finish_migration_done;
 		}
+
+		if (range1.len > 0 || range2.len > 0) {
+			req = ssdfs_request_alloc();
+			if (IS_ERR_OR_NULL(req)) {
+				err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+				SSDFS_ERR("fail to allocate segment request: "
+					  "err %d\n", err);
+				goto finish_migration_done;
+			}
+
+			ssdfs_request_init(req, fsi->pagesize);
+			ssdfs_get_request(req);
+
+			err = ssdfs_segment_commit_log_async2(si,
+							      SSDFS_REQ_ASYNC,
+							      pebc->peb_index,
+							      req);
+			if (unlikely(err)) {
+				SSDFS_ERR("commit log request failed: "
+					  "peb_index %d, err %d\n",
+					  pebc->peb_index, err);
+				ssdfs_put_request(req);
+				ssdfs_request_free(req, si);
+				goto finish_migration_done;
+			}
+		}
 	}
 
 	used_pages = ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
@@ -1434,6 +1461,30 @@ try_finish_migration_now:
 			  "seg %llu, peb_index %u, err %d\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index, err);
+		goto finish_migration_done;
+	}
+
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate segment request: "
+			  "err %d\n", err);
+		goto finish_migration_done;
+	}
+
+	ssdfs_request_init(req, fsi->pagesize);
+	ssdfs_get_request(req);
+
+	err = ssdfs_segment_commit_log_async2(si,
+					      SSDFS_REQ_ASYNC,
+					      pebc->peb_index,
+					      req);
+	if (unlikely(err)) {
+		SSDFS_ERR("commit log request failed: "
+			  "peb_index %d, err %d\n",
+			  pebc->peb_index, err);
+		ssdfs_put_request(req);
+		ssdfs_request_free(req, si);
 		goto finish_migration_done;
 	}
 

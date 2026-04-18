@@ -226,11 +226,15 @@ int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
 			/*
 			 * Ignore this error.
 			 */
+			ssdfs_segment_free_object(*kaddr);
+			*kaddr = NULL;
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create segment: "
 				  "seg %llu, err %d\n",
 				  seg, err);
+			ssdfs_segment_free_object(*kaddr);
+			*kaddr = NULL;
 			return err;
 		}
 

@@ -722,11 +722,15 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 				/*
 				 * Ignore this error.
 				 */
+				ssdfs_segment_free_object(*kaddr);
+				*kaddr = NULL;
 				return err;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create segment: "
 					  "seg %llu, err %d\n",
 					  seg, err);
+				ssdfs_segment_free_object(*kaddr);
+				*kaddr = NULL;
 				return err;
 			}
 
@@ -3938,13 +3942,6 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 		state = atomic_read(&fdesc->state);
 		switch (state) {
 		case SSDFS_MAPTBL_FRAG_INITIALIZED:
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("simply skip *NOT DIRTY* fragment: "
-				   "index %u, state %#x\n",
-				   i, state);
-#endif /* CONFIG_SSDFS_DEBUG */
-			continue;
-
 		case SSDFS_MAPTBL_FRAG_DIRTY:
 			/* expected state */
 			break;
@@ -10239,8 +10236,11 @@ use_first_valid_folio:
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find PEB table folio: "
-			  "leb_id %llu\n",
-			  leb_id);
+			  "leb_id %llu, fdesc->pre_erase_pebs %u, "
+			  "total_pre_erase_pebs %d, err %d\n",
+			  leb_id, fdesc->pre_erase_pebs,
+			  atomic_read(&tbl->total_pre_erase_pebs),
+			  err);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
