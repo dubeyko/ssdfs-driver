@@ -2437,6 +2437,7 @@ const struct inode_operations ssdfs_dir_inode_operations = {
 	.rmdir		= ssdfs_rmdir,
 	.mknod		= ssdfs_mknod,
 	.rename		= ssdfs_rename,
+	.getattr	= ssdfs_getattr,
 	.setattr	= ssdfs_setattr,
 	.listxattr	= ssdfs_listxattr,
 	.get_inode_acl	= ssdfs_get_acl,

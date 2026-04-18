@@ -4832,6 +4832,7 @@ const struct inode_operations ssdfs_file_inode_operations = {
 };
 
 const struct inode_operations ssdfs_special_inode_operations = {
+	.getattr	= ssdfs_getattr,
 	.setattr	= ssdfs_setattr,
 	.listxattr	= ssdfs_listxattr,
 	.get_inode_acl	= ssdfs_get_acl,

@@ -5111,7 +5111,9 @@ static struct file_system_type ssdfs_fs_type = {
 	.init_fs_context = ssdfs_init_fs_context,
 	.kill_sb	= kill_ssdfs_sb,
 #ifdef CONFIG_SSDFS_BLOCK_DEVICE
-	.fs_flags	= FS_REQUIRES_DEV,
+	.fs_flags	= FS_REQUIRES_DEV | FS_ALLOW_IDMAP,
+#else
+	.fs_flags	= FS_ALLOW_IDMAP,
 #endif
 };
 MODULE_ALIAS_FS(SSDFS_VERSION);
