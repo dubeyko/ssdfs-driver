@@ -182,6 +182,7 @@ struct ssdfs_segment_info *ssdfs_segment_allocate_object(u64 seg_id)
 	ptr->seg_id = seg_id;
 	atomic_set(&ptr->refs_count, 0);
 	init_waitqueue_head(&ptr->object_queue);
+	INIT_LIST_HEAD(&ptr->list);
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ptr->writeback_folios, 0);
@@ -1021,6 +1022,11 @@ int ssdfs_find_using_segment(struct ssdfs_fs_info *fsi, int seg_type,
 		goto finish_search;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu\n",
+		  *seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 finish_search:
 	if (err == -ENOENT)
 		*seg_id = end_seg;
@@ -1186,6 +1192,11 @@ int ssdfs_find_using_invalidated_segment(struct ssdfs_fs_info *fsi,
 			  start_seg, end_seg, res);
 		goto finish_search;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu\n",
+		  *seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_search:
 	if (err == -ENOENT)
@@ -1359,6 +1370,11 @@ int ssdfs_find_clean_segment(struct ssdfs_fs_info *fsi, int seg_type,
 			  start_seg, end_seg, res);
 		goto finish_search;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu\n",
+		  *seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_search:
 	if (err == -ENOENT)
@@ -1816,26 +1832,29 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 		if (start_id >= upper_bound)
 			upper_bound = start_id + 1;
 
-		err = ssdfs_find_using_invalidated_segment(fsi,
+		while (start_id < fsi->nsegs) {
+			err = ssdfs_find_using_invalidated_segment(fsi,
 						state->request.seg_type,
 						start_id, upper_bound,
 						&state->result.seg_id,
 						&state->result.seg_state);
-		if (err == -ENOENT) {
-			err = 0;
-			/* continue logic */
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find a new segment: "
-				  "start_id %llu, err %d\n",
-				  start_id, err);
-			goto finish_search;
-		} else {
+			if (err == -ENOENT) {
+				err = 0;
+				start_id = state->result.seg_id;
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to find a new segment: "
+					  "start_id %llu, err %d\n",
+					  start_id, err);
+				goto finish_search;
+			} else {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("found seg_id %llu, state %#x\n",
-				  state->result.seg_id,
-				  state->result.seg_state);
+				SSDFS_DBG("found seg_id %llu, state %#x\n",
+					  state->result.seg_id,
+					  state->result.seg_state);
 #endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_search;
+				goto finish_search;
+			}
 		}
 	}
 

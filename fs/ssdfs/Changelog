@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.63 [April 17, 2026]
+    (*) Implement global list of segment objects.
+
 v.5.62 [April 17, 2026]
     (*) Fix PEB mapping table issue of not erasing blocks
         when mapping table's logic is trying to start migration.

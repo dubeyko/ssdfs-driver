@@ -1215,9 +1215,10 @@ void ssdfs_readahead(struct readahead_control *rac)
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_readahead_env env;
 	struct folio *folio;
-	pgoff_t index;
+	pgoff_t index = ULONG_MAX;
 	loff_t logical_offset;
 	loff_t file_size;
+	fgf_t fgp_flags = FGP_CREAT | FGP_LOCK;
 	unsigned i;
 	int res;
 	int err = 0;
@@ -1258,12 +1259,59 @@ void ssdfs_readahead(struct readahead_control *rac)
 		while (processed_bytes < fsi->pagesize) {
 			folio = readahead_folio(rac);
 			if (!folio) {
+				struct address_space *mapping = rac->mapping;
+
 				SSDFS_DBG("no more folios\n");
 
-				if (processed_bytes > 0)
-					goto try_readahead_block;
-				else
+				if (processed_bytes == 0)
 					goto finish_requests_processing;
+
+				if (index >= ULONG_MAX) {
+					err = -ERANGE;
+					SSDFS_ERR("unexpected index value\n");
+					goto finish_requests_processing;
+				}
+
+				fgp_flags |= fgf_set_order(fsi->pagesize -
+							   processed_bytes);
+
+				folio = filemap_lock_folio(mapping, index);
+				if (!folio || IS_ERR(folio)) {
+					unsigned int nofs_flags;
+
+					nofs_flags = memalloc_nofs_save();
+					folio = __filemap_get_folio(mapping,
+						    index,
+						    fgp_flags,
+						    mapping_gfp_mask(mapping));
+					memalloc_nofs_restore(nofs_flags);
+				}
+
+				if (!folio) {
+					err = -ENOMEM;
+					SSDFS_ERR("fail to grab folio: index %lu\n",
+						  index);
+					goto finish_requests_processing;
+				} else if (IS_ERR(folio)) {
+					err = PTR_ERR(folio);
+					SSDFS_ERR("fail to grab folio: "
+						  "index %lu, err %d\n",
+						  index, err);
+					goto finish_requests_processing;
+				}
+
+				ssdfs_folio_get(folio);
+				ssdfs_account_locked_folio(folio);
+
+				__ssdfs_memzero_folio(folio,
+						      0, folio_size(folio),
+						      folio_size(folio));
+
+				folio_batch_add(&env.batch, folio);
+
+				index += folio_size(folio) >> PAGE_SHIFT;
+				processed_bytes += folio_size(folio);
+				continue;
 			}
 
 			prefetchw(&folio->flags);
@@ -1306,6 +1354,7 @@ void ssdfs_readahead(struct readahead_control *rac)
 
 			folio_batch_add(&env.batch, folio);
 
+			index += folio_size(folio) >> PAGE_SHIFT;
 			processed_bytes += folio_size(folio);
 		}
 

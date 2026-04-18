@@ -14740,6 +14740,22 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 	ssdfs_peb_finish_read_request_cno(pebc);
 }
 
+static inline
+u64 ssdfs_seg_objects_max_threshold(struct ssdfs_fs_info *fsi)
+{
+	u64 ram_pages = totalram_pages();
+	u32 mem_pages_per_block = fsi->pagesize >> PAGE_SHIFT;
+	u64 mem_pages_per_seg = (u64)fsi->pages_per_seg * mem_pages_per_block;
+	u64 ram_portion_factor = 8;
+	u64 max_segs;
+
+	max_segs = div64_u64(ram_pages, ram_portion_factor);
+	max_segs = div64_u64(max_segs, mem_pages_per_seg);
+	max_segs = max_t(u64, max_segs, SSDFS_MAX_SEG_OBJECTS_THRESHOLD);
+
+	return max_segs;
+}
+
 /*
  * should_ssdfs_segment_be_destroyed() - check necessity to destroy a segment
  * @si: pointer on segment object
@@ -14762,11 +14778,12 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 	u64 future_request_cno;
 	u64 cno_diff;
 	u64 threshold;
+	u64 seg_objects;
 	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!si);
+	BUG_ON(!si || !si->fsi);
 
 	SSDFS_DBG("seg_id %llu, refs_count %d\n",
 		  si->seg_id,
@@ -14782,6 +14799,9 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 			return false;
 		}
 	}
+
+	if (is_unmount_in_progress(si))
+		return false;
 
 	switch (atomic_read(&si->obj_state)) {
 	case SSDFS_CURRENT_SEG_OBJECT:
@@ -14863,7 +14883,16 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 
 	if (reqs_count > 0)
 		return false;
-	else if (cur_cno <= future_request_cno)
+
+	if (atomic_read(&si->refs_count) > 0)
+		return false;
+
+	seg_objects = ssdfs_segment_tree_get_segs_count(si->fsi);
+
+	if (seg_objects > ssdfs_seg_objects_max_threshold(si->fsi))
+		return true;
+
+	if (cur_cno <= future_request_cno)
 		return false;
 	else
 		cno_diff = cur_cno - future_request_cno;

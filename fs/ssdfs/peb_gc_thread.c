@@ -3412,6 +3412,9 @@ repeat:
 	}
 
 	if (kthread_should_stop()) {
+		if (!is_ssdfs_seg_objects_queue_empty(soq))
+			goto destroy_seg_objects;
+
 finish_thread:
 		complete_all(&fsi->gc_thread[thread_type].full_stop);
 		return err;
@@ -3435,6 +3438,7 @@ finish_thread:
 	if (is_ssdfs_seg_objects_queue_empty(soq))
 		goto sleep_gc_thread;
 
+destroy_seg_objects:
 	do {
 		err = ssdfs_seg_objects_queue_remove_first(soq, &soi);
 		if (err == -ENODATA) {
@@ -3472,6 +3476,9 @@ finish_thread:
 
 		atomic_dec(&fsi->gc_should_act[thread_type]);
 	} while (!is_ssdfs_seg_objects_queue_empty(soq));
+
+	if (kthread_should_stop())
+		goto finish_thread;
 
 sleep_gc_thread:
 	atomic_set(&fsi->gc_should_act[thread_type], 0);
@@ -3528,6 +3535,10 @@ int ssdfs_btree_node_gc_thread_func(void *data)
 
 repeat:
 	if (kthread_should_stop()) {
+		if (!is_ssdfs_btree_nodes_list_empty(&fsi->btree_nodes))
+			goto destroy_btree_nodes;
+
+finish_thread:
 		complete_all(&fsi->gc_thread[thread_type].full_stop);
 		return err;
 	} else if (unlikely(err))
@@ -3550,6 +3561,7 @@ repeat:
 	if (is_ssdfs_btree_nodes_list_empty(&fsi->btree_nodes))
 		goto sleep_btree_nodes_gc_thread;
 
+destroy_btree_nodes:
 	spin_lock(&fsi->btree_nodes.lock);
 	list_for_each_safe(this, next, &fsi->btree_nodes.list) {
 		node = list_entry(this, struct ssdfs_btree_node, list);
@@ -3586,9 +3598,6 @@ repeat:
 
 		ssdfs_btree_node_put(node);
 
-		if (kthread_should_stop())
-			goto repeat;
-
 		spin_lock(&fsi->btree_nodes.lock);
 	}
 	spin_unlock(&fsi->btree_nodes.lock);
@@ -3599,6 +3608,9 @@ repeat:
 		timeout = BTREE_NODE_GC_THREAD_WAKEUP_TIMEOUT;
 
 	freed_nodes = 0;
+
+	if (kthread_should_stop())
+		goto finish_thread;
 
 sleep_btree_nodes_gc_thread:
 	wait_event_interruptible_timeout(*wait_queue,

@@ -129,6 +129,7 @@ enum {
 #define SSDFS_UNMOUNT_NUMBER_OF_TRIES	(300)
 #define SSDFS_SB_SNAPSHOT_LOG_PAGES	(2)
 #define SSDFS_DEFAULT_PROTECTION_RANGE	((u64)20 * SSDFS_NANOSECS_PER_MINUTE)
+#define SSDFS_MAX_SEG_OBJECTS_THRESHOLD	(50)
 
 /*
  * Every PEB contains a sequence of logs. Log starts from

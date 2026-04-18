@@ -429,6 +429,10 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 	init_rwsem(&fsi->segs_tree->lock);
 	fsi->segs_tree->capacity = (u32)capacity;
 
+	spin_lock_init(&fsi->segs_tree->segs_list_lock);
+	INIT_LIST_HEAD(&fsi->segs_tree->segs_list);
+	fsi->segs_tree->segs_count = 0;
+
 	err = ssdfs_create_folio_array(&fsi->segs_tree->folios,
 					get_order(PAGE_SIZE),
 					(u32)capacity);
@@ -513,6 +517,14 @@ void ssdfs_segment_tree_destroy_objects_in_folio(struct ssdfs_fs_info *fsi,
 
 				ssdfs_folio_lock(folio);
 			}
+
+			spin_lock(&fsi->segs_tree->segs_list_lock);
+			if (!list_empty(&si->list)) {
+				list_del_init(&si->list);
+				if (fsi->segs_tree->segs_count > 0)
+					fsi->segs_tree->segs_count--;
+			}
+			spin_unlock(&fsi->segs_tree->segs_list_lock);
 
 			err = ssdfs_segment_destroy_object(si);
 			if (err) {
@@ -659,6 +671,10 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
  */
 void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
 {
+	struct ssdfs_seg_objects_queue *soq;
+	struct ssdfs_seg_object_info *soi;
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->segs_tree);
 
@@ -668,9 +684,49 @@ void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
 	if (!fsi->segs_tree)
 		return;
 
+	soq = &fsi->pre_destroyed_segs_rq;
+
 	down_write(&fsi->segs_tree->lock);
+
+	while (!is_ssdfs_seg_objects_queue_empty(soq)) {
+		err = ssdfs_seg_objects_queue_remove_first(soq, &soi);
+		if (err == -ENODATA) {
+			/* empty queue */
+			err = 0;
+			break;
+		} else if (err == -ENOENT) {
+			SSDFS_WARN("request queue contains NULL request\n");
+			err = 0;
+			continue;
+		} else if (unlikely(err < 0)) {
+			SSDFS_CRIT("fail to get request from the queue: "
+				   "err %d\n",
+				   err);
+			break;
+		}
+
+		if (!soi->si) {
+			SSDFS_ERR("segment object pointer is NULL\n");
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("DESTROY PRE-DELETED SEGMENT: seg_id %llu\n",
+				  soi->si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_segment_destroy_object(soi->si);
+			if (err) {
+				SSDFS_WARN("fail to destroy: "
+					   "seg %llu, err %d\n",
+					   soi->si->seg_id, err);
+			}
+		}
+
+		ssdfs_seg_object_info_free(soi);
+	}
+
 	ssdfs_segment_tree_destroy_segment_objects(fsi);
 	ssdfs_destroy_folio_array(&fsi->segs_tree->folios);
+
 	up_write(&fsi->segs_tree->lock);
 
 	ssdfs_seg_tree_kfree(fsi->segs_tree);
@@ -755,8 +811,14 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 		  folio->index, folio->flags.f);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!err)
+	if (!err) {
 		ssdfs_segment_get_object(si);
+
+		spin_lock(&fsi->segs_tree->segs_list_lock);
+		list_add_tail(&si->list, &fsi->segs_tree->segs_list);
+		fsi->segs_tree->segs_count++;
+		spin_unlock(&fsi->segs_tree->segs_list_lock);
+	}
 
 finish_add_segment:
 	up_write(&fsi->segs_tree->lock);
@@ -884,6 +946,14 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	 */
 	ssdfs_sysfs_delete_seg_group(si);
 
+	spin_lock(&fsi->segs_tree->segs_list_lock);
+	if (!list_empty(&si->list)) {
+		list_del_init(&si->list);
+		if (fsi->segs_tree->segs_count > 0)
+			fsi->segs_tree->segs_count--;
+	}
+	spin_unlock(&fsi->segs_tree->segs_list_lock);
+
 finish_remove_segment:
 	up_write(&fsi->segs_tree->lock);
 
@@ -993,4 +1063,34 @@ finish_find_segment:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return object;
+}
+
+/*
+ * ssdfs_segment_tree_get_segs_count() - get count of created segment objects
+ * @fsi: pointer on shared file system object
+ *
+ * This method returns the number of segment objects currently tracked
+ * in the global segments list.
+ *
+ * RETURN: count of created segment objects.
+ */
+u64 ssdfs_segment_tree_get_segs_count(struct ssdfs_fs_info *fsi)
+{
+	u64 count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !fsi->segs_tree);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_lock(&fsi->segs_tree->segs_list_lock);
+	count = fsi->segs_tree->segs_count;
+	spin_unlock(&fsi->segs_tree->segs_list_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("segs_count %llu\n", count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return count;
 }

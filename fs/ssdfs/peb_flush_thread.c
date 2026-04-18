@@ -22956,6 +22956,9 @@ make_log_commit:
 				  "err %d\n", err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	}
 

@@ -46,6 +46,9 @@ struct ssdfs_seg_object_info {
  * @lock: folios array's lock
  * @capacity: maxumum possible capacity of folios in array
  * @folios: folios of segment tree
+ * @segs_list_lock: spinlock protecting the global segments list
+ * @segs_list: list of all created segment objects
+ * @segs_count: count of segment objects currently in the list
  */
 struct ssdfs_segment_tree {
 	u16 lnodes_seg_log_pages;
@@ -61,6 +64,10 @@ struct ssdfs_segment_tree {
 	struct rw_semaphore lock;
 	u32 capacity;
 	struct ssdfs_folio_array folios;
+
+	spinlock_t segs_list_lock;
+	struct list_head segs_list;
+	u64 segs_count;
 };
 
 #define SSDFS_SEG_OBJ_PTR_PER_PAGE \
@@ -103,5 +110,6 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 			      struct ssdfs_segment_info *si);
 struct ssdfs_segment_info *
 ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id);
+u64 ssdfs_segment_tree_get_segs_count(struct ssdfs_fs_info *fsi);
 
 #endif /* _SSDFS_SEGMENT_TREE_H */

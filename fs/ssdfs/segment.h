@@ -83,6 +83,7 @@ struct ssdfs_segment_migration_info {
  * @migration: migration info
  * @refs_count: counter of references on segment object
  * @object_queue: wait queue for segment creation/destruction
+ * @list: link in the global list of all created segment objects
  * @create_rq: new page requests queue
  * @pending_lock: lock of pending pages' counter
  * @pending_new_user_data_pages: counter of pending new user data pages
@@ -123,6 +124,9 @@ struct ssdfs_segment_info {
 	/* Reference counter */
 	atomic_t refs_count;
 	wait_queue_head_t object_queue;
+
+	/* Link in global list of all created segment objects */
+	struct list_head list;
 
 	/*
 	 * New pages processing:

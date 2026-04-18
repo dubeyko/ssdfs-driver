@@ -1593,7 +1593,7 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 	u64 ino = SSDFS_SEG_BMAP_INO;
 	u64 offset;
 	u32 size;
-	u16 fragments_count;
+	u16 blks_count;
 	u16 seg_index;
 	int i = 0;
 	int err = 0;
@@ -1643,12 +1643,9 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 			ssdfs_get_request(req2);
 		}
 
-		err = ssdfs_request_add_allocated_folio_locked(blk_index,
-								req1);
-		if (!err && has_backup) {
-			err = ssdfs_request_add_allocated_folio_locked(blk_index,
-									req2);
-		}
+		err = ssdfs_request_add_allocated_folio_locked(0, req1);
+		if (!err && has_backup)
+			err = ssdfs_request_add_allocated_folio_locked(0, req2);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail allocate memory folio: err %d\n", err);
@@ -1685,7 +1682,7 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 							     req2);
 		}
 
-		fragments_count = (u16)req1->result.content.count;
+		blks_count = (u16)req1->result.content.count;
 
 		block = &req1->result.content.blocks[0];
 		blk_state = &block->new_state;
@@ -1695,7 +1692,7 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 		hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
 		err = ssdfs_segbmap_define_volume_extent(segbmap, req1,
 							 hdr,
-							 fragments_count,
+							 blks_count,
 							 &seg_index);
 		kunmap_local(kaddr);
 
