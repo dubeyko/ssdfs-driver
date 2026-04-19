@@ -2257,23 +2257,23 @@ fail_define_seg_state:
 
 	switch (state->request.seg_type) {
 	case SSDFS_USER_DATA_SEG_TYPE:
-		log_pages = fsi->segs_tree->user_data_log_pages;
+		log_pages = fsi->segs_tree.user_data_log_pages;
 		break;
 
 	case SSDFS_LEAF_NODE_SEG_TYPE:
-		log_pages = fsi->segs_tree->lnodes_seg_log_pages;
+		log_pages = fsi->segs_tree.lnodes_seg_log_pages;
 		break;
 
 	case SSDFS_HYBRID_NODE_SEG_TYPE:
-		log_pages = fsi->segs_tree->hnodes_seg_log_pages;
+		log_pages = fsi->segs_tree.hnodes_seg_log_pages;
 		break;
 
 	case SSDFS_INDEX_NODE_SEG_TYPE:
-		log_pages = fsi->segs_tree->inodes_seg_log_pages;
+		log_pages = fsi->segs_tree.inodes_seg_log_pages;
 		break;
 
 	default:
-		log_pages = fsi->segs_tree->default_log_pages;
+		log_pages = fsi->segs_tree.default_log_pages;
 		break;
 	};
 

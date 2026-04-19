@@ -432,16 +432,6 @@ struct ssdfs_requests_queue {
 };
 
 /*
- * struct ssdfs_seg_objects_queue - segment objects queue descriptor
- * @lock: segment objects queue's lock
- * @list: segment objects queue's list
- */
-struct ssdfs_seg_objects_queue {
-	spinlock_t lock;
-	struct list_head list;
-};
-
-/*
  * struct ssdfs_global_fsck_thread - global fsck thread info
  * @thread: thread info
  * @wait_queue: wait queue
@@ -661,7 +651,7 @@ struct ssdfs_fs_info {
 	atomic_t maptbl_users;
 	wait_queue_head_t maptbl_users_wq;
 
-	struct ssdfs_segment_tree *segs_tree;
+	struct ssdfs_segment_tree segs_tree;
 	struct ssdfs_current_segs_array *cur_segs;
 
 	struct ssdfs_shared_extents_tree *shextree;

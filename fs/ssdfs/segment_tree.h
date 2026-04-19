@@ -34,6 +34,16 @@ struct ssdfs_seg_object_info {
 };
 
 /*
+ * struct ssdfs_seg_objects_queue - segment objects queue descriptor
+ * @lock: segment objects queue's lock
+ * @list: segment objects queue's list
+ */
+struct ssdfs_seg_objects_queue {
+	spinlock_t lock;
+	struct list_head list;
+};
+
+/*
  * struct ssdfs_segment_tree - tree of segment objects
  * @lnodes_seg_log_pages: full log size in leaf nodes segment (pages count)
  * @hnodes_seg_log_pages: full log size in hybrid nodes segment (pages count)
@@ -43,9 +53,8 @@ struct ssdfs_seg_object_info {
  * @dentries_btree: dentries b-tree descriptor
  * @extents_btree: extents b-tree descriptor
  * @xattr_btree: xattrs b-tree descriptor
- * @lock: folios array's lock
- * @capacity: maxumum possible capacity of folios in array
- * @folios: folios of segment tree
+ * @lock: xarray's lock for compound operations
+ * @objects: xarray of segment object pointers indexed by seg_id
  * @segs_list_lock: spinlock protecting the global segments list
  * @segs_list: list of all created segment objects
  * @segs_count: count of segment objects currently in the list
@@ -62,16 +71,12 @@ struct ssdfs_segment_tree {
 	struct ssdfs_xattr_btree_descriptor xattr_btree;
 
 	struct rw_semaphore lock;
-	u32 capacity;
-	struct ssdfs_folio_array folios;
+	struct xarray objects;
 
 	spinlock_t segs_list_lock;
 	struct list_head segs_list;
 	u64 segs_count;
 };
-
-#define SSDFS_SEG_OBJ_PTR_PER_PAGE \
-	(PAGE_SIZE / sizeof(struct ssdfs_segment_info *))
 
 /*
  * Segment objects queue API

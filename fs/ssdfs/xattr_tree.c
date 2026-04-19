@@ -232,7 +232,7 @@ int ssdfs_xattrs_tree_create(struct ssdfs_fs_info *fsi,
 	ptr->root = NULL;
 	ssdfs_memcpy(&ptr->desc,
 		     0, sizeof(struct ssdfs_xattr_btree_descriptor),
-		     &fsi->segs_tree->xattr_btree,
+		     &fsi->segs_tree.xattr_btree,
 		     0, sizeof(struct ssdfs_xattr_btree_descriptor),
 		     sizeof(struct ssdfs_xattr_btree_descriptor));
 	ptr->owner = ii;

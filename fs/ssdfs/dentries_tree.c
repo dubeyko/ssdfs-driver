@@ -179,7 +179,7 @@ int ssdfs_dentries_tree_create(struct ssdfs_fs_info *fsi,
 	ptr->root = NULL;
 	ssdfs_memcpy(&ptr->desc,
 		     0, sizeof(struct ssdfs_dentries_btree_descriptor),
-		     &fsi->segs_tree->dentries_btree,
+		     &fsi->segs_tree.dentries_btree,
 		     0, sizeof(struct ssdfs_dentries_btree_descriptor),
 		     sizeof(struct ssdfs_dentries_btree_descriptor));
 	ptr->owner = ii;

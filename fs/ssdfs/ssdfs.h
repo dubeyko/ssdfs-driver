@@ -36,6 +36,7 @@
 #include "snapshot.h"
 #include "snapshot_requests_queue.h"
 #include "snapshot_rules.h"
+#include "segment_tree.h"
 #include "ssdfs_fs_info.h"
 #include "ssdfs_inline.h"
 #include "fingerprint_array.h"

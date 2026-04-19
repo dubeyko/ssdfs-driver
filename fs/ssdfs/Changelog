@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.65 [April 19, 2026]
+    (*) Rework segment tree's memory management model.
+
 v.5.64 [April 17, 2026]
     (*) Introduce idmappings support.
 
