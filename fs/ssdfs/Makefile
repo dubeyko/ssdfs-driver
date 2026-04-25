@@ -39,6 +39,7 @@ ssdfs-y	:= super.o fs_error.o recovery.o \
 		compression.o \
 		tunefs.o global_fsck.o
 
+ssdfs-$(CONFIG_SSDFS_QUOTA)			+= quota.o
 ssdfs-$(CONFIG_SSDFS_POSIX_ACL)			+= acl.o
 ssdfs-$(CONFIG_SSDFS_SECURITY)			+= xattr_security.o
 ssdfs-$(CONFIG_SSDFS_FS_ENCRYPTION)		+= fscrypt.o

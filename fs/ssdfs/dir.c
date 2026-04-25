@@ -30,6 +30,9 @@
 #include "xattr.h"
 #include "acl.h"
 #include "fscrypt.h"
+#ifdef CONFIG_SSDFS_QUOTA
+#include <linux/quotaops.h>
+#endif /* CONFIG_SSDFS_QUOTA */
 
 #include <trace/events/ssdfs.h>
 
@@ -471,6 +474,12 @@ int ssdfs_create(struct mnt_idmap *idmap,
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
 		return -EIO;
 
+#ifdef CONFIG_SSDFS_QUOTA
+	err = dquot_initialize(dir);
+	if (unlikely(err))
+		return err;
+#endif /* CONFIG_SSDFS_QUOTA */
+
 	inode = ssdfs_new_inode(idmap, dir, mode, &dentry->d_name);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
@@ -509,6 +518,12 @@ static int ssdfs_mknod(struct mnt_idmap *idmap,
 
 	if (dentry->d_name.len > SSDFS_MAX_NAME_LEN)
 		return -ENAMETOOLONG;
+
+#ifdef CONFIG_SSDFS_QUOTA
+	err = dquot_initialize(dir);
+	if (unlikely(err))
+		return err;
+#endif /* CONFIG_SSDFS_QUOTA */
 
 	inode = ssdfs_new_inode(idmap, dir, mode, &dentry->d_name);
 	if (IS_ERR(inode))
@@ -563,6 +578,12 @@ static int ssdfs_symlink(struct mnt_idmap *idmap,
 	if (err)
 		return err;
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
+#ifdef CONFIG_SSDFS_QUOTA
+	err = dquot_initialize(dir);
+	if (unlikely(err))
+		return err;
+#endif /* CONFIG_SSDFS_QUOTA */
 
 	down_read(&fsi->volume_sem);
 	raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
@@ -672,6 +693,12 @@ static int ssdfs_link(struct dentry *old_dentry, struct inode *dir,
 	if (err)
 		return err;
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
+#ifdef CONFIG_SSDFS_QUOTA
+	err = dquot_initialize(dir);
+	if (unlikely(err))
+		return err;
+#endif /* CONFIG_SSDFS_QUOTA */
 
 	inode_set_ctime_to_ts(inode, current_time(inode));
 	inode_inc_link_count(inode);
@@ -823,6 +850,12 @@ static int __ssdfs_mkdir(struct mnt_idmap *idmap,
 	if (dentry->d_name.len > SSDFS_MAX_NAME_LEN)
 		return -ENAMETOOLONG;
 
+#ifdef CONFIG_SSDFS_QUOTA
+	err = dquot_initialize(dir);
+	if (unlikely(err))
+		return err;
+#endif /* CONFIG_SSDFS_QUOTA */
+
 	inode_inc_link_count(dir);
 
 	inode = ssdfs_new_inode(idmap, dir, S_IFDIR | mode, &dentry->d_name);
@@ -902,6 +935,16 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
 		return -EIO;
+
+#ifdef CONFIG_SSDFS_QUOTA
+	err = dquot_initialize(dir);
+	if (unlikely(err))
+		return err;
+
+	err = dquot_initialize(inode);
+	if (unlikely(err))
+		return err;
+#endif /* CONFIG_SSDFS_QUOTA */
 
 	trace_ssdfs_unlink_enter(dir, dentry);
 
@@ -1134,9 +1177,8 @@ static int ssdfs_rename_target(struct inode *old_dir,
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
-		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate btree search object\n");
-		goto out;
+		return -ENOMEM;
 	}
 
 	ssdfs_btree_search_init(search);
@@ -1146,7 +1188,8 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	err = fscrypt_setup_filename(old_dir, &old_dentry->d_name, 1,
 				     &old_fname);
 	if (err)
-		goto out_free_search;
+		goto out;
+
 	old_disk_name = old_fname.disk_name.name ?
 		(struct qstr)QSTR_INIT(old_fname.disk_name.name,
 				       old_fname.disk_name.len) :
@@ -1158,8 +1201,9 @@ static int ssdfs_rename_target(struct inode *old_dir,
 					     &new_fname);
 		if (err) {
 			fscrypt_free_filename(&old_fname);
-			goto out_free_search;
+			goto out;
 		}
+
 		new_disk_name = new_fname.disk_name.name ?
 			(struct qstr)QSTR_INIT(new_fname.disk_name.name,
 					       new_fname.disk_name.len) :
@@ -1172,6 +1216,26 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	const struct qstr *old_name = &old_dentry->d_name;
 	const struct qstr *new_name = &new_dentry->d_name;
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
+#ifdef CONFIG_SSDFS_QUOTA
+	err = dquot_initialize(old_dir);
+	if (unlikely(err))
+		goto out_free;
+
+	err = dquot_initialize(old_inode);
+	if (unlikely(err))
+		goto out_free;
+
+	err = dquot_initialize(new_dir);
+	if (unlikely(err))
+		goto out_free;
+
+	if (new_inode) {
+		err = dquot_initialize(new_inode);
+		if (unlikely(err))
+			goto out_free;
+	}
+#endif /* CONFIG_SSDFS_QUOTA */
 
 	lock_4_inodes(old_dir, new_dir, old_inode, new_inode);
 
@@ -1353,14 +1417,19 @@ static int ssdfs_rename_target(struct inode *old_dir,
 
 finish_target_rename:
 	unlock_4_inodes(old_dir, new_dir, old_inode, new_inode);
+
+#ifdef CONFIG_SSDFS_QUOTA
+out_free:
+#endif /* CONFIG_SSDFS_QUOTA */
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
 	fscrypt_free_filename(&old_fname);
 	fscrypt_free_filename(&new_fname);
-out_free_search:
-#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
-	ssdfs_btree_search_free(search);
 
 out:
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
+	ssdfs_btree_search_free(search);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1404,9 +1473,8 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
-		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate btree search object\n");
-		goto out;
+		return -ENOMEM;
 	}
 
 	ssdfs_btree_search_init(search);
@@ -1415,7 +1483,8 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 	err = fscrypt_setup_filename(old_dir, &old_dentry->d_name, 1,
 				     &old_fname);
 	if (err)
-		goto out_free_search;
+		goto out;
+
 	old_disk_name = old_fname.disk_name.name ?
 		(struct qstr)QSTR_INIT(old_fname.disk_name.name,
 				       old_fname.disk_name.len) :
@@ -1426,8 +1495,9 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 				     &new_fname);
 	if (err) {
 		fscrypt_free_filename(&old_fname);
-		goto out_free_search;
+		goto out;
 	}
+
 	new_disk_name = new_fname.disk_name.name ?
 		(struct qstr)QSTR_INIT(new_fname.disk_name.name,
 				       new_fname.disk_name.len) :
@@ -1437,6 +1507,24 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 	const struct qstr *old_name = &old_dentry->d_name;
 	const struct qstr *new_name = &new_dentry->d_name;
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
+#ifdef CONFIG_SSDFS_QUOTA
+	err = dquot_initialize(old_dir);
+	if (unlikely(err))
+		goto out_free;
+
+	err = dquot_initialize(old_inode);
+	if (unlikely(err))
+		goto out_free;
+
+	err = dquot_initialize(new_dir);
+	if (unlikely(err))
+		goto out_free;
+
+	err = dquot_initialize(new_inode);
+	if (unlikely(err))
+		goto out_free;
+#endif /* CONFIG_SSDFS_QUOTA */
 
 	lock_4_inodes(old_dir, new_dir, old_inode, new_inode);
 
@@ -1573,14 +1661,19 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 
 finish_cross_rename:
 	unlock_4_inodes(old_dir, new_dir, old_inode, new_inode);
+
+#ifdef CONFIG_SSDFS_QUOTA
+out_free:
+#endif /* CONFIG_SSDFS_QUOTA */
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
 	fscrypt_free_filename(&old_fname);
 	fscrypt_free_filename(&new_fname);
-out_free_search:
-#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
-	ssdfs_btree_search_free(search);
 
 out:
+#endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+
+	ssdfs_btree_search_free(search);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_DEBUG */

@@ -250,6 +250,23 @@ endmenu
 
 menu "Data Protection"
 
+config SSDFS_QUOTA
+	bool "SSDFS disk quota support"
+	depends on SSDFS
+	select QUOTA
+	select QFMT_V2
+	help
+	  Enables per-user, per-group, and per-project disk quota enforcement
+	  for SSDFS volumes.  When enabled, the quota subsystem tracks block
+	  and inode consumption per principal and enforces soft/hard limits
+	  configured with the standard quota(1) userspace tools.
+
+	  Quota data is stored in regular files (aquota.user, aquota.group)
+	  in the root directory of the volume, managed entirely by the
+	  userspace quota tools.
+
+	  If unsure, say N.
+
 config SSDFS_FS_ENCRYPTION
 	bool "SSDFS Encryption (fscrypt)"
 	depends on SSDFS
@@ -261,7 +278,7 @@ config SSDFS_FS_ENCRYPTION
 	  using per-file keys, protecting data at rest.
 
 	  Enabling this option requires that extended attribute support
-	  is available. 
+	  is available.
 
 	  If unsure, say N.
 

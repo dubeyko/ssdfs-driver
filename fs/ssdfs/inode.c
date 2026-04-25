@@ -42,6 +42,9 @@
 #include "acl.h"
 #include "xattr.h"
 #include "fscrypt.h"
+#ifdef CONFIG_SSDFS_QUOTA
+#include <linux/quotaops.h>
+#endif /* CONFIG_SSDFS_QUOTA */
 
 #include <trace/events/ssdfs.h>
 
@@ -672,6 +675,22 @@ struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
 	}
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
+#ifdef CONFIG_SSDFS_QUOTA
+	err = dquot_initialize(inode);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to initialize quota for new inode: "
+			  "err %d\n", err);
+		goto fail_drop;
+	}
+
+	err = dquot_alloc_inode(inode);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to account inode in quota: "
+			  "err %d\n", err);
+		goto fail_drop;
+	}
+#endif /* CONFIG_SSDFS_QUOTA */
+
 	mark_inode_dirty(inode);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -891,6 +910,13 @@ int ssdfs_setattr(struct mnt_idmap *idmap,
 	}
 
 	if (attr->ia_valid) {
+#ifdef CONFIG_SSDFS_QUOTA
+		if (attr->ia_valid & (ATTR_UID | ATTR_GID)) {
+			err = dquot_transfer(idmap, inode, attr);
+			if (unlikely(err))
+				return err;
+		}
+#endif /* CONFIG_SSDFS_QUOTA */
 		setattr_copy(idmap, inode, attr);
 		mark_inode_dirty(inode);
 
@@ -985,6 +1011,12 @@ void ssdfs_evict_inode(struct inode *inode)
 			}
 		}
 	}
+
+#ifdef CONFIG_SSDFS_QUOTA
+	if (want_delete)
+		dquot_free_inode(inode);
+	dquot_drop(inode);
+#endif /* CONFIG_SSDFS_QUOTA */
 
 	clear_inode(inode);
 

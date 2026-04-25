@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.66 [April 24, 2026]
+    (*) Introduce disk quota support.
+
 v.5.65 [April 19, 2026]
     (*) Rework segment tree's memory management model.
 

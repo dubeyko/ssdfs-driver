@@ -411,12 +411,12 @@ static
 int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 			    int read_mode)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(file_inode(file)->i_sb);
-	struct inode *inode = file_inode(file);
-	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct inode *inode;
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_inode_info *ii;
 	struct folio *folio;
 	struct ssdfs_segment_request *req = NULL;
-	ino_t ino = file_inode(file)->i_ino;
+	ino_t ino;
 	loff_t logical_offset;
 	loff_t data_bytes = 0;
 	loff_t file_size;
@@ -436,6 +436,11 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	inode = file ? file_inode(file) : folio->mapping->host;
+	ii = SSDFS_I(inode);
+	fsi = SSDFS_FS_I(inode->i_sb);
+	ino = inode->i_ino;
+
 	logical_offset = (loff_t)folio->index << PAGE_SHIFT;
 
 	for (i = 0; i < folio_batch_count(batch); i++) {
@@ -451,7 +456,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 		data_bytes += folio_size(folio);
 	}
 
-	file_size = i_size_read(file_inode(file));
+	file_size = i_size_read(inode);
 	data_bytes = min_t(loff_t, file_size - logical_offset, data_bytes);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4172,7 +4177,7 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 		      loff_t pos, unsigned len,
 		      struct folio **foliop, void **fsdata)
 {
-	struct file *file = iocb->ki_filp;
+	struct file *file;
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct folio *first_folio = NULL;
@@ -4191,6 +4196,14 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 
 	if (inode->i_sb->s_flags & SB_RDONLY)
 		return -EROFS;
+
+	/*
+	 * iocb may be NULL when called from the quota write path
+	 * (ssdfs_quota_write). In that case file is also NULL; the
+	 * downstream helpers (ssdfs_get_block_folio, ssdfs_read_block_nolock)
+	 * derive everything they need from mapping->host instead.
+	 */
+	file = iocb ? iocb->ki_filp : NULL;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, large_folios_support %#x\n",

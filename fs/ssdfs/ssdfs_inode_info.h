@@ -16,6 +16,9 @@
 #define _SSDFS_INODE_INFO_H
 
 #include <linux/fscrypt.h>
+#ifdef CONFIG_SSDFS_QUOTA
+#include <linux/quota.h>
+#endif /* CONFIG_SSDFS_QUOTA */
 
 /*
  * Inode flags (GETFLAGS/SETFLAGS)
@@ -106,6 +109,9 @@ struct ssdfs_inode_info {
 	void *inline_file;
 	struct fscrypt_inode_info *i_crypt_info;
 	struct ssdfs_inode raw_inode;
+#ifdef CONFIG_SSDFS_QUOTA
+	struct dquot __rcu *i_dquot[MAXQUOTAS];
+#endif /* CONFIG_SSDFS_QUOTA */
 };
 
 static inline struct ssdfs_inode_info *SSDFS_I(struct inode *inode)

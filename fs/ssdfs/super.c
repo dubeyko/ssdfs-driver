@@ -64,6 +64,9 @@
 #include "snapshots_tree.h"
 #include "invalidated_extents_tree.h"
 #include "fscrypt.h"
+#ifdef CONFIG_SSDFS_QUOTA
+#include "quota.h"
+#endif /* CONFIG_SSDFS_QUOTA */
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
@@ -198,6 +201,9 @@ struct inode *ssdfs_alloc_inode(struct super_block *sb)
 	ii->xattrs_tree = NULL;
 	ii->inline_file = NULL;
 	memset(&ii->raw_inode, 0, sizeof(struct ssdfs_inode));
+#ifdef CONFIG_SSDFS_QUOTA
+	memset(ii->i_dquot, 0, sizeof(ii->i_dquot));
+#endif /* CONFIG_SSDFS_QUOTA */
 
 	return &ii->vfs_inode;
 }
@@ -821,6 +827,11 @@ static const struct super_operations ssdfs_super_operations = {
 	.freeze_fs	= ssdfs_freeze_fs,
 	.unfreeze_fs	= ssdfs_unfreeze_fs,
 	.shutdown	= ssdfs_shutdown,
+#ifdef CONFIG_SSDFS_QUOTA
+	.quota_read	= ssdfs_quota_read,
+	.quota_write	= ssdfs_quota_write,
+	.get_dquots	= ssdfs_get_dquots,
+#endif /* CONFIG_SSDFS_QUOTA */
 };
 
 static inline
@@ -3962,6 +3973,11 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
 	sb->s_cop = &ssdfs_cryptops;
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
+#ifdef CONFIG_SSDFS_QUOTA
+	sb->s_qcop = &ssdfs_qctl_operations;
+	sb->dq_op = &ssdfs_dquot_operations;
+	sb->s_quota_types = QTYPE_MASK_USR | QTYPE_MASK_GRP | QTYPE_MASK_PRJ;
+#endif /* CONFIG_SSDFS_QUOTA */
 
 	sb->s_xattr = ssdfs_xattr_handlers;
 	set_posix_acl_flag(sb);
