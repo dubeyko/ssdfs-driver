@@ -248,7 +248,7 @@ config SSDFS_LONG_NAME_DEDUPLICATION
 
 endmenu
 
-menu "Data Protection"
+menu "Data Management"
 
 config SSDFS_QUOTA
 	bool "SSDFS disk quota support"
@@ -266,6 +266,10 @@ config SSDFS_QUOTA
 	  userspace quota tools.
 
 	  If unsure, say N.
+
+endmenu
+
+menu "Data Protection"
 
 config SSDFS_FS_ENCRYPTION
 	bool "SSDFS Encryption (fscrypt)"

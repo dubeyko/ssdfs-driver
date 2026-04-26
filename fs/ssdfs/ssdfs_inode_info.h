@@ -108,10 +108,10 @@ struct ssdfs_inode_info {
 	struct ssdfs_xattrs_btree_info *xattrs_tree;
 	void *inline_file;
 	struct fscrypt_inode_info *i_crypt_info;
-	struct ssdfs_inode raw_inode;
 #ifdef CONFIG_SSDFS_QUOTA
 	struct dquot __rcu *i_dquot[MAXQUOTAS];
 #endif /* CONFIG_SSDFS_QUOTA */
+	struct ssdfs_inode raw_inode;
 };
 
 static inline struct ssdfs_inode_info *SSDFS_I(struct inode *inode)

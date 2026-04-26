@@ -5041,13 +5041,7 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_check_memory_folio_locks();
 	ssdfs_check_memory_leaks();
 
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("All metadata structures have been destroyed...\n");
-#else
-	SSDFS_DBG("All metadata structures have been destroyed...\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	SSDFS_INFO("All metadata structures have been destroyed\n");
+	SSDFS_INFO("All metadata structures have been freed\n");
 }
 
 static int ssdfs_reconfigure(struct fs_context *fc)

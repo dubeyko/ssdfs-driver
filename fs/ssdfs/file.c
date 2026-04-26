@@ -1345,6 +1345,9 @@ void ssdfs_readahead(struct readahead_control *rac)
 				folio_mark_uptodate(folio);
 				flush_dcache_folio(folio);
 
+				folio_unlock(folio);
+				folio_end_dropbehind(folio);
+
 				if (processed_bytes > 0)
 					goto try_readahead_block;
 				else
@@ -1422,7 +1425,8 @@ static ssize_t ssdfs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	u32 processed_bytes;
 	size_t folios_count;
 	int pages_per_folio = fsi->pagesize >> PAGE_SHIFT;
-	fgf_t fgp_flags = FGP_CREAT | FGP_LOCK;
+	fgf_t dontcache_flags = (iocb->ki_flags & IOCB_DONTCACHE) ? FGP_DONTCACHE : 0;
+	fgf_t fgp_flags = FGP_CREAT | FGP_LOCK | dontcache_flags;
 	int i;
 	ssize_t res = 0;
 
@@ -1487,6 +1491,9 @@ static ssize_t ssdfs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 					  page_index, PTR_ERR(folio));
 				return PTR_ERR(folio);
 			}
+
+			if (iocb->ki_flags & IOCB_DONTCACHE)
+				__folio_set_dropbehind(folio);
 
 			ssdfs_account_locked_folio(folio);
 
@@ -3517,7 +3524,7 @@ int ssdfs_writepages(struct address_space *mapping,
 					      (u64)mapping->writeback_index,
 					      wbc->range_cyclic);
 				BUG();
-}
+			}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_folio_lock(folio);
@@ -3736,7 +3743,8 @@ static void ssdfs_write_failed(struct address_space *mapping, loff_t to)
 static inline
 struct folio *ssdfs_get_block_folio(struct file *file,
 				    struct address_space *mapping,
-				    pgoff_t index)
+				    pgoff_t index,
+				    fgf_t extra_fgp)
 {
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
@@ -3751,7 +3759,7 @@ struct folio *ssdfs_get_block_folio(struct file *file,
 
 	folio = filemap_lock_folio(mapping, index);
 	if (!folio || IS_ERR(folio)) {
-		fgp_flags |= fgf_set_order(fsi->pagesize);
+		fgp_flags |= fgf_set_order(fsi->pagesize) | extra_fgp;
 
 		nofs_flags = memalloc_nofs_save();
 		folio = __filemap_get_folio(mapping, index, fgp_flags,
@@ -3768,6 +3776,9 @@ struct folio *ssdfs_get_block_folio(struct file *file,
 			  index, PTR_ERR(folio));
 		return folio;
 	}
+
+	if (extra_fgp & FGP_DONTCACHE)
+		__folio_set_dropbehind(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio %p, count %d, folio_index %lu, "
@@ -3843,7 +3854,8 @@ int ssdfs_process_whole_block(struct file *file,
 			      struct address_space *mapping,
 			      struct folio *requested_folio,
 			      loff_t pos, u32 len,
-			      bool is_new_blk)
+			      bool is_new_blk,
+			      fgf_t extra_fgp)
 {
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
@@ -3877,7 +3889,8 @@ int ssdfs_process_whole_block(struct file *file,
 		if (index == requested_folio->index) {
 			cur_folio = requested_folio;
 		} else {
-			cur_folio = ssdfs_get_block_folio(file, mapping, index);
+			cur_folio = ssdfs_get_block_folio(file, mapping,
+							   index, extra_fgp);
 			if (unlikely(IS_ERR_OR_NULL(cur_folio))) {
 				err = IS_ERR(cur_folio) ?
 						PTR_ERR(cur_folio) : -ERANGE;
@@ -4006,7 +4019,7 @@ int ssdfs_write_begin_inline_file(struct file *file,
 	atomic_or(SSDFS_INODE_HAS_INLINE_FILE,
 		  &SSDFS_I(inode)->private_flags);
 
-	first_folio = ssdfs_get_block_folio(file, mapping, index);
+	first_folio = ssdfs_get_block_folio(file, mapping, index, 0);
 	if (!first_folio) {
 		SSDFS_ERR("fail to grab folio: index %lu\n",
 			  index);
@@ -4033,7 +4046,7 @@ int ssdfs_write_begin_inline_file(struct file *file,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_process_whole_block(file, mapping, first_folio,
-					pos, len, false);
+					pos, len, false, 0);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to process thw whole block: "
 			  "ino %lu, pos %llu, len %u, err %d\n",
@@ -4047,7 +4060,8 @@ int ssdfs_write_begin_inline_file(struct file *file,
 static
 struct folio *ssdfs_write_begin_logical_block(struct file *file,
 					      struct address_space *mapping,
-					      loff_t pos, u32 len)
+					      loff_t pos, u32 len,
+					      fgf_t extra_fgp)
 {
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
@@ -4089,7 +4103,7 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 		  (u64)cur_blk, (u64)last_blk, (u64)index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	first_folio = ssdfs_get_block_folio(file, mapping, index);
+	first_folio = ssdfs_get_block_folio(file, mapping, index, extra_fgp);
 	if (!first_folio) {
 		SSDFS_ERR("fail to grab folio: index %lu\n",
 			  index);
@@ -4155,7 +4169,7 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 	}
 
 	err = ssdfs_process_whole_block(file, mapping, first_folio,
-					pos, len, is_new_blk);
+					pos, len, is_new_blk, extra_fgp);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to process the whole block: "
 			  "ino %lu, pos %llu, len %u, err %d\n",
@@ -4181,6 +4195,7 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct folio *first_folio = NULL;
+	fgf_t extra_fgp = (iocb->ki_flags & IOCB_DONTCACHE) ? FGP_DONTCACHE : 0;
 	loff_t cur_pos, next_pos;
 	loff_t start_blk, end_blk, cur_blk;
 	u32 processed_bytes = 0;
@@ -4262,7 +4277,8 @@ try_regular_write:
 			folio = ssdfs_write_begin_logical_block(file,
 								mapping,
 								cur_pos,
-								cur_len);
+								cur_len,
+								extra_fgp);
 			if (IS_ERR_OR_NULL(folio)) {
 				err = IS_ERR(folio) ? PTR_ERR(folio) : -ERANGE;
 				SSDFS_ERR("fail to process folio: "
@@ -4857,6 +4873,7 @@ const struct file_operations ssdfs_file_operations = {
 	.fsync		= ssdfs_fsync,
 	.splice_read	= filemap_splice_read,
 	.splice_write	= iter_file_splice_write,
+	.fop_flags	= FOP_DONTCACHE,
 };
 
 const struct inode_operations ssdfs_file_inode_operations = {
