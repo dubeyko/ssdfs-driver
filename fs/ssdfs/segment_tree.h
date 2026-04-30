@@ -23,6 +23,8 @@
 #ifndef _SSDFS_SEGMENT_TREE_H
 #define _SSDFS_SEGMENT_TREE_H
 
+#include <linux/shrinker.h>
+
 /*
  * struct ssdfs_seg_object_info - segment object info
  * @list: segment objects queue list
@@ -58,6 +60,7 @@ struct ssdfs_seg_objects_queue {
  * @segs_list_lock: spinlock protecting the global segments list
  * @segs_list: list of all created segment objects
  * @segs_count: count of segment objects currently in the list
+ * @shrinker: kernel memory shrinker for idle segment objects
  */
 struct ssdfs_segment_tree {
 	u16 lnodes_seg_log_pages;
@@ -76,6 +79,8 @@ struct ssdfs_segment_tree {
 	spinlock_t segs_list_lock;
 	struct list_head segs_list;
 	u64 segs_count;
+
+	struct shrinker *shrinker;
 };
 
 /*

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.68 [April 29, 2026]
+    (*) Implement segment tree's memory shrinker.
+
 v.5.67 [April 25, 2026]
     (*) Introduce dropbehind folio support.
 

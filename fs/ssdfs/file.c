@@ -3504,30 +3504,18 @@ int ssdfs_writepages(struct address_space *mapping,
 
 			done_index = folio->index + 1;
 
+			if (!folio_trylock(folio)) {
 #ifdef CONFIG_SSDFS_DEBUG
-			if (folio_test_locked(folio)) {
-				SSDFS_ERR_DBG("folio %p, index %d, folio->index %ld, "
-					      "folio_test_locked %#x, "
-					      "folio_test_dirty %#x, "
-					      "folio_test_writeback %#x\n",
-					      folio, i, folio->index,
-					      folio_test_locked(folio),
-					      folio_test_dirty(folio),
-					      folio_test_writeback(folio));
-				SSDFS_ERR_DBG("ino %lu, nr_to_write %lu, "
-					      "range_start %llu, range_end %llu, "
-					      "writeback_index %llu, "
-					      "wbc->range_cyclic %#x\n",
-					      ino, wbc->nr_to_write,
-					      (u64)wbc->range_start,
-					      (u64)wbc->range_end,
-					      (u64)mapping->writeback_index,
-					      wbc->range_cyclic);
-				BUG();
-			}
+				SSDFS_DBG("folio %p, index %d, folio->index %ld, "
+					  "is already locked by write path\n",
+					  folio, i, folio->index);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-			ssdfs_folio_lock(folio);
+				if (wbc->sync_mode != WB_SYNC_ALL)
+					continue;
+				ssdfs_folio_lock(folio);
+			} else {
+				ssdfs_account_locked_folio(folio);
+			}
 
 			/*
 			 * Page truncated or invalidated. We can freely skip it

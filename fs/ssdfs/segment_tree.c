@@ -359,6 +359,254 @@ void ssdfs_seg_object_info_init(struct ssdfs_seg_object_info *soi,
 }
 
 /******************************************************************************
+ *                    SEGMENTS TREE SHRINKER FUNCTIONALITY                    *
+ ******************************************************************************/
+
+/*
+ * ssdfs_segs_tree_can_be_shrunk() - check if a segment object can be evicted
+ * @si: pointer on segment object
+ *
+ * This method checks whether an idle segment object is a candidate
+ * for eviction under memory pressure. The checks are intentionally
+ * conservative: any sign of in-flight work causes the segment to be
+ * skipped.
+ *
+ * RETURN:
+ * [true]  - segment can be evicted
+ * [false] - segment must be kept
+ */
+static
+bool ssdfs_segs_tree_can_be_shrunk(struct ssdfs_segment_info *si)
+{
+	struct ssdfs_peb_container *pebc;
+	struct ssdfs_peb_info *pebi;
+	u64 peb_id;
+	bool is_rq_empty;
+	bool is_fq_empty;
+	bool peb_has_dirty_folios = false;
+	bool is_blk_bmap_dirty = false;
+	u32 reqs_count;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (is_unmount_in_progress(si))
+		return false;
+
+	if (atomic_read(&si->refs_count) != 0)
+		return false;
+
+	switch (atomic_read(&si->obj_state)) {
+	case SSDFS_SEG_OBJECT_CREATED:
+		/* eligible */
+		break;
+
+	default:
+		return false;
+	}
+
+	switch (si->seg_type) {
+	case SSDFS_SEGBMAP_SEG_TYPE:
+	case SSDFS_MAPTBL_SEG_TYPE:
+		return false;
+
+	default:
+		break;
+	}
+
+	switch (atomic_read(&si->activity_type)) {
+	case SSDFS_SEG_OBJECT_NO_ACTIVITY:
+	case SSDFS_SEG_OBJECT_REGULAR_ACTIVITY:
+		break;
+
+	default:
+		return false;
+	}
+
+	for (i = 0; i < si->pebs_count; i++) {
+		pebc = &si->peb_array[i];
+
+		is_rq_empty = is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc));
+		is_fq_empty = !have_flush_requests(pebc);
+
+		is_blk_bmap_dirty =
+			is_ssdfs_segment_blk_bmap_dirty(&si->blk_bmap, i);
+
+		pebi = ssdfs_get_current_peb_locked(pebc);
+		if (IS_ERR_OR_NULL(pebi))
+			return false;
+
+		ssdfs_peb_current_log_lock(pebi);
+		peb_has_dirty_folios = ssdfs_peb_has_dirty_folios(pebi);
+		peb_id = pebi->peb_id;
+		ssdfs_peb_current_log_unlock(pebi);
+		ssdfs_unlock_current_peb(pebc);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg_id %llu, peb_id %llu, refs_count %d, "
+			  "peb_has_dirty_folios %#x, "
+			  "not empty: (read %#x, flush %#x), "
+			  "is_blk_bmap_dirty %#x\n",
+			  si->seg_id, peb_id,
+			  atomic_read(&si->refs_count),
+			  peb_has_dirty_folios,
+			  !is_rq_empty, !is_fq_empty,
+			  is_blk_bmap_dirty);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (!is_rq_empty || !is_fq_empty ||
+		    peb_has_dirty_folios || is_blk_bmap_dirty)
+			return false;
+	}
+
+	spin_lock(&si->protection.cno_lock);
+	reqs_count = si->protection.reqs_count;
+	spin_unlock(&si->protection.cno_lock);
+
+	if (reqs_count > 0)
+		return false;
+
+	return true;
+}
+
+/*
+ * ssdfs_segs_tree_count_objects() - count shrinkable segment objects
+ * @shrink: pointer on shrinker descriptor
+ * @sc: shrink control descriptor
+ *
+ * This method estimates the number of idle segment objects that could
+ * be evicted to reclaim memory.
+ *
+ * RETURN: count of shrinkable objects, or SHRINK_EMPTY if none.
+ */
+static
+unsigned long ssdfs_segs_tree_count_objects(struct shrinker *shrink,
+					    struct shrink_control *sc)
+{
+	struct ssdfs_fs_info *fsi = shrink->private_data;
+	struct ssdfs_segment_info *si;
+	unsigned long count = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_lock(&fsi->segs_tree.segs_list_lock);
+	list_for_each_entry(si, &fsi->segs_tree.segs_list, list) {
+		if (atomic_read(&si->refs_count) != 0)
+			continue;
+
+		if (atomic_read(&si->obj_state) != SSDFS_SEG_OBJECT_CREATED)
+			continue;
+
+		if (si->seg_type == SSDFS_SEGBMAP_SEG_TYPE ||
+		    si->seg_type == SSDFS_MAPTBL_SEG_TYPE)
+			continue;
+
+		count++;
+	}
+	spin_unlock(&fsi->segs_tree.segs_list_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("shrinkable segs count %lu\n", count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return count ? count : SHRINK_EMPTY;
+}
+
+/*
+ * ssdfs_segs_tree_scan_objects() - evict idle segment objects under pressure
+ * @shrink: pointer on shrinker descriptor
+ * @sc: shrink control descriptor
+ *
+ * This method evicts up to @sc->nr_to_scan idle segment objects from the
+ * segments tree, queuing them for asynchronous destruction by the GC thread.
+ * It operates in two phases to avoid sleeping while holding the tree lock:
+ *
+ *  Phase 1 (under tree write lock): identify eligible segments, remove them
+ *          from the xarray and the global list, mark them PRE_DELETED, and
+ *          collect them in a local list.
+ *
+ *  Phase 2 (lock released): destroy segment objects in the local list.
+ *
+ * RETURN: number of objects freed, or SHRINK_STOP on context mismatch.
+ */
+static
+unsigned long ssdfs_segs_tree_scan_objects(struct shrinker *shrink,
+					   struct shrink_control *sc)
+{
+	struct ssdfs_fs_info *fsi = shrink->private_data;
+	struct ssdfs_segment_info *si, *tmp;
+	LIST_HEAD(to_destroy);
+	unsigned long freed = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p, nr_to_scan %lu, gfp_mask %#x\n",
+		  fsi, sc->nr_to_scan, sc->gfp_mask);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!(sc->gfp_mask & __GFP_FS))
+		return SHRINK_STOP;
+
+	down_write(&fsi->segs_tree.lock);
+
+	list_for_each_entry_safe(si, tmp, &fsi->segs_tree.segs_list, list) {
+		if (freed >= sc->nr_to_scan)
+			break;
+
+		if (!ssdfs_segs_tree_can_be_shrunk(si))
+			continue;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("shrink segment: seg_id %llu\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		xa_erase(&fsi->segs_tree.objects, si->seg_id);
+		ssdfs_sysfs_delete_seg_group(si);
+
+		spin_lock(&fsi->segs_tree.segs_list_lock);
+		list_del_init(&si->list);
+		if (fsi->segs_tree.segs_count > 0)
+			fsi->segs_tree.segs_count--;
+		spin_unlock(&fsi->segs_tree.segs_list_lock);
+
+		atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_PRE_DELETED);
+
+		list_add_tail(&si->list, &to_destroy);
+		freed++;
+	}
+
+	up_write(&fsi->segs_tree.lock);
+
+	if (freed == 0)
+		return 0;
+
+	list_for_each_entry_safe(si, tmp, &to_destroy, list) {
+		list_del_init(&si->list);
+
+		err = ssdfs_segment_destroy_object(si);
+		if (err) {
+			SSDFS_WARN("fail to destroy: "
+				   "seg %llu, err %d\n",
+				   si->seg_id, err);
+		}
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("freed %lu segment objects\n", freed);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return freed;
+}
+
+/******************************************************************************
  *                        SEGMENTS TREE FUNCTIONALITY                         *
  ******************************************************************************/
 
@@ -412,6 +660,21 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 	spin_lock_init(&fsi->segs_tree.segs_list_lock);
 	INIT_LIST_HEAD(&fsi->segs_tree.segs_list);
 	fsi->segs_tree.segs_count = 0;
+
+	fsi->segs_tree.shrinker =
+			shrinker_alloc(0, "ssdfs-segs-tree:%s",
+					fsi->sb->s_id);
+	if (!fsi->segs_tree.shrinker) {
+		SSDFS_WARN("fail to allocate segments tree shrinker\n");
+	} else {
+		fsi->segs_tree.shrinker->count_objects =
+					ssdfs_segs_tree_count_objects;
+		fsi->segs_tree.shrinker->scan_objects =
+					ssdfs_segs_tree_scan_objects;
+		fsi->segs_tree.shrinker->seeks = DEFAULT_SEEKS;
+		fsi->segs_tree.shrinker->private_data = fsi;
+		shrinker_register(fsi->segs_tree.shrinker);
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("DONE: create segment tree\n");
@@ -505,6 +768,11 @@ void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p\n", fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->segs_tree.shrinker) {
+		shrinker_free(fsi->segs_tree.shrinker);
+		fsi->segs_tree.shrinker = NULL;
+	}
 
 	soq = &fsi->pre_destroyed_segs_rq;
 

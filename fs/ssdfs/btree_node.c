@@ -1042,7 +1042,8 @@ void ssdfs_btree_node_free_content_space(struct ssdfs_btree_node *node)
 		  node->node_id, node->node_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (atomic_read(&node->type) != SSDFS_BTREE_ROOT_NODE) {
+	if (atomic_read(&node->type) != SSDFS_BTREE_ROOT_NODE ||
+	    atomic_read(&node->state) != SSDFS_BTREE_NODE_NONE_CONTENT) {
 		for (i = 0; i < node->content.count; i++) {
 			struct folio_batch *batch;
 
@@ -1154,6 +1155,7 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 	case SSDFS_BTREE_NODE_CREATED:
 		/* FALLTHRU */
 		fallthrough;
+	case SSDFS_BTREE_NODE_NONE_CONTENT:
 	case SSDFS_BTREE_NODE_INITIALIZED:
 		atomic_set(&node->state, SSDFS_BTREE_NODE_UNKNOWN_STATE);
 		wake_up_all(&node->wait_queue);
@@ -4351,6 +4353,7 @@ bool is_ssdfs_btree_node_index_area_exist(struct ssdfs_btree_node *node)
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
 	case SSDFS_BTREE_NODE_PRE_DELETED:
+	case SSDFS_BTREE_NODE_NONE_CONTENT:
 		/* expected state */
 		break;
 
@@ -4417,6 +4420,7 @@ bool is_ssdfs_btree_node_index_area_empty(struct ssdfs_btree_node *node)
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
 	case SSDFS_BTREE_NODE_PRE_DELETED:
+	case SSDFS_BTREE_NODE_NONE_CONTENT:
 		/* expected state */
 		break;
 
@@ -4511,6 +4515,7 @@ bool is_ssdfs_btree_node_items_area_exist(struct ssdfs_btree_node *node)
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
 	case SSDFS_BTREE_NODE_PRE_DELETED:
+	case SSDFS_BTREE_NODE_NONE_CONTENT:
 		/* expected state */
 		break;
 
@@ -4574,6 +4579,7 @@ bool is_ssdfs_btree_node_items_area_empty(struct ssdfs_btree_node *node)
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
 	case SSDFS_BTREE_NODE_PRE_DELETED:
+	case SSDFS_BTREE_NODE_NONE_CONTENT:
 		/* expected state */
 		break;
 
