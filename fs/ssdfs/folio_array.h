@@ -23,46 +23,30 @@
 #ifndef _SSDFS_FOLIO_ARRAY_H
 #define _SSDFS_FOLIO_ARRAY_H
 
-/*
- * struct ssdfs_folio_array_bitmap - bitmap of states
- * @lock: bitmap lock
- * @ptr: bitmap
- */
-struct ssdfs_folio_array_bitmap {
-	spinlock_t lock;
-	unsigned long *ptr;
-};
+#include <linux/xarray.h>
 
 /*
  * struct ssdfs_folio_array - array of memory folios
  * @state: folio array's state
  * @folios_capacity: maximum possible number of folios in array
  * @lock: folio array's lock
- * @folios: array of memory folios' pointers
+ * @xa: xarray storing folio pointers indexed by folio index
  * @folios_count: current number of allocated folios
  * @last_folio: latest folio index
  * @order: allocation order of a particular sized block of memory
  * @folio_size: folio size in bytes
- * @bmap_bytes: number of bytes in every bitmap
- * bmap: array of bitmaps
  */
 struct ssdfs_folio_array {
 	atomic_t state;
 	atomic_t folios_capacity;
 
 	struct rw_semaphore lock;
-	struct folio **folios;
+	struct xarray xa;
 	unsigned long folios_count;
 #define SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO	(ULONG_MAX)
 	unsigned long last_folio;
 	unsigned order;
 	size_t folio_size;
-	size_t bmap_bytes;
-
-#define SSDFS_FOLIO_ARRAY_ALLOC_BMAP		(0)
-#define SSDFS_FOLIO_ARRAY_DIRTY_BMAP		(1)
-#define SSDFS_FOLIO_ARRAY_BMAP_COUNT		(2)
-	struct ssdfs_folio_array_bitmap bmap[SSDFS_FOLIO_ARRAY_BMAP_COUNT];
 };
 
 /* Folio array states */
@@ -79,6 +63,9 @@ enum {
 	SSDFS_DIRTY_FOLIO_TAG,
 	SSDFS_FOLIO_TAG_MAX
 };
+
+/* XArray mark used to track dirty folios */
+#define SSDFS_FOLIO_ARRAY_DIRTY_MARK	XA_MARK_0
 
 /*
  * Inline methods

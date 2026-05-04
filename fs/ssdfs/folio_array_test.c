@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/pagemap.h>
 #include <linux/pagevec.h>
+#include <linux/xarray.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -61,7 +62,6 @@ static void test_create_folio_array_valid_params(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO, array.last_folio);
 	KUNIT_EXPECT_EQ(test, 0, array.order);
 	KUNIT_EXPECT_EQ(test, PAGE_SIZE, array.folio_size);
-	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
 
 	ssdfs_destroy_folio_array(&array);
 }
@@ -110,7 +110,7 @@ static void test_destroy_folio_array_valid(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, 0, atomic_read(&array.folios_capacity));
 	KUNIT_EXPECT_EQ(test, 0, array.folios_count);
 	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO, array.last_folio);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios);
+	KUNIT_EXPECT_TRUE(test, xa_empty(&array.xa));
 }
 
 /*
@@ -130,7 +130,6 @@ static void test_reinit_folio_array_expand(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, 0, err);
 	KUNIT_EXPECT_EQ(test, new_capacity, atomic_read(&array.folios_capacity));
-	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
 
 	ssdfs_destroy_folio_array(&array);
 }
@@ -270,7 +269,7 @@ static void test_add_folio_valid(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, 0, err);
 	KUNIT_EXPECT_EQ(test, 1, array.folios_count);
 	KUNIT_EXPECT_EQ(test, 2, array.last_folio);
-	KUNIT_EXPECT_PTR_EQ(test, folio, array.folios[2]);
+	KUNIT_EXPECT_PTR_EQ(test, folio, xa_load(&array.xa, 2));
 
 	test_free_folio(folio);
 	ssdfs_destroy_folio_array(&array);
@@ -340,7 +339,7 @@ static void test_allocate_folio_locked_valid(struct kunit *test)
 	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, folio);
 	KUNIT_EXPECT_EQ(test, 1, array.folios_count);
 	KUNIT_EXPECT_EQ(test, 1, array.last_folio);
-	KUNIT_EXPECT_PTR_EQ(test, folio, array.folios[1]);
+	KUNIT_EXPECT_PTR_EQ(test, folio, xa_load(&array.xa, 1));
 	KUNIT_EXPECT_TRUE(test, folio_test_locked(folio));
 
 	ssdfs_folio_unlock(folio);
@@ -504,7 +503,7 @@ static void test_grab_folio_new(struct kunit *test)
 	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, grabbed_folio);
 	KUNIT_EXPECT_EQ(test, 1, array.folios_count);
 	KUNIT_EXPECT_EQ(test, 2, array.last_folio);
-	KUNIT_EXPECT_PTR_EQ(test, grabbed_folio, array.folios[2]);
+	KUNIT_EXPECT_PTR_EQ(test, grabbed_folio, xa_load(&array.xa, 2));
 	KUNIT_EXPECT_TRUE(test, folio_test_locked(grabbed_folio));
 
 	ssdfs_folio_unlock(grabbed_folio);
@@ -794,7 +793,7 @@ static void test_delete_folio_valid(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, folio, deleted_folio);
 	KUNIT_EXPECT_EQ(test, 0, array.folios_count);
 	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO, array.last_folio);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[2]);
+	KUNIT_EXPECT_NULL(test, xa_load(&array.xa, 2));
 
 	ssdfs_folio_free(deleted_folio);
 	ssdfs_destroy_folio_array(&array);
@@ -849,9 +848,9 @@ static void test_release_folios_valid_range(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, 0, err);
 	KUNIT_EXPECT_EQ(test, 1, array.folios_count);
 	KUNIT_EXPECT_EQ(test, 4, array.last_folio);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[1]);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[2]);
-	KUNIT_EXPECT_PTR_EQ(test, folio3, array.folios[4]);
+	KUNIT_EXPECT_NULL(test, xa_load(&array.xa, 1));
+	KUNIT_EXPECT_NULL(test, xa_load(&array.xa, 2));
+	KUNIT_EXPECT_PTR_EQ(test, folio3, xa_load(&array.xa, 4));
 
 	test_free_folio(folio3);
 	ssdfs_destroy_folio_array(&array);
@@ -900,8 +899,8 @@ static void test_release_all_folios_valid(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, 0, err);
 	KUNIT_EXPECT_EQ(test, 0, array.folios_count);
 	KUNIT_EXPECT_EQ(test, SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO, array.last_folio);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[0]);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[3]);
+	KUNIT_EXPECT_NULL(test, xa_load(&array.xa, 0));
+	KUNIT_EXPECT_NULL(test, xa_load(&array.xa, 3));
 
 	ssdfs_destroy_folio_array(&array);
 }

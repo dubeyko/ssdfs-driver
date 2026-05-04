@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.69 [May 03, 2026]
+    (*) Optimize memory managament model of folio array.
+
 v.5.68 [April 29, 2026]
     (*) Implement segment tree's memory shrinker.
 

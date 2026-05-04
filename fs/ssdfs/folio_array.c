@@ -24,6 +24,7 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/pagevec.h>
+#include <linux/xarray.h>
 
 #include <kunit/visibility.h>
 
@@ -105,17 +106,11 @@ void ssdfs_farray_check_memory_leaks(void)
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input.
- * %-ENOMEM     - unable to allocate memory.
  */
 int ssdfs_create_folio_array(struct ssdfs_folio_array *array,
 			     unsigned order,
 			     int capacity)
 {
-	void *addr[SSDFS_FOLIO_ARRAY_BMAP_COUNT];
-	size_t bmap_bytes;
-	int i;
-	int err = 0;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
 
@@ -133,6 +128,7 @@ int ssdfs_create_folio_array(struct ssdfs_folio_array *array,
 	}
 
 	init_rwsem(&array->lock);
+	xa_init(&array->xa);
 	atomic_set(&array->folios_capacity, capacity);
 	array->folios_count = 0;
 	array->last_folio = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
@@ -146,58 +142,9 @@ int ssdfs_create_folio_array(struct ssdfs_folio_array *array,
 		  order, array->folio_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	array->folios = ssdfs_farray_kcalloc(capacity, sizeof(struct folio *),
-					     GFP_KERNEL);
-	if (!array->folios) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate memory: capacity %d\n",
-			  capacity);
-		goto finish_create_folio_array;
-	}
-
-	bmap_bytes = capacity + BITS_PER_LONG + (BITS_PER_LONG - 1);
-	bmap_bytes /= BITS_PER_BYTE;
-	array->bmap_bytes = bmap_bytes;
-
-	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
-		spin_lock_init(&array->bmap[i].lock);
-		array->bmap[i].ptr = NULL;
-	}
-
-	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
-		addr[i] = ssdfs_farray_kmalloc(bmap_bytes, GFP_KERNEL);
-
-		if (!addr[i]) {
-			err = -ENOMEM;
-			SSDFS_ERR("fail to allocate bmap: index %d\n",
-				  i);
-			for (; i >= 0; i--)
-				ssdfs_farray_kfree(addr[i]);
-			goto free_folio_array;
-		}
-
-		memset(addr[i], 0xFF, bmap_bytes);
-	}
-
-	down_write(&array->lock);
-	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
-		spin_lock(&array->bmap[i].lock);
-		array->bmap[i].ptr = addr[i];
-		addr[i] = NULL;
-		spin_unlock(&array->bmap[i].lock);
-	}
-	up_write(&array->lock);
-
 	atomic_set(&array->state, SSDFS_FOLIO_ARRAY_CREATED);
 
 	return 0;
-
-free_folio_array:
-	ssdfs_farray_kfree(array->folios);
-	array->folios = NULL;
-
-finish_create_folio_array:
-	return err;
 }
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_create_folio_array);
 
@@ -210,7 +157,6 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_create_folio_array);
 void ssdfs_destroy_folio_array(struct ssdfs_folio_array *array)
 {
 	int state;
-	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
@@ -249,20 +195,7 @@ void ssdfs_destroy_folio_array(struct ssdfs_folio_array *array)
 	array->folios_count = 0;
 	array->last_folio = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
 
-	if (array->folios)
-		ssdfs_farray_kfree(array->folios);
-
-	array->folios = NULL;
-
-	array->bmap_bytes = 0;
-
-	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
-		spin_lock(&array->bmap[i].lock);
-		if (array->bmap[i].ptr)
-			ssdfs_farray_kfree(array->bmap[i].ptr);
-		array->bmap[i].ptr = NULL;
-		spin_unlock(&array->bmap[i].lock);
-	}
+	xa_destroy(&array->xa);
 }
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_destroy_folio_array);
 
@@ -278,16 +211,11 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_destroy_folio_array);
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input.
- * %-ENOMEM     - unable to allocate memory.
  * %-ERANGE     - internal error.
  */
 int ssdfs_reinit_folio_array(int capacity, struct ssdfs_folio_array *array)
 {
-	struct folio **folios;
-	void *addr[SSDFS_FOLIO_ARRAY_BMAP_COUNT];
 	int old_capacity;
-	size_t bmap_bytes;
-	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -333,68 +261,7 @@ int ssdfs_reinit_folio_array(int capacity, struct ssdfs_folio_array *array)
 
 	atomic_set(&array->folios_capacity, capacity);
 
-	folios = ssdfs_farray_kcalloc(capacity, sizeof(struct folio *),
-					GFP_KERNEL);
-	if (!folios) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate memory: capacity %d\n",
-			  capacity);
-		goto finish_reinit;
-	}
-
-	bmap_bytes = capacity + BITS_PER_LONG + (BITS_PER_LONG - 1);
-	bmap_bytes /= BITS_PER_BYTE;
-
-	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
-		addr[i] = ssdfs_farray_kmalloc(bmap_bytes, GFP_KERNEL);
-
-		if (!addr[i]) {
-			err = -ENOMEM;
-			SSDFS_ERR("fail to allocate bmap: index %d\n",
-				  i);
-			for (; i >= 0; i--)
-				ssdfs_farray_kfree(addr[i]);
-			ssdfs_farray_kfree(folios);
-			goto finish_reinit;
-		}
-
-		memset(addr[i], 0xFF, bmap_bytes);
-	}
-
-	err = ssdfs_memcpy(folios,
-			   0, sizeof(struct folio *) * capacity,
-			   array->folios,
-			   0, sizeof(struct folio *) * old_capacity,
-			   sizeof(struct folio *) * old_capacity);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: err %d\n", err);
-		goto finish_reinit;
-	}
-
-	ssdfs_farray_kfree(array->folios);
-	array->folios = folios;
-
-	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
-		void *tmp_addr = NULL;
-
-		spin_lock(&array->bmap[i].lock);
-		ssdfs_memcpy(addr[i], 0, bmap_bytes,
-			     array->bmap[i].ptr, 0, array->bmap_bytes,
-			     array->bmap_bytes);
-		tmp_addr = array->bmap[i].ptr;
-		array->bmap[i].ptr = addr[i];
-		addr[i] = NULL;
-		spin_unlock(&array->bmap[i].lock);
-
-		ssdfs_farray_kfree(tmp_addr);
-	}
-
-	array->bmap_bytes = bmap_bytes;
-
 finish_reinit:
-	if (unlikely(err))
-		atomic_set(&array->folios_capacity, old_capacity);
-
 	up_write(&array->lock);
 
 	return err;
@@ -461,14 +328,13 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_get_last_folio_index);
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  * %-EEXIST     - folio array contains the folio for the index.
+ * %-ENOMEM     - unable to allocate xarray internal nodes.
  */
 int ssdfs_folio_array_add_folio(struct ssdfs_folio_array *array,
 			      struct folio *folio,
 			      unsigned long folio_index)
 {
-	struct ssdfs_folio_array_bitmap *bmap;
 	int capacity;
-	unsigned long found;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -504,7 +370,7 @@ int ssdfs_folio_array_add_folio(struct ssdfs_folio_array *array,
 
 	capacity = atomic_read(&array->folios_capacity);
 
-	if (array->folios_count > capacity) {
+	if (array->folios_count > (unsigned long)capacity) {
 		err = -ERANGE;
 		SSDFS_ERR("corrupted folio array: "
 			  "folios_count %lu, folios_capacity %d\n",
@@ -513,52 +379,25 @@ int ssdfs_folio_array_add_folio(struct ssdfs_folio_array *array,
 		goto finish_add_folio;
 	}
 
-	if (array->folios_count == capacity) {
-		err = -EEXIST;
-		SSDFS_ERR("folio %lu is allocated already\n",
-			  folio_index);
-		goto finish_add_folio;
-	}
-
-	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
-	if (!bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("bitmap is empty\n");
-		goto finish_add_folio;
-	}
-
-	spin_lock(&bmap->lock);
-	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
-					   folio_index, 1, 0);
-	if (found == folio_index) {
-		/* folio is allocated already */
-		err = -EEXIST;
-	} else
-		bitmap_clear(bmap->ptr, folio_index, 1);
-	spin_unlock(&bmap->lock);
-
-	if (err) {
-		SSDFS_ERR("folio %lu is allocated already\n",
-			  folio_index);
-		goto finish_add_folio;
-	}
-
-	if (array->folios[folio_index]) {
-		err = -ERANGE;
-		SSDFS_WARN("position %lu contains folio pointer\n",
-			   folio_index);
-		goto finish_add_folio;
-	} else {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("folio %p, count %d\n",
-			  folio, folio_ref_count(folio));
-		BUG_ON(folio_ref_count(folio) != 2);
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+	BUG_ON(folio_ref_count(folio) != 2);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		array->folios[folio_index] = folio;
-		folio->index = folio_index;
+	err = xa_insert(&array->xa, folio_index, folio, GFP_KERNEL);
+	if (err == -EBUSY) {
+		err = -EEXIST;
+		SSDFS_ERR("folio %lu is allocated already\n",
+			  folio_index);
+		goto finish_add_folio;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to insert folio %lu: err %d\n",
+			  folio_index, err);
+		goto finish_add_folio;
 	}
 
+	folio->index = folio_index;
 	ssdfs_farray_account_folio(folio);
 	array->folios_count++;
 
@@ -671,10 +510,7 @@ struct folio *ssdfs_folio_array_get_folio(struct ssdfs_folio_array *array,
 					  unsigned long folio_index)
 {
 	struct folio *folio;
-	struct ssdfs_folio_array_bitmap *bmap;
 	int capacity;
-	unsigned long found;
-	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
@@ -707,45 +543,19 @@ struct folio *ssdfs_folio_array_get_folio(struct ssdfs_folio_array *array,
 
 	down_read(&array->lock);
 
-	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
-	if (!bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("bitmap is empty\n");
-		goto finish_get_folio;
-	}
+	folio = xa_load(&array->xa, folio_index);
+	if (folio)
+		ssdfs_folio_get(folio);
 
-	spin_lock(&bmap->lock);
-	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
-					   folio_index, 1, 0);
-	if (found != folio_index) {
-		/* folio is not allocated yet */
-		err = -ENOENT;
-	}
-	spin_unlock(&bmap->lock);
+	up_read(&array->lock);
 
-	if (err) {
+	if (!folio) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("folio %lu is not allocated yet\n",
 			  folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_get_folio;
+		return ERR_PTR(-ENOENT);
 	}
-
-	folio = array->folios[folio_index];
-
-	if (!folio) {
-		err = -ERANGE;
-		SSDFS_ERR("folio pointer is NULL\n");
-		goto finish_get_folio;
-	}
-
-finish_get_folio:
-	up_read(&array->lock);
-
-	if (unlikely(err))
-		return ERR_PTR(err);
-
-	ssdfs_folio_get(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio %p, count %d\n",
@@ -885,9 +695,7 @@ int ssdfs_folio_array_set_folio_dirty(struct ssdfs_folio_array *array,
 				      unsigned long folio_index)
 {
 	struct folio *folio;
-	struct ssdfs_folio_array_bitmap *bmap;
 	int capacity;
-	unsigned long found;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -921,63 +729,16 @@ int ssdfs_folio_array_set_folio_dirty(struct ssdfs_folio_array *array,
 
 	down_read(&array->lock);
 
-	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
-	if (!bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("allocation bitmap is empty\n");
-		goto finish_set_folio_dirty;
-	}
-
-	spin_lock(&bmap->lock);
-	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
-					   folio_index, 1, 0);
-	if (found != folio_index) {
-		/* folio is not allocated yet */
+	folio = xa_load(&array->xa, folio_index);
+	if (!folio) {
 		err = -ENOENT;
-	}
-	spin_unlock(&bmap->lock);
-
-	if (err) {
 		SSDFS_ERR("folio %lu is not allocated yet\n",
 			  folio_index);
 		goto finish_set_folio_dirty;
 	}
 
-	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
-	if (!bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("dirty bitmap is empty\n");
-		goto finish_set_folio_dirty;
-	}
-
-	spin_lock(&bmap->lock);
-	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
-					   folio_index, 1, 0);
-	if (found == folio_index) {
-		/* folio is dirty already */
-		err = -EEXIST;
-	}
-	bitmap_clear(bmap->ptr, folio_index, 1);
-	spin_unlock(&bmap->lock);
-
-	if (err) {
-		err = 0;
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("folio %lu is dirty already\n",
-			  folio_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-	}
-
-	folio = array->folios[folio_index];
-
-	if (!folio) {
-		err = -ERANGE;
-		SSDFS_ERR("folio pointer is NULL\n");
-		goto finish_set_folio_dirty;
-	}
-
+	xa_set_mark(&array->xa, folio_index, SSDFS_FOLIO_ARRAY_DIRTY_MARK);
 	folio_set_dirty(folio);
-
 	atomic_set(&array->state, SSDFS_FOLIO_ARRAY_DIRTY);
 
 finish_set_folio_dirty:
@@ -1006,10 +767,7 @@ int ssdfs_folio_array_clear_dirty_folio(struct ssdfs_folio_array *array,
 					unsigned long folio_index)
 {
 	struct folio *folio;
-	struct ssdfs_folio_array_bitmap *bmap;
 	int capacity;
-	unsigned long found;
-	bool is_clean = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1043,51 +801,18 @@ int ssdfs_folio_array_clear_dirty_folio(struct ssdfs_folio_array *array,
 
 	down_read(&array->lock);
 
-	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
-	if (!bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("allocation bitmap is empty\n");
-		goto finish_clear_folio_dirty;
-	}
-
-	spin_lock(&bmap->lock);
-	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
-					   folio_index, 1, 0);
-	if (found != folio_index) {
-		/* folio is not allocated yet */
+	folio = xa_load(&array->xa, folio_index);
+	if (!folio) {
 		err = -ENOENT;
-	}
-	spin_unlock(&bmap->lock);
-
-	if (err) {
 		SSDFS_ERR("folio %lu is not allocated yet\n",
 			  folio_index);
 		goto finish_clear_folio_dirty;
 	}
 
-	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
-	if (!bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("dirty bitmap is empty\n");
-		goto finish_clear_folio_dirty;
-	}
-
-	spin_lock(&bmap->lock);
-	bitmap_set(bmap->ptr, folio_index, 1);
-	is_clean = bitmap_full(bmap->ptr, capacity);
-	spin_unlock(&bmap->lock);
-
-	folio = array->folios[folio_index];
-
-	if (!folio) {
-		err = -ERANGE;
-		SSDFS_ERR("folio pointer is NULL\n");
-		goto finish_clear_folio_dirty;
-	}
-
+	xa_clear_mark(&array->xa, folio_index, SSDFS_FOLIO_ARRAY_DIRTY_MARK);
 	folio_clear_dirty(folio);
 
-	if (is_clean)
+	if (!xa_marked(&array->xa, SSDFS_FOLIO_ARRAY_DIRTY_MARK))
 		atomic_set(&array->state, SSDFS_FOLIO_ARRAY_CREATED);
 
 finish_clear_folio_dirty:
@@ -1118,10 +843,8 @@ int ssdfs_folio_array_clear_dirty_range(struct ssdfs_folio_array *array,
 					unsigned long end)
 {
 	struct folio *folio;
-	struct ssdfs_folio_array_bitmap *bmap;
+	unsigned long index;
 	int capacity;
-	bool is_clean = false;
-	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1156,32 +879,20 @@ int ssdfs_folio_array_clear_dirty_range(struct ssdfs_folio_array *array,
 	down_write(&array->lock);
 
 	capacity = atomic_read(&array->folios_capacity);
+	end = min_t(unsigned long, (unsigned long)(capacity - 1), end);
 
-	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
-	if (!bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("dirty bitmap is empty\n");
-		goto finish_clear_dirty_folios;
+	index = start;
+	folio = xa_find(&array->xa, &index, end, XA_PRESENT);
+	while (folio) {
+		xa_clear_mark(&array->xa, index,
+			      SSDFS_FOLIO_ARRAY_DIRTY_MARK);
+		folio_clear_dirty(folio);
+		folio = xa_find_after(&array->xa, &index, end, XA_PRESENT);
 	}
 
-	end = min_t(int, capacity, end + 1);
-
-	for (i = start; i < end; i++) {
-		folio = array->folios[i];
-
-		if (folio)
-			folio_clear_dirty(folio);
-	}
-
-	spin_lock(&bmap->lock);
-	bitmap_set(bmap->ptr, start, end - start);
-	is_clean = bitmap_full(bmap->ptr, capacity);
-	spin_unlock(&bmap->lock);
-
-	if (is_clean)
+	if (!xa_marked(&array->xa, SSDFS_FOLIO_ARRAY_DIRTY_MARK))
 		atomic_set(&array->state, SSDFS_FOLIO_ARRAY_CREATED);
 
-finish_clear_dirty_folios:
 	up_write(&array->lock);
 
 	return err;
@@ -1251,9 +962,8 @@ int ssdfs_folio_array_lookup_range(struct ssdfs_folio_array *array,
 {
 	int state;
 	struct folio *folio;
-	struct ssdfs_folio_array_bitmap *bmap;
 	int capacity;
-	unsigned long found;
+	unsigned long index;
 	int count = 0;
 	int err = 0;
 
@@ -1314,55 +1024,35 @@ int ssdfs_folio_array_lookup_range(struct ssdfs_folio_array *array,
 		goto finish_search;
 	}
 
-	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
-	if (!bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("dirty bitmap is empty\n");
-		goto finish_search;
-	}
+	end = min_t(unsigned long, (unsigned long)(capacity - 1), end);
 
-	end = min_t(int, capacity - 1, end);
+	index = *start;
+	folio = xa_find(&array->xa, &index, end,
+			SSDFS_FOLIO_ARRAY_DIRTY_MARK);
+	*start = index;
 
-	spin_lock(&bmap->lock);
-	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
-					   *start, 1, 0);
-	spin_unlock(&bmap->lock);
-
-	*start = (int)found;
-
-	while (found <= end) {
-		folio = array->folios[found];
-
-		if (folio) {
-			if (!folio_test_dirty(folio)) {
-				SSDFS_ERR("folio %lu is not dirty\n",
-					  folio->index);
-			}
-			ssdfs_folio_get(folio);
-
+	while (folio && count < max_folios) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("folio %p, count %d\n",
-				  folio, folio_ref_count(folio));
-			BUG_ON(folio_ref_count(folio) < 3);
+		if (!folio_test_dirty(folio)) {
+			SSDFS_ERR("folio %lu is not dirty\n",
+				  folio->index);
+		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			folio_batch_add(batch, folio);
-			count++;
-		}
+		ssdfs_folio_get(folio);
 
-		if (count >= max_folios)
-			goto finish_search;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
+		BUG_ON(folio_ref_count(folio) < 3);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-		found++;
+		folio_batch_add(batch, folio);
+		count++;
 
-		if (found >= capacity)
-			break;
-
-		spin_lock(&bmap->lock);
-		found = bitmap_find_next_zero_area(bmap->ptr, capacity,
-						   found, 1, 0);
-		spin_unlock(&bmap->lock);
-	};
+		folio = xa_find_after(&array->xa, &index, end,
+				      SSDFS_FOLIO_ARRAY_DIRTY_MARK);
+	}
 
 finish_search:
 	up_read(&array->lock);
@@ -1374,18 +1064,14 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_lookup_range);
 /*
  * ssdfs_folio_array_define_last_folio() - define last folio index
  * @array: folio array object
- * @capacity: folios capacity in array
  *
- * This method tries to define last folio index.
+ * This method iterates the xarray to find the highest populated index.
  */
-static inline
-void ssdfs_folio_array_define_last_folio(struct ssdfs_folio_array *array,
-					 int capacity)
+static void ssdfs_folio_array_define_last_folio(struct ssdfs_folio_array *array)
 {
-	struct ssdfs_folio_array_bitmap *alloc_bmap;
-	unsigned long *ptr;
-	unsigned long found;
-	unsigned long i;
+	unsigned long index = 0;
+	unsigned long last = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
+	void *entry;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
@@ -1395,33 +1081,15 @@ void ssdfs_folio_array_define_last_folio(struct ssdfs_folio_array *array,
 		  array, atomic_read(&array->state));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	alloc_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!alloc_bmap->ptr);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	if (array->folios_count == 0) {
-		/* empty array */
 		array->last_folio = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
-	} else if (array->last_folio >= SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO) {
-		/* do nothing */
-	} else if (array->last_folio > 0) {
-		for (i = array->last_folio; i > array->folios_count; i--) {
-			spin_lock(&alloc_bmap->lock);
-			ptr = alloc_bmap->ptr;
-			found = bitmap_find_next_zero_area(ptr,
-							   capacity,
-							   i, 1, 0);
-			spin_unlock(&alloc_bmap->lock);
+		return;
+	}
 
-			if (found == i)
-				break;
-		}
+	xa_for_each(&array->xa, index, entry)
+		last = index;
 
-		array->last_folio = i;
-	} else
-		array->last_folio = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
+	array->last_folio = last;
 }
 
 /*
@@ -1443,10 +1111,7 @@ struct folio *ssdfs_folio_array_delete_folio(struct ssdfs_folio_array *array,
 					     unsigned long folio_index)
 {
 	struct folio *folio;
-	struct ssdfs_folio_array_bitmap *alloc_bmap, *dirty_bmap;
 	int capacity;
-	unsigned long found;
-	bool is_clean = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1480,65 +1145,26 @@ struct folio *ssdfs_folio_array_delete_folio(struct ssdfs_folio_array *array,
 
 	down_write(&array->lock);
 
-	alloc_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
-	if (!alloc_bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("alloc bitmap is empty\n");
-		goto finish_delete_folio;
-	}
-
-	dirty_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
-	if (!dirty_bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("dirty bitmap is empty\n");
-		goto finish_delete_folio;
-	}
-
-	spin_lock(&alloc_bmap->lock);
-	found = bitmap_find_next_zero_area(alloc_bmap->ptr, capacity,
-					   folio_index, 1, 0);
-	if (found != folio_index) {
-		/* folio is not allocated yet */
+	folio = xa_erase(&array->xa, folio_index);
+	if (!folio) {
 		err = -ENOENT;
-	}
-	spin_unlock(&alloc_bmap->lock);
-
-	if (err) {
 		SSDFS_ERR("folio %lu is not allocated yet\n",
 			  folio_index);
 		goto finish_delete_folio;
 	}
 
-	folio = array->folios[folio_index];
-
-	if (!folio) {
-		err = -ERANGE;
-		SSDFS_ERR("folio pointer is NULL\n");
-		goto finish_delete_folio;
-	}
-
-	spin_lock(&alloc_bmap->lock);
-	bitmap_set(alloc_bmap->ptr, folio_index, 1);
-	spin_unlock(&alloc_bmap->lock);
-
-	spin_lock(&dirty_bmap->lock);
-	bitmap_set(dirty_bmap->ptr, folio_index, 1);
-	is_clean = bitmap_full(dirty_bmap->ptr, capacity);
-	spin_unlock(&dirty_bmap->lock);
-
 	array->folios_count--;
-	array->folios[folio_index] = NULL;
 
 	if (array->last_folio == folio_index)
-		ssdfs_folio_array_define_last_folio(array, capacity);
+		ssdfs_folio_array_define_last_folio(array);
+
+	if (!xa_marked(&array->xa, SSDFS_FOLIO_ARRAY_DIRTY_MARK))
+		atomic_set(&array->state, SSDFS_FOLIO_ARRAY_CREATED);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folios_count %lu, last_folio %lu\n",
 		  array->folios_count, array->last_folio);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	if (is_clean)
-		atomic_set(&array->state, SSDFS_FOLIO_ARRAY_CREATED);
 
 finish_delete_folio:
 	up_write(&array->lock);
@@ -1580,13 +1206,10 @@ int ssdfs_folio_array_release_folios(struct ssdfs_folio_array *array,
 				     unsigned long end)
 {
 	struct folio *folio;
-	struct ssdfs_folio_array_bitmap *alloc_bmap, *dirty_bmap;
+	unsigned long index;
 	int capacity;
-	unsigned long found, found_dirty;
 #ifdef CONFIG_SSDFS_DEBUG
 	unsigned long released = 0;
-	unsigned long allocated_folios = 0;
-	unsigned long dirty_folios = 0;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
@@ -1638,93 +1261,44 @@ int ssdfs_folio_array_release_folios(struct ssdfs_folio_array *array,
 	released = array->folios_count;
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	alloc_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
-	if (!alloc_bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("allocation bitmap is empty\n");
-		goto finish_release_folios_range;
-	}
+	end = min_t(unsigned long, (unsigned long)(capacity - 1), end);
 
-#ifdef CONFIG_SSDFS_DEBUG
-	spin_lock(&alloc_bmap->lock);
-	allocated_folios = bitmap_weight(alloc_bmap->ptr, capacity);
-	spin_unlock(&alloc_bmap->lock);
-	allocated_folios = capacity - allocated_folios;
-#endif /* CONFIG_SSDFS_DEBUG */
+	index = *start;
+	folio = xa_find(&array->xa, &index, end, XA_PRESENT);
 
-	dirty_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
-	if (!dirty_bmap->ptr) {
-		err = -ERANGE;
-		SSDFS_WARN("dirty bitmap is empty\n");
-		goto finish_release_folios_range;
-	}
+	if (folio)
+		*start = index;
 
-#ifdef CONFIG_SSDFS_DEBUG
-	spin_lock(&dirty_bmap->lock);
-	dirty_folios = bitmap_weight(dirty_bmap->ptr, capacity);
-	spin_unlock(&dirty_bmap->lock);
-	dirty_folios = capacity - dirty_folios;
-#endif /* CONFIG_SSDFS_DEBUG */
+	while (folio) {
+		unsigned long dirty_idx = index;
+		bool is_dirty;
 
-	spin_lock(&alloc_bmap->lock);
-	found = bitmap_find_next_zero_area(alloc_bmap->ptr, capacity,
-					   *start, 1, 0);
-	spin_unlock(&alloc_bmap->lock);
-
-	end = min_t(int, capacity - 1, end);
-
-	*start = found;
-
-	while (found <= end) {
-		spin_lock(&dirty_bmap->lock);
-		found_dirty = bitmap_find_next_zero_area(dirty_bmap->ptr,
-							 capacity,
-						         found, 1, 0);
-		spin_unlock(&dirty_bmap->lock);
-
-		if (found == found_dirty) {
+		is_dirty = (xa_find(&array->xa, &dirty_idx, index,
+				    SSDFS_FOLIO_ARRAY_DIRTY_MARK) != NULL);
+		if (is_dirty) {
 			err = -ERANGE;
-			SSDFS_ERR("folio %lu is dirty\n",
-				  found);
+			SSDFS_ERR("folio %lu is dirty\n", index);
 			goto finish_release_folios_range;
 		}
 
-		folio = array->folios[found];
-
-		if (folio) {
-			ssdfs_folio_lock(folio);
-			folio_clear_uptodate(folio);
-			ssdfs_folio_unlock(folio);
+		ssdfs_folio_lock(folio);
+		folio_clear_uptodate(folio);
+		ssdfs_folio_unlock(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("folio %p, count %d\n",
-				  folio, folio_ref_count(folio));
-			BUG_ON(folio_ref_count(folio) != 2);
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
+		BUG_ON(folio_ref_count(folio) != 2);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			ssdfs_farray_free_folio(folio);
-			array->folios[found] = NULL;
-		}
-
-		spin_lock(&alloc_bmap->lock);
-		bitmap_set(alloc_bmap->ptr, found, 1);
-		spin_unlock(&alloc_bmap->lock);
-
+		ssdfs_farray_free_folio(folio);
+		xa_erase(&array->xa, index);
 		array->folios_count--;
 
-		found++;
+		folio = xa_find_after(&array->xa, &index, end, XA_PRESENT);
+	}
 
-		if (found >= capacity)
-			break;
-
-		spin_lock(&alloc_bmap->lock);
-		found = bitmap_find_next_zero_area(alloc_bmap->ptr,
-						   capacity,
-						   found, 1, 0);
-		spin_unlock(&alloc_bmap->lock);
-	};
-
-	ssdfs_folio_array_define_last_folio(array, capacity);
+	ssdfs_folio_array_define_last_folio(array);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folios_count %lu, last_folio %lu\n",
@@ -1732,10 +1306,8 @@ int ssdfs_folio_array_release_folios(struct ssdfs_folio_array *array,
 
 	released -= array->folios_count;
 
-	SSDFS_DBG("released %lu, folios_count %lu, "
-		  "allocated_folios %lu, dirty_folios %lu\n",
-		  released, array->folios_count,
-		  allocated_folios, dirty_folios);
+	SSDFS_DBG("released %lu, folios_count %lu\n",
+		  released, array->folios_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_release_folios_range:
