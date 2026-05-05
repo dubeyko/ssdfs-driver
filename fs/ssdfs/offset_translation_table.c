@@ -1785,7 +1785,8 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 			goto finish_fragment_read;
 		}
 
-		folio.ptr = stream->batch.folios[folio.desc.folio_index];
+		folio.ptr = ssdfs_folio_vector_get(&stream->batch,
+						   folio.desc.folio_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("read_bytes %u, fragment->buf_size %zu, "
@@ -2381,7 +2382,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 #ifdef CONFIG_SSDFS_DEBUG
 	for (j = 0; j < ssdfs_folio_vector_count(content); j++) {
 		void *kaddr;
-		struct folio *folio = content->folios[j];
+		struct folio *folio = ssdfs_folio_vector_get(content, j);
 
 		kaddr = kmap_local_folio(folio, 0);
 		SSDFS_DBG("PAGE DUMP: index %d\n",

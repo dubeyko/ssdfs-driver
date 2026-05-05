@@ -307,7 +307,7 @@ int ssdfs_do_folio_vector_testing(struct ssdfs_fs_info *fsi,
 		for (j = 0; j < count; j++) {
 			memset(kaddr1, j, PAGE_SIZE);
 
-			folio = fvec.folios[j];
+			folio = ssdfs_folio_vector_get(&fvec, j);
 
 			if (!folio) {
 				SSDFS_ERR("empty folio: index %d\n", j);

@@ -57,7 +57,7 @@ static void test_folio_vector_create_valid_params(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, 0, array.count);
 	KUNIT_EXPECT_GT(test, array.capacity, 0);
 	KUNIT_EXPECT_EQ(test, 0, array.order);
-	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
+	KUNIT_EXPECT_TRUE(test, xa_empty(&array.xa));
 
 	ssdfs_folio_vector_destroy(&array);
 }
@@ -72,7 +72,7 @@ static void test_folio_vector_create_zero_capacity(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, 0, err);
 	KUNIT_EXPECT_EQ(test, 0, array.count);
 	KUNIT_EXPECT_GT(test, array.capacity, 0);
-	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
+	KUNIT_EXPECT_TRUE(test, xa_empty(&array.xa));
 
 	ssdfs_folio_vector_destroy(&array);
 }
@@ -89,7 +89,7 @@ static void test_folio_vector_create_large_capacity(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, 0, array.count);
 	KUNIT_EXPECT_LE(test, array.capacity, ssdfs_folio_vector_max_threshold());
 	KUNIT_EXPECT_EQ(test, 2, array.order);
-	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
+	KUNIT_EXPECT_TRUE(test, xa_empty(&array.xa));
 
 	ssdfs_folio_vector_destroy(&array);
 }
@@ -155,7 +155,6 @@ static void test_folio_vector_inflate_expand(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, 0, err);
 	KUNIT_EXPECT_GT(test, array.capacity, original_capacity);
-	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, array.folios);
 
 	ssdfs_folio_vector_destroy(&array);
 }
@@ -246,7 +245,7 @@ static void test_folio_vector_add_valid(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, 0, err);
 	KUNIT_EXPECT_EQ(test, 1, array.count);
-	KUNIT_EXPECT_PTR_EQ(test, folio, array.folios[0]);
+	KUNIT_EXPECT_PTR_EQ(test, folio, ssdfs_folio_vector_get(&array, 0));
 
 	test_free_folio(folio);
 	ssdfs_folio_vector_destroy(&array);
@@ -268,7 +267,7 @@ static void test_folio_vector_allocate_valid(struct kunit *test)
 
 	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, folio);
 	KUNIT_EXPECT_EQ(test, 1, array.count);
-	KUNIT_EXPECT_PTR_EQ(test, folio, array.folios[0]);
+	KUNIT_EXPECT_PTR_EQ(test, folio, ssdfs_folio_vector_get(&array, 0));
 
 	ssdfs_folio_vector_release(&array);
 	ssdfs_folio_vector_destroy(&array);
@@ -318,7 +317,7 @@ static void test_folio_vector_remove_valid(struct kunit *test)
 
 	KUNIT_EXPECT_NOT_ERR_OR_NULL(test, removed_folio);
 	KUNIT_EXPECT_PTR_EQ(test, folio, removed_folio);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[0]);
+	KUNIT_EXPECT_PTR_EQ(test, NULL, ssdfs_folio_vector_get(&array, 0));
 
 	test_free_folio(removed_folio);
 	ssdfs_folio_vector_destroy(&array);
@@ -385,8 +384,8 @@ static void test_folio_vector_release_valid(struct kunit *test)
 	ssdfs_folio_vector_release(&array);
 
 	KUNIT_EXPECT_EQ(test, 0, array.count);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[0]);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios[1]);
+	KUNIT_EXPECT_PTR_EQ(test, NULL, ssdfs_folio_vector_get(&array, 0));
+	KUNIT_EXPECT_PTR_EQ(test, NULL, ssdfs_folio_vector_get(&array, 1));
 
 	ssdfs_folio_vector_destroy(&array);
 }
@@ -406,7 +405,7 @@ static void test_folio_vector_destroy_valid(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, 0, array.count);
 	KUNIT_EXPECT_EQ(test, 0, array.capacity);
-	KUNIT_EXPECT_PTR_EQ(test, NULL, array.folios);
+	KUNIT_EXPECT_TRUE(test, xa_empty(&array.xa));
 }
 
 /*

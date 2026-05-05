@@ -16,6 +16,7 @@
 #include <linux/pagemap.h>
 #include <linux/slab.h>
 #include <linux/pagevec.h>
+#include <linux/xarray.h>
 
 #include <kunit/visibility.h>
 
@@ -92,8 +93,6 @@ int ssdfs_folio_vector_create(struct ssdfs_folio_vector *array,
 			      unsigned order,
 			      u32 capacity)
 {
-	size_t size = sizeof(struct folio *);
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -115,14 +114,7 @@ int ssdfs_folio_vector_create(struct ssdfs_folio_vector *array,
 			capacity = ssdfs_folio_vector_max_threshold();
 	}
 
-	size *= capacity;
-	array->folios = ssdfs_folio_vector_kzalloc(size, GFP_KERNEL);
-	if (!array->folios) {
-		SSDFS_ERR("fail to allocate memory: size %zu\n",
-			  size);
-		return -ENOMEM;
-	}
-
+	xa_init(&array->xa);
 	array->capacity = capacity;
 
 	return 0;
@@ -136,7 +128,8 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_create);
 void ssdfs_folio_vector_destroy(struct ssdfs_folio_vector *array)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	int i;
+	struct folio *folio;
+	unsigned long index;
 
 	BUG_ON(!array);
 
@@ -145,28 +138,15 @@ void ssdfs_folio_vector_destroy(struct ssdfs_folio_vector *array)
 			  array->count);
 	}
 
-	for (i = 0; i < array->capacity; i++) {
-		struct folio *folio = array->folios[i];
-
+	xa_for_each(&array->xa, index, folio) {
 		if (folio)
-			SSDFS_ERR("folio %d is not released\n", i);
+			SSDFS_ERR("folio %lu is not released\n", index);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	array->count = 0;
-
-	if (array->folios) {
-#ifdef CONFIG_SSDFS_DEBUG
-		if (array->capacity == 0) {
-			SSDFS_ERR("invalid state: capacity %u\n",
-				  array->capacity);
-		}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		array->capacity = 0;
-		ssdfs_folio_vector_kfree(array->folios);
-		array->folios = NULL;
-	}
+	array->capacity = 0;
+	xa_destroy(&array->xa);
 }
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_destroy);
 
@@ -178,23 +158,17 @@ int ssdfs_folio_vector_init(struct ssdfs_folio_vector *array)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-
-	if (!array->folios) {
-		SSDFS_ERR("fail to init\n");
-		return -ERANGE;
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	array->count = 0;
 
 	if (array->capacity == 0) {
 		SSDFS_ERR("invalid state: capacity %u\n",
 			  array->capacity);
 		return -ERANGE;
-	} else {
-		memset(array->folios, 0,
-			sizeof(struct folio *) * array->capacity);
 	}
+
+	array->count = 0;
+	xa_destroy(&array->xa);
+	xa_init(&array->xa);
 
 	return 0;
 }
@@ -207,33 +181,26 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_init);
 int ssdfs_folio_vector_reinit(struct ssdfs_folio_vector *array)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	int i;
+	struct folio *folio;
+	unsigned long index;
 
 	BUG_ON(!array);
 
-	if (!array->folios) {
-		SSDFS_ERR("fail to reinit\n");
-		return -ERANGE;
-	}
-
-	for (i = 0; i < array->capacity; i++) {
-		struct folio *folio = array->folios[i];
-
+	xa_for_each(&array->xa, index, folio) {
 		if (folio)
-			SSDFS_WARN("folio %d is not released\n", i);
+			SSDFS_WARN("folio %lu is not released\n", index);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	array->count = 0;
 
 	if (array->capacity == 0) {
 		SSDFS_ERR("invalid state: capacity %u\n",
 			  array->capacity);
 		return -ERANGE;
-	} else {
-		memset(array->folios, 0,
-			sizeof(struct folio *) * array->capacity);
 	}
+
+	array->count = 0;
+	xa_destroy(&array->xa);
+	xa_init(&array->xa);
 
 	return 0;
 }
@@ -243,14 +210,12 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_reinit);
  * ssdfs_folio_vector_inflate() - increase capacity of folio vector
  * @array: pointer on folio vector
  * @new_capacity: new capacity of folio vector
+ *
+ * xarray grows dynamically so this only updates the capacity limit.
  */
 int ssdfs_folio_vector_inflate(struct ssdfs_folio_vector *array,
 			       u32 new_capacity)
 {
-	size_t ptr_size = sizeof(struct folio *);
-	size_t old_size;
-	size_t new_size;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -271,17 +236,6 @@ int ssdfs_folio_vector_inflate(struct ssdfs_folio_vector *array,
 		if (new_capacity > ssdfs_folio_vector_max_threshold())
 			new_capacity = ssdfs_folio_vector_max_threshold();
 	}
-
-	old_size = ptr_size * array->capacity;
-	new_size = ptr_size * new_capacity;
-
-	array->folios = krealloc(array->folios, new_size, GFP_KERNEL);
-	if (!array->folios) {
-		SSDFS_ERR("fail to re-allocate folio vector\n");
-		return -ENOMEM;
-	}
-
-	memset((u8 *)array->folios + old_size, 0, new_size - old_size);
 
 	array->capacity = new_capacity;
 
@@ -345,6 +299,8 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_capacity);
 int ssdfs_folio_vector_add(struct ssdfs_folio_vector *array,
 			  struct folio *folio)
 {
+	void *ret;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !folio);
 
@@ -353,16 +309,16 @@ int ssdfs_folio_vector_add(struct ssdfs_folio_vector *array,
 			  array->count);
 		return -ENOSPC;
 	}
-
-	if (!array->folios) {
-		SSDFS_ERR("fail to add folio: "
-			  "count %u, capacity %u\n",
-			  array->count, array->capacity);
-		return -ERANGE;
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	array->folios[array->count] = folio;
+	ret = xa_store(&array->xa, array->count, folio, GFP_KERNEL);
+	if (xa_is_err(ret)) {
+		int err = xa_err(ret);
+
+		SSDFS_ERR("fail to store folio in xarray: err %d\n", err);
+		return err;
+	}
+
 	array->count++;
 
 	ssdfs_folio_vector_account_folio(folio);
@@ -416,7 +372,7 @@ struct folio *ssdfs_folio_vector_allocate(struct ssdfs_folio_vector *array)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("array %p, folio vector count %u\n",
-		  array->folios, ssdfs_folio_vector_count(array));
+		  &array->xa, ssdfs_folio_vector_count(array));
 	SSDFS_DBG("folio %p, count %d\n",
 		  folio, folio_ref_count(folio));
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -435,7 +391,7 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_allocate);
  * @folio_index: index of the folio
  */
 struct folio *ssdfs_folio_vector_remove(struct ssdfs_folio_vector *array,
-				      u32 folio_index)
+					u32 folio_index)
 {
 	struct folio *folio;
 
@@ -462,7 +418,7 @@ struct folio *ssdfs_folio_vector_remove(struct ssdfs_folio_vector *array,
 		return ERR_PTR(-ENOENT);
 	}
 
-	folio = array->folios[folio_index];
+	folio = xa_load(&array->xa, folio_index);
 
 	if (!folio) {
 		SSDFS_ERR("folio index is absent: "
@@ -471,8 +427,8 @@ struct folio *ssdfs_folio_vector_remove(struct ssdfs_folio_vector *array,
 		return ERR_PTR(-ENOENT);
 	}
 
+	xa_erase(&array->xa, folio_index);
 	ssdfs_folio_vector_forget_folio(folio);
-	array->folios[folio_index] = NULL;
 
 	return folio;
 }
@@ -485,29 +441,20 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_remove);
 void ssdfs_folio_vector_release(struct ssdfs_folio_vector *array)
 {
 	struct folio *folio;
-	int i;
+	unsigned long index;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-
-	if (!array->folios) {
-		SSDFS_ERR("fail to release: "
-			  "count %u, capacity %u\n",
-			  array->count, array->capacity);
-		return;
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < ssdfs_folio_vector_count(array); i++) {
-		folio = array->folios[i];
-
+	xa_for_each(&array->xa, index, folio) {
 		if (!folio)
 			continue;
 
+		ssdfs_folio_vector_account_folio(folio);
+		folio = ssdfs_folio_vector_remove(array, index);
 		ssdfs_folio_put(folio);
-
 		ssdfs_folio_vector_free_folio(folio);
-		array->folios[i] = NULL;
 
 #ifdef CONFIG_SSDFS_DEBUG
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING

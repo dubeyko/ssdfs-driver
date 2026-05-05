@@ -8850,7 +8850,7 @@ int ssdfs_read_blk_desc_byte_stream(struct ssdfs_peb_info *pebi,
 				return err;
 			}
 		} else {
-			folio = content->folios[folio_index];
+			folio = ssdfs_folio_vector_get(content, folio_index);
 			if (unlikely(!folio)) {
 				err = -ERANGE;
 				SSDFS_ERR("fail to get folio: err %d\n",

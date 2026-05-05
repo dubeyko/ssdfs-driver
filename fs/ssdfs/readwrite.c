@@ -666,10 +666,10 @@ int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!batch->folios[0]);
+	BUG_ON(!ssdfs_folio_vector_get(batch, 0));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	block_size = folio_size(batch->folios[0]);
+	block_size = folio_size(ssdfs_folio_vector_get(batch, 0));
 
 	do {
 		size_t iter_read_bytes;
@@ -708,7 +708,8 @@ int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
 			return -E2BIG;
 		}
 
-		folio.ptr = batch->folios[folio.desc.folio_index];
+		folio.ptr = ssdfs_folio_vector_get(batch,
+						   folio.desc.folio_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!folio.ptr);
@@ -900,10 +901,10 @@ int ssdfs_unaligned_write_folio_vector(struct ssdfs_fs_info *fsi,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!batch->folios[0]);
+	BUG_ON(!ssdfs_folio_vector_get(batch, 0));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	block_size = folio_size(batch->folios[0]);
+	block_size = folio_size(ssdfs_folio_vector_get(batch, 0));
 
 	do {
 		size_t iter_write_bytes;
@@ -942,7 +943,8 @@ int ssdfs_unaligned_write_folio_vector(struct ssdfs_fs_info *fsi,
 			return -E2BIG;
 		}
 
-		folio.ptr = batch->folios[folio.desc.folio_index];
+		folio.ptr = ssdfs_folio_vector_get(batch,
+						   folio.desc.folio_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!folio.ptr);

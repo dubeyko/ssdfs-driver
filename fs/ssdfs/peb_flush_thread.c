@@ -11998,7 +11998,7 @@ int ssdfs_peb_store_batch(struct ssdfs_batch_descriptor *desc)
 		} else if (desc->uncompr_size == desc->bytes_count)
 			break;
 
-		src_folio = desc->batch->folios[i];
+		src_folio = ssdfs_folio_vector_get(desc->batch, i);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!src_folio);
@@ -12197,7 +12197,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 		return -EINVAL;
 	}
 
-	folio = desc->snapshot->folios[0];
+	folio = ssdfs_folio_vector_get(desc->snapshot, 0);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);

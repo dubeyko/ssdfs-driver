@@ -16,6 +16,7 @@
 #define _SSDFS_FOLIO_VECTOR_H
 
 #include <linux/slab.h>
+#include <linux/xarray.h>
 
 #define SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR	(8)
 
@@ -24,13 +25,13 @@
  * @count: current number of folios in vector
  * @capacity: max number of folios in vector
  * @order: allocation order of a particular sized block of memory
- * @folios: array of pointers on folios
+ * @xa: xarray storing folio pointers indexed by position
  */
 struct ssdfs_folio_vector {
 	u32 count;
 	u32 capacity;
 	unsigned order;
-	struct folio **folios;
+	struct xarray xa;
 };
 
 /*
@@ -44,6 +45,22 @@ static inline
 u32 ssdfs_folio_vector_max_threshold(void)
 {
 	return KMALLOC_MAX_SIZE / sizeof(struct folio *);
+}
+
+/*
+ * ssdfs_folio_vector_get() - get folio at index
+ * @array: pointer on folio vector
+ * @index: position in the vector
+ */
+static inline
+struct folio *ssdfs_folio_vector_get(struct ssdfs_folio_vector *array,
+				     u32 index)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return xa_load(&array->xa, index);
 }
 
 /*

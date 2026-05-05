@@ -438,7 +438,8 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 
-		folio.ptr = array->batch.folios[folio.desc.folio_index];
+		folio.ptr = ssdfs_folio_vector_get(&array->batch,
+						   folio.desc.folio_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!folio.ptr);
@@ -610,7 +611,8 @@ void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
 			return ERR_PTR(-E2BIG);
 		}
 
-		folio.ptr = array->batch.folios[folio.desc.folio_index];
+		folio.ptr = ssdfs_folio_vector_get(&array->batch,
+						   folio.desc.folio_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!folio.ptr);
@@ -747,7 +749,7 @@ int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
 		return -E2BIG;
 	}
 
-	folio = array->batch.folios[folio_index];
+	folio = ssdfs_folio_vector_get(&array->batch, folio_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -889,7 +891,8 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 			array->bytes_count += PAGE_SIZE;
 		}
 
-		folio.ptr = array->batch.folios[folio.desc.folio_index];
+		folio.ptr = ssdfs_folio_vector_get(&array->batch,
+						   folio.desc.folio_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!folio.ptr);
@@ -1028,7 +1031,7 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 				break;
 			}
 
-			folio = array->batch.folios[i];
+			folio = ssdfs_folio_vector_get(&array->batch, i);
 
 			if (!folio) {
 				err = -ERANGE;
@@ -1331,8 +1334,10 @@ int ssdfs_shift_folio_vector_content_right(struct ssdfs_dynamic_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (folio_index1 != folio_index2) {
-			folio1 = array->batch.folios[folio_index1];
-			folio2 = array->batch.folios[folio_index2];
+			folio1 = ssdfs_folio_vector_get(&array->batch,
+							folio_index1);
+			folio2 = ssdfs_folio_vector_get(&array->batch,
+							folio_index2);
 			ssdfs_folio_lock(folio1);
 			ssdfs_folio_lock(folio2);
 			item_offset1 += (u32)folio_index1 * PAGE_SIZE;
@@ -1350,7 +1355,8 @@ int ssdfs_shift_folio_vector_content_right(struct ssdfs_dynamic_array *array,
 				return err;
 			}
 		} else {
-			folio1 = array->batch.folios[folio_index1];
+			folio1 = ssdfs_folio_vector_get(&array->batch,
+							folio_index1);
 			ssdfs_folio_lock(folio1);
 			kaddr = kmap_local_folio(folio1, 0);
 			err = ssdfs_memmove(kaddr, item_offset2, PAGE_SIZE,
