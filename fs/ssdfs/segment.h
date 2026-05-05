@@ -504,6 +504,7 @@ void ssdfs_account_user_data_read_request(struct ssdfs_segment_info *si,
 
 	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
 		switch (atomic_read(&si->fsi->global_fs_state)) {
+		case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
 		case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
 		case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
 		case SSDFS_UNMOUNT_DESTROY_METADATA:
@@ -514,7 +515,7 @@ void ssdfs_account_user_data_read_request(struct ssdfs_segment_info *si,
 			break;
 
 		default:
-			/* do nothing */
+			/* continue logic */
 			break;
 		}
 
@@ -592,6 +593,7 @@ void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si,
 
 	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
 		switch (atomic_read(&si->fsi->global_fs_state)) {
+		case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
 		case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
 		case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
 		case SSDFS_UNMOUNT_DESTROY_METADATA:
@@ -602,7 +604,7 @@ void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si,
 			break;
 
 		default:
-			/* do nothing */
+			/* continue logic */
 			break;
 		}
 

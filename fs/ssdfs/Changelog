@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.71 [May 05, 2026]
+    (*) Correct logic of waking up of PEB mapping table thread.
+
 v.5.70 [May 04, 2026]
     (*) Optimize memory managament model of folio vector.
 

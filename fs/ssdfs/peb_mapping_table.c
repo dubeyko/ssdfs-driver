@@ -8523,7 +8523,8 @@ int ssdfs_maptbl_map_leb2peb(struct ssdfs_fs_info *fsi,
 		}
 
 		down_write(&fdesc->lock);
-	}
+	} else if (fdesc->pre_erase_pebs > 0)
+		wake_up_all(&fsi->maptbl->wait_queue);
 
 	err = ssdfs_maptbl_get_leb_descriptor(fdesc, leb_id, &leb_desc);
 	if (unlikely(err)) {
@@ -9232,12 +9233,7 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
-		/*
-		 * Continue logic
-		 */
-	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_INCONSISTENT;
 
@@ -9288,13 +9284,7 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
-		/*
-		 * Continue logic
-		 */
-	} else if (rwsem_is_locked(&tbl->tbl_lock) &&
-		   atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_INCONSISTENT;
 
@@ -10229,9 +10219,10 @@ try_next_folio:
 
 use_first_valid_folio:
 	if (first_valid_folio >= ULONG_MAX) {
-		if (fdesc->pre_erase_pebs > 0)
+		if (fdesc->pre_erase_pebs > 0) {
 			err = -EBUSY;
-		else
+			wake_up_all(&tbl->wait_queue);
+		} else
 			err = -ENODATA;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10475,7 +10466,7 @@ finish_folio_processing:
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  * %-ENODATA    - unable to find PEB for migration.
- * %-EEXIST     - LEB is under migration yet.
+ * %-EEXIST     - LEB is under migration.
  */
 int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 				   u64 leb_id, u8 peb_type,
@@ -10593,6 +10584,21 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	down_write(&fdesc->lock);
+
+	if (ssdfs_unused_lebs_in_fragment(fdesc) == 0 &&
+	    fdesc->pre_erase_pebs > 0) {
+		up_write(&fdesc->lock);
+
+		err = ssdfs_maptbl_erase_dirty_pebs_now(tbl);
+		if (unlikely(err)) {
+			err = 0;
+			SSDFS_ERR("fail to erase dirty PEBs: err %d\n", err);
+			/* continue logic */
+		}
+
+		down_write(&fdesc->lock);
+	} else if (fdesc->pre_erase_pebs > 0)
+		wake_up_all(&fsi->maptbl->wait_queue);
 
 	err = ssdfs_maptbl_get_leb_descriptor(fdesc, leb_id, &leb_desc);
 	if (unlikely(err)) {

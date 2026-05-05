@@ -4482,6 +4482,9 @@ static void ssdfs_quiesce(struct super_block *sb)
 		if (err) {
 			SSDFS_ERR("fail to stop GC thread: "
 				  "type %#x, err %d\n", i, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	}
 
@@ -4497,6 +4500,9 @@ static void ssdfs_quiesce(struct super_block *sb)
 	} else if (unlikely(err)) {
 		SSDFS_WARN("thread stopping issue: err %d\n",
 			   err);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4512,6 +4518,9 @@ static void ssdfs_quiesce(struct super_block *sb)
 		} else if (unlikely(err)) {
 			SSDFS_WARN("thread stopping issue: ID %d, err %d\n",
 				   i, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	}
 
@@ -4527,6 +4536,9 @@ static void ssdfs_quiesce(struct super_block *sb)
 	} else if (unlikely(err)) {
 		SSDFS_WARN("thread stopping issue: err %d\n",
 			   err);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4537,6 +4549,9 @@ static void ssdfs_quiesce(struct super_block *sb)
 	if (unlikely(err)) {
 		SSDFS_WARN("maptbl thread stopping issue: err %d\n",
 			   err);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG

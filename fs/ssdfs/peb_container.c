@@ -3584,6 +3584,7 @@ int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	u64 seg;
 	u32 log_blocks;
 	u8 peb_migration_id;
+	int total_pre_erase_pebs = 0;
 	int number_of_tries = 0;
 	struct completion *end;
 	int err = 0;
@@ -3677,8 +3678,8 @@ wait_erase_operation_end:
 
 		ssdfs_peb_container_unlock(ptr);
 		{
-			ktime_t timeout = ktime_add_ns(ktime_get(),
-						       jiffies_to_nsecs(HZ));
+			u64 delay_ns = jiffies_to_nsecs(SSDFS_DEFAULT_TIMEOUT);
+			ktime_t timeout = ktime_add_ns(ktime_get(), delay_ns);
 			prepare_to_wait(&fsi->maptbl->erase_ops_end_wq, &wait,
 					TASK_INTERRUPTIBLE);
 			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
@@ -3696,11 +3697,33 @@ wait_erase_operation_end:
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto fail_prepare_destination;
 		} else if (err == -EBUSY) {
+			struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+
 			/*
 			 * We still have pre-erased PEBs.
 			 * Let's wait more.
 			 */
-			number_of_tries++;
+
+			if (number_of_tries == 0) {
+				total_pre_erase_pebs =
+					atomic_read(&tbl->total_pre_erase_pebs);
+				number_of_tries++;
+			} else {
+				int pre_erase_pebs;
+
+				pre_erase_pebs =
+					atomic_read(&tbl->total_pre_erase_pebs);
+
+				if (total_pre_erase_pebs > pre_erase_pebs &&
+				    number_of_tries > 0)
+					number_of_tries--;
+				else
+					number_of_tries++;
+
+				total_pre_erase_pebs =
+					atomic_read(&tbl->total_pre_erase_pebs);
+			}
+
 			if (number_of_tries >= SSDFS_MAX_NUMBER_OF_TRIES) {
 				err = -EFAULT;
 				SSDFS_ERR("fail to add migration PEB: "
