@@ -305,14 +305,15 @@ int ssdfs_segbmap_segment_init(struct ssdfs_segment_bmap *segbmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < si->pebs_count; i++) {
-		struct ssdfs_peb_container *pebc = &si->peb_array[i];
+		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
 		struct ssdfs_segment_request *req;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("i %d, pebc %p\n", i, pebc);
-
-		BUG_ON(!pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		if (!pebc)
+			continue;
 
 		if (is_peb_container_empty(pebc)) {
 #ifdef CONFIG_SSDFS_DEBUG

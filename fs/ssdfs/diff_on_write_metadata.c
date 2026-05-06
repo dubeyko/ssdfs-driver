@@ -1626,7 +1626,14 @@ int ssdfs_btree_node_ready_for_diff(struct ssdfs_btree_node *node)
 				return -ERANGE;
 			}
 
-			pebc = &si->peb_array[peb_index];
+			pebc = SEG2PEBC(si, peb_index);
+
+			if (!pebc) {
+				SSDFS_ERR("PEB container has not been allocated: "
+					  "seg %llu, peb_index %u\n",
+					  seg_id, peb_index);
+				return -ENOENT;
+			}
 
 			pebi = ssdfs_get_current_peb_locked(pebc);
 			if (IS_ERR_OR_NULL(pebi)) {

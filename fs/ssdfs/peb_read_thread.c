@@ -14836,7 +14836,10 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 	}
 
 	for (i = 0; i < si->pebs_count; i++) {
-		pebc = &si->peb_array[i];
+		pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
 
 		is_rq_empty = is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc));
 		is_fq_empty = !have_flush_requests(pebc);

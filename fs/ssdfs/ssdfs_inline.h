@@ -462,6 +462,21 @@ void ssdfs_folio_free(struct folio *folio)
 		SSDFS_WARN("folio %p is still locked\n",
 			   folio);
 	}
+
+	if (folio_test_writeback(folio)) {
+		SSDFS_WARN("folio %p is still under writeback\n",
+			   folio);
+	}
+
+	if (folio_test_dirty(folio)) {
+		SSDFS_WARN("folio %p is still dirty\n",
+			   folio);
+	}
+
+	if (folio_test_private(folio)) {
+		SSDFS_WARN("folio %p still has private data\n",
+			   folio);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	/* descrease reference counter */

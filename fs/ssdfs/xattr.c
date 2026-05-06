@@ -1153,7 +1153,15 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		goto fail_read_blob;
 	}
 
-	pebc = &si->peb_array[pos.peb_index];
+	pebc = SEG2PEBC(si, pos.peb_index);
+
+	if (!pebc) {
+		err = -ENOENT;
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  seg_id, pos.peb_index);
+		goto fail_read_blob;
+	}
 
 	err = ssdfs_peb_readahead_pages(pebc, req, &end);
 	if (err == -EAGAIN) {

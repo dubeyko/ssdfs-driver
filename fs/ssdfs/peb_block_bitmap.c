@@ -477,7 +477,6 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !bmap->parent || !bmap->parent->parent_si);
-	BUG_ON(!bmap->parent->parent_si->peb_array);
 	BUG_ON(!source || !hdr);
 	BUG_ON(ssdfs_folio_vector_count(source) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -525,7 +524,14 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[bmap->peb_index];
+	pebc = SEG2PEBC(si, bmap->peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg_id %llu, peb_index %u\n",
+			  si->seg_id, bmap->peb_index);
+		return -ENOENT;
+	}
 
 	flags = hdr->flags;
 	type = hdr->type;
@@ -1001,7 +1007,6 @@ int ssdfs_peb_blk_bmap_clean_init(struct ssdfs_peb_blk_bmap *bmap)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !bmap->parent || !bmap->parent->parent_si);
-	BUG_ON(!bmap->parent->parent_si->peb_array);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = bmap->parent->parent_si->fsi;
@@ -3477,7 +3482,14 @@ init_failed:
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[bmap->peb_index];
+	pebc = SEG2PEBC(si, bmap->peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg_id %llu, peb_index %u\n",
+			  si->seg_id, bmap->peb_index);
+		return -ENOENT;
+	}
 
 	switch (atomic_read(&bmap->buffers_state)) {
 	case SSDFS_PEB_BMAP1_SRC:
@@ -3962,7 +3974,14 @@ init_failed:
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[bmap->peb_index];
+	pebc = SEG2PEBC(si, bmap->peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg_id %llu, peb_index %u\n",
+			  si->seg_id, bmap->peb_index);
+		return -ENOENT;
+	}
 
 	switch (atomic_read(&bmap->buffers_state)) {
 	case SSDFS_PEB_BMAP1_SRC:
@@ -4905,7 +4924,14 @@ init_failed:
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[bmap->peb_index];
+	pebc = SEG2PEBC(si, bmap->peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg_id %llu, peb_index %u\n",
+			  si->seg_id, bmap->peb_index);
+		return -ENOENT;
+	}
 
 	down_write(&bmap->lock);
 	down_write_nested(&bmap->parent->modification_lock, SSDFS_PARENT_LOCK);
@@ -5904,7 +5930,14 @@ init_failed:
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[bmap->peb_index];
+	pebc = SEG2PEBC(si, bmap->peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg_id %llu, peb_index %u\n",
+			  si->seg_id, bmap->peb_index);
+		return -ENOENT;
+	}
 
 	down_write(&bmap->lock);
 

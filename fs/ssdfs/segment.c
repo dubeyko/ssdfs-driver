@@ -179,6 +179,7 @@ struct ssdfs_segment_info *ssdfs_segment_allocate_object(u64 seg_id)
 	memset(ptr, 0, sizeof(struct ssdfs_segment_info));
 	atomic_set(&ptr->obj_state, SSDFS_SEG_OBJECT_UNDER_CREATION);
 	atomic_set(&ptr->activity_type, SSDFS_SEG_OBJECT_NO_ACTIVITY);
+	atomic_set(&ptr->pebc_array.state, SSDFS_PEBC_ARRAY_ABSENT);
 	ptr->seg_id = seg_id;
 	atomic_set(&ptr->refs_count, 0);
 	init_waitqueue_head(&ptr->object_queue);
@@ -261,7 +262,9 @@ void ssdfs_segment_free_object(struct ssdfs_segment_info *si)
  */
 int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 {
+	struct ssdfs_peb_container *pebc;
 	int refs_count;
+	int i;
 	int res;
 	int err = 0;
 
@@ -331,22 +334,19 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 				   "refs_count %d\n",
 				   si->seg_id, refs_count);
 
-			if (si->peb_array) {
-				struct ssdfs_peb_container *pebc;
-				int i;
+			for (i = 0; i < si->pebs_count; i++) {
+				pebc = SEG2PEBC(si, i);
+				if (!pebc)
+					continue;
 
-				for (i = 0; i < si->pebs_count; i++) {
-					pebc = &si->peb_array[i];
+				if (pebc->src_peb) {
+					SSDFS_ERR("src peb_id %llu\n",
+						  pebc->src_peb->peb_id);
+				}
 
-					if (pebc->src_peb) {
-						SSDFS_ERR("src peb_id %llu\n",
-							  pebc->src_peb->peb_id);
-					}
-
-					if (pebc->dst_peb) {
-						SSDFS_ERR("dst peb_id %llu\n",
-							  pebc->dst_peb->peb_id);
-					}
+				if (pebc->dst_peb) {
+					SSDFS_ERR("dst peb_id %llu\n",
+						  pebc->dst_peb->peb_id);
 				}
 			}
 
@@ -356,16 +356,34 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 
 	ssdfs_sysfs_delete_seg_group(si);
 
-	if (si->peb_array) {
-		struct ssdfs_peb_container *pebc;
-		int i;
-
+	switch (atomic_read(&si->pebc_array.state)) {
+	case SSDFS_INLINE_PEBC_ARRAY:
 		for (i = 0; i < si->pebs_count; i++) {
-			pebc = &si->peb_array[i];
+			pebc = SEG2PEBC(si, i);
+			if (!pebc)
+				continue;
 			ssdfs_peb_container_destroy(pebc);
+			ssdfs_peb_container_free(pebc);
 		}
+		atomic_set(&si->pebc_array.state, SSDFS_PEBC_ARRAY_ABSENT);
+		break;
 
-		ssdfs_seg_obj_kfree(si->peb_array);
+	case SSDFS_DYNAMIC_PEBC_ARRAY:
+		for (i = 0; i < si->pebs_count; i++) {
+			pebc = SEG2PEBC(si, i);
+			if (!pebc)
+				continue;
+			ssdfs_peb_container_destroy(pebc);
+			ssdfs_peb_container_free(pebc);
+		}
+		ssdfs_seg_obj_kfree(si->pebc_array.ptr);
+		atomic_set(&si->pebc_array.state, SSDFS_PEBC_ARRAY_ABSENT);
+		break;
+
+	default:
+		SSDFS_WARN("PEB container array is absent: "
+			   "seg %llu\n", si->seg_id);
+		break;
 	}
 
 	ssdfs_segment_blk_bmap_destroy(&si->blk_bmap);
@@ -496,13 +514,24 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	si->invalidated_user_data_pages = 0;
 
 	si->pebs_count = fsi->pebs_per_seg;
-	si->peb_array = ssdfs_seg_obj_kcalloc(si->pebs_count,
-				       sizeof(struct ssdfs_peb_container),
-				       GFP_KERNEL);
-	if (!si->peb_array) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate memory for peb array\n");
-		goto fail_construct_seg_obj;
+
+	if (si->pebs_count > SSDFS_INLINE_PEBC_ARRAY_SIZE) {
+		size_t obj_size = sizeof(struct ssdfs_peb_container *);
+
+		si->pebc_array.ptr = ssdfs_seg_obj_kcalloc(si->pebs_count,
+							   obj_size,
+							   GFP_KERNEL);
+		if (!si->pebc_array.ptr) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate memory for peb array\n");
+			goto fail_construct_seg_obj;
+		}
+
+		atomic_set(&si->pebc_array.state, SSDFS_DYNAMIC_PEBC_ARRAY);
+	} else {
+		memset(si->pebc_array.buf, 0, sizeof(si->pebc_array.buf));
+		si->pebc_array.ptr = si->pebc_array.buf;
+		atomic_set(&si->pebc_array.state, SSDFS_INLINE_PEBC_ARRAY);
 	}
 
 	atomic_set(&si->migration.migrating_pebs, 0);
@@ -593,8 +622,15 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	}
 
 	for (i = 0; i < si->pebs_count; i++) {
-		int cur_refs = atomic_read(&si->peb_array[i].dst_peb_refs);
-		int items_state = atomic_read(&si->peb_array[i].items_state);
+		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
+		int cur_refs;
+		int items_state;
+
+		if (!pebc)
+			continue;
+
+		cur_refs = atomic_read(&pebc->dst_peb_refs);
+		items_state = atomic_read(&pebc->items_state);
 
 		switch (items_state) {
 		case SSDFS_PEB1_DST_CONTAINER:
@@ -638,7 +674,10 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	 */
 	for (i = 0; i < si->pebs_count; i++) {
 		int peb_free_pages;
-		struct ssdfs_peb_container *pebc = &si->peb_array[i];
+		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
 
 		if (is_peb_container_empty(pebc)) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -690,8 +729,12 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 
 destroy_blk2off_table:
 	for (j = 0; j < i; j++) {
-		pebc = &si->peb_array[j];
+		pebc = SEG2PEBC(si, i);
+		if (!pebc)
+			continue;
 		ssdfs_peb_container_destroy(pebc);
+		ssdfs_peb_container_free(pebc);
+		si->pebc_array.ptr[j] = NULL;
 	}
 
 	ssdfs_blk2off_table_destroy(si->blk2off_table);
@@ -700,7 +743,17 @@ destroy_seg_blk_bmap:
 	ssdfs_segment_blk_bmap_destroy(&si->blk_bmap);
 
 free_peb_array:
-	ssdfs_seg_obj_kfree(si->peb_array);
+	switch (atomic_read(&si->pebc_array.state)) {
+	case SSDFS_DYNAMIC_PEBC_ARRAY:
+		ssdfs_seg_obj_kfree(si->pebc_array.ptr);
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	atomic_set(&si->pebc_array.state, SSDFS_PEBC_ARRAY_ABSENT);
 
 fail_construct_seg_obj:
 	if (err == -ENOSPC || err == -EINTR) {
@@ -2718,7 +2771,14 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[peb_index];
+	pebc = SEG2PEBC(si, peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, peb_index);
+		return -ENOENT;
+	}
 
 	ssdfs_account_user_data_read_request(si, req);
 	ssdfs_peb_read_request_cno(pebc);
@@ -2824,7 +2884,10 @@ int ssdfs_segment_get_used_data_pages(struct ssdfs_segment_info *si)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < si->pebs_count; i++) {
-		struct ssdfs_peb_container *pebc = &si->peb_array[i];
+		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
 
 		err = ssdfs_peb_get_used_data_pages(pebc);
 		if (err < 0) {
@@ -2853,7 +2916,10 @@ bool should_segment_being_in_using_state(struct ssdfs_segment_info *si)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < si->pebs_count; i++) {
-		struct ssdfs_peb_container *pebc = &si->peb_array[i];
+		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
 
 		switch (atomic_read(&pebc->peb_state)) {
 		case SSDFS_MAPTBL_USING_PEB_STATE:
@@ -3024,8 +3090,11 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 			struct ssdfs_peb_container *pebc;
 			int calculated;
 
-			pebc = &si->peb_array[i];
+			pebc = SEG2PEBC(si, i);
 			peb_blkbmap = &seg_blkbmap->peb[i];
+
+			if (!pebc)
+				continue;
 
 			if (!can_peb_process_create_requests(pebc)) {
 				/* don't account free blocks */
@@ -7084,7 +7153,16 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 		goto fail_add_request_into_update_queue;
 	}
 
-	pebc = &si->peb_array[peb_index];
+	pebc = SEG2PEBC(si, peb_index);
+
+	if (!pebc) {
+		err = -ENOENT;
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, peb_index);
+		goto fail_add_request_into_update_queue;
+	}
+
 	update_rq = &pebc->update_rq;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7296,7 +7374,15 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[peb_index];
+	pebc = SEG2PEBC(si, peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, peb_index);
+		return -ENOENT;
+	}
+
 	rq = &pebc->update_rq;
 
 	switch (req->private.cmd) {
@@ -7617,7 +7703,15 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[peb_index];
+	pebc = SEG2PEBC(si, peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, peb_index);
+		return -ENOENT;
+	}
+
 	rq = &pebc->update_rq;
 
 	switch (req->private.cmd) {
@@ -8332,7 +8426,15 @@ int __ssdfs_segment_commit_log2(struct ssdfs_segment_info *si,
 	ssdfs_account_commit_log_request(si);
 	ssdfs_segment_create_request_cno(si);
 
-	pebc = &si->peb_array[peb_index];
+	pebc = SEG2PEBC(si, peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, peb_index);
+		return -ENOENT;
+	}
+
 	rq = &pebc->update_rq;
 
 	switch (req->private.class) {
@@ -8490,7 +8592,14 @@ int ssdfs_segment_invalidate_peb_logical_extent(struct ssdfs_segment_info *si,
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[extent->peb_index];
+	pebc = SEG2PEBC(si, extent->peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, extent->peb_index);
+		return -ENOENT;
+	}
 
 	req = ssdfs_request_alloc();
 	if (IS_ERR_OR_NULL(req)) {

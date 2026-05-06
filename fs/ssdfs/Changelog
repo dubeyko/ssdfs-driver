@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.72 [May 05, 2026]
+    (*) Introduce PEB container kmem_cache.
+
 v.5.71 [May 05, 2026]
     (*) Correct logic of waking up of PEB mapping table thread.
 

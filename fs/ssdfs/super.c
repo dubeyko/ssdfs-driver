@@ -3632,6 +3632,7 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_map_thread_memory_leaks_init();
 	ssdfs_migration_memory_leaks_init();
 	ssdfs_peb_memory_leaks_init();
+	ssdfs_peb_container_memory_leaks_init();
 	ssdfs_read_memory_leaks_init();
 	ssdfs_recovery_memory_leaks_init();
 	ssdfs_req_queue_memory_leaks_init();
@@ -3727,6 +3728,7 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_map_thread_check_memory_leaks();
 	ssdfs_migration_check_memory_leaks();
 	ssdfs_peb_check_memory_leaks();
+	ssdfs_peb_container_check_memory_leaks();
 	ssdfs_read_check_memory_leaks();
 	ssdfs_recovery_check_memory_leaks();
 	ssdfs_req_queue_check_memory_leaks();
@@ -3897,15 +3899,6 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		fs_info->devops = &ssdfs_bdev_devops;
 
 	atomic_set(&fs_info->pending_bios, 0);
-	fs_info->erase_folio = ssdfs_super_alloc_folio(GFP_KERNEL,
-							get_order(PAGE_SIZE));
-	if (IS_ERR_OR_NULL(fs_info->erase_folio)) {
-		err = (fs_info->erase_folio == NULL ?
-				-ENOMEM : PTR_ERR(fs_info->erase_folio));
-		SSDFS_ERR("unable to allocate memory folio\n");
-		goto free_erase_folio;
-	}
-	memset(folio_address(fs_info->erase_folio), 0xFF, PAGE_SIZE);
 #else
 	BUILD_BUG();
 #endif
@@ -3945,7 +3938,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	err = ssdfs_gather_superblock_info(fs_info, silent);
 	if (err) {
 		complete_all(&fs_info->mount_end);
-		goto free_erase_folio;
+		goto out_free;
 	}
 
 	spin_lock(&fs_info->volume_state_lock);
@@ -4367,10 +4360,7 @@ destroy_sysfs_device_group:
 release_maptbl_cache:
 	ssdfs_maptbl_cache_destroy(&fs_info->maptbl_cache);
 
-free_erase_folio:
-	if (fs_info->erase_folio)
-		ssdfs_super_free_folio(fs_info->erase_folio);
-
+out_free:
 	ssdfs_destruct_sb_info(&fs_info->sbi);
 	ssdfs_destruct_sb_info(&fs_info->sbi_backup);
 	ssdfs_destruct_sb_snap_info(&fs_info->sb_snapi);
@@ -5044,9 +5034,6 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_current_segment_array_destroy(fsi);
 	ssdfs_sysfs_delete_device_group(fsi);
 
-	if (fsi->erase_folio)
-		ssdfs_super_free_folio(fsi->erase_folio);
-
 	ssdfs_destruct_sb_info(&fsi->sbi);
 	ssdfs_destruct_sb_info(&fsi->sbi_backup);
 	ssdfs_destruct_sb_snap_info(&fsi->sb_snapi);
@@ -5159,6 +5146,7 @@ static void ssdfs_destroy_caches(void)
 	ssdfs_destroy_btree_search_obj_cache();
 	ssdfs_destroy_free_ino_desc_cache();
 	ssdfs_destroy_btree_node_obj_cache();
+	ssdfs_destroy_peb_container_obj_cache();
 	ssdfs_destroy_seg_obj_cache();
 	ssdfs_destroy_extent_info_cache();
 	ssdfs_destroy_peb_mapping_info_cache();
@@ -5171,6 +5159,7 @@ static int ssdfs_init_caches(void)
 {
 	int err;
 
+	ssdfs_zero_peb_container_obj_cache_ptr();
 	ssdfs_zero_seg_obj_cache_ptr();
 	ssdfs_zero_seg_req_obj_cache_ptr();
 	ssdfs_zero_dirty_folios_obj_cache_ptr();
@@ -5190,6 +5179,13 @@ static int ssdfs_init_caches(void)
 	if (!ssdfs_inode_cachep) {
 		SSDFS_ERR("unable to create inode cache\n");
 		return -ENOMEM;
+	}
+
+	err = ssdfs_init_peb_container_obj_cache();
+	if (unlikely(err)) {
+		SSDFS_ERR("unable to create PEB container object cache: "
+			  "err %d\n", err);
+		goto destroy_caches;
 	}
 
 	err = ssdfs_init_seg_obj_cache();

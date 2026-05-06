@@ -477,6 +477,8 @@ void ssdfs_migration_memory_leaks_init(void);
 void ssdfs_migration_check_memory_leaks(void);
 void ssdfs_peb_memory_leaks_init(void);
 void ssdfs_peb_check_memory_leaks(void);
+void ssdfs_peb_container_memory_leaks_init(void);
+void ssdfs_peb_container_check_memory_leaks(void);
 void ssdfs_read_memory_leaks_init(void);
 void ssdfs_read_check_memory_leaks(void);
 void ssdfs_recovery_memory_leaks_init(void);

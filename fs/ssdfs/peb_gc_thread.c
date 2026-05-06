@@ -1069,7 +1069,10 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 		return false;
 
 	for (i = 0; i < si->pebs_count; i++) {
-		pebc = &si->peb_array[i];
+		pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
 
 		is_rq_empty = is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc));
 		is_fq_empty = !have_flush_requests(pebc);
@@ -2239,7 +2242,11 @@ collect_garbage_now:
 		if (kthread_should_stop())
 			goto finish_seg_processing;
 
-		pebc = &si->peb_array[i];
+		pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
+
 		seg_blkbmap = &si->blk_bmap;
 		peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
 

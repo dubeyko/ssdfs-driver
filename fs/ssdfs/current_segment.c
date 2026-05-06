@@ -286,7 +286,10 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 		start_pos = 0;
 
 	for (i = start_pos; i < si->pebs_count; i++) {
-		struct ssdfs_peb_container *pebc = &si->peb_array[i];
+		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
 
 		if (found_flush_threads == si->create_threads)
 			break;
@@ -342,7 +345,10 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 	}
 
 	for (i = 0; i < start_pos; i++) {
-		struct ssdfs_peb_container *pebc = &si->peb_array[i];
+		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
 
 		if (found_flush_threads == si->create_threads)
 			break;
@@ -470,11 +476,14 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 	search_state->result.invalid_pages = 0;
 
 	for (i = 0; i < si->pebs_count; i++) {
-		struct ssdfs_peb_container *pebc = &si->peb_array[i];
+		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
 		int peb_used_pages;
 		int peb_free_pages;
 		int peb_invalid_pages;
 		int available_free_pages;
+
+		if (!pebc)
+			continue;
 
 		peb_free_pages = ssdfs_peb_get_free_pages(pebc);
 		if (unlikely(peb_free_pages < 0)) {

@@ -869,12 +869,15 @@ int ssdfs_maptbl_segment_init(struct ssdfs_peb_mapping_table *tbl,
 	logical_offset = bytes_per_peb * si->pebs_count * seg_index;
 
 	for (i = 0; i < si->pebs_count; i++) {
-		struct ssdfs_peb_container *pebc = &si->peb_array[i];
+		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
 		struct ssdfs_segment_request *req;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		if (!pebc)
+			continue;
 
 		if (is_peb_container_empty(pebc)) {
 #ifdef CONFIG_SSDFS_DEBUG

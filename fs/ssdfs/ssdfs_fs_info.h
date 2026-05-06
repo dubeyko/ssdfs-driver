@@ -542,7 +542,6 @@ struct ssdfs_btree_nodes_list {
  * @mtd: MTD info
  * @devops: device access operations
  * @pending_bios: count of pending BIOs (dev_bdev.c ONLY)
- * @erase_folio: folio with content for erase operation (dev_bdev.c ONLY)
  * @is_zns_device: file system volume is on ZNS device
  * @zone_size: zone size in bytes
  * @zone_capacity: zone capacity in bytes available for write operations
@@ -676,7 +675,6 @@ struct ssdfs_fs_info {
 	struct mtd_info *mtd;
 	const struct ssdfs_device_ops *devops;
 	atomic_t pending_bios;			/* for dev_bdev.c */
-	struct folio *erase_folio;		/* for dev_bdev.c */
 
 	bool is_zns_device;
 	u64 zone_size;

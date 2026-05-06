@@ -371,7 +371,15 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 		goto finish_read_block;
 	}
 
-	pebc = &si->peb_array[pos.peb_index];
+	pebc = SEG2PEBC(si, pos.peb_index);
+
+	if (!pebc) {
+		err = -ENOENT;
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, pos.peb_index);
+		goto finish_read_block;
+	}
 
 	ssdfs_peb_read_request_cno(pebc);
 

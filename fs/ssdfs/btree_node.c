@@ -1430,7 +1430,10 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 				u64 peb_id1 = U64_MAX;
 				u64 peb_id2 = U64_MAX;
 
-				pebc = &(*si)->peb_array[i];
+				pebc = SEG2PEBC(*si, i);
+
+				if (!pebc)
+					continue;
 
 				if (pebc->src_peb)
 					peb_id1 = pebc->src_peb->peb_id;
@@ -1467,7 +1470,14 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		goto fail_read_node;
 	}
 
-	pebc = &(*si)->peb_array[pos.peb_index];
+	pebc = SEG2PEBC(*si, pos.peb_index);
+
+	if (!pebc) {
+		err = -ENOENT;
+		SSDFS_ERR("PEB container is not allocated: "
+			  "err %d\n", err);
+		goto fail_read_node;
+	}
 
 	err = ssdfs_peb_readahead_pages(pebc, req, &end);
 	if (err == -EAGAIN) {
@@ -4085,7 +4095,10 @@ int ssdfs_btree_deleted_node_commit_log(struct ssdfs_btree_node *node)
 		struct ssdfs_requests_queue *rq;
 		wait_queue_head_t *wait;
 
-		pebc = &si->peb_array[i];
+		pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
 
 		req = ssdfs_request_alloc();
 		if (IS_ERR_OR_NULL(req)) {

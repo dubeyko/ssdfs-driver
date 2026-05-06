@@ -684,7 +684,11 @@ int ssdfs_sysfs_create_seg_group(struct ssdfs_segment_info *si)
 		goto cleanup_seg_kobject;
 
 	for (i = 0; i < si->pebs_count; i++) {
-		pebc = &si->peb_array[i];
+		pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
+
 		err = ssdfs_sysfs_create_peb_group(pebc);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to create peb's sysfs group: "
@@ -698,7 +702,11 @@ int ssdfs_sysfs_create_seg_group(struct ssdfs_segment_info *si)
 
 cleanup_peb_kobjects:
 	for (i--; i >= 0; i--) {
-		pebc = &si->peb_array[i];
+		pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
+
 		ssdfs_sysfs_delete_peb_group(pebc);
 	}
 
@@ -725,7 +733,11 @@ void ssdfs_sysfs_delete_seg_group(struct ssdfs_segment_info *si)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < si->pebs_count; i++) {
-		pebc = &si->peb_array[i];
+		pebc = SEG2PEBC(si, i);
+
+		if (!pebc)
+			continue;
+
 		ssdfs_sysfs_delete_peb_group(pebc);
 	}
 
@@ -813,7 +825,10 @@ ssize_t ssdfs_segments_current_segments_show(struct ssdfs_segments_attr *attr,
 
 		for (j = 0; j < real_seg->pebs_count; j++) {
 			struct ssdfs_peb_container *pebc =
-					&real_seg->peb_array[j];
+						SEG2PEBC(real_seg, j);
+
+			if (!pebc)
+				continue;
 
 			if (is_peb_joined_into_create_requests_queue(pebc)) {
 				count += snprintf(buf + count,

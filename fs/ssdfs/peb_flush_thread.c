@@ -10286,7 +10286,15 @@ int __ssdfs_segment_invalidate_block_nolock(struct ssdfs_segment_info *si,
 		return -ERANGE;
 	}
 
-	pebc = &si->peb_array[peb_index];
+	pebc = SEG2PEBC(si, peb_index);
+
+	if (!pebc) {
+		SSDFS_ERR("fail to invalidate: "
+			  "logical_blk %u, peb_index %u, "
+			  "err %d\n",
+			  blk, peb_index, err);
+		return -ENOENT;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!is_ssdfs_peb_container_locked(pebc));
@@ -12976,7 +12984,10 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 		struct ssdfs_peb_info *dst_peb;
 		int buffers_state;
 
-		cur_pebc = &pebi->pebc->parent_si->peb_array[i];
+		cur_pebc = SEG2PEBC(pebi->pebc->parent_si, i);
+
+		if (!cur_pebc)
+			continue;
 
 		switch (atomic_read(&cur_pebc->items_state)) {
 		case SSDFS_PEB1_SRC_EXT_PTR_DST_CONTAINER:
@@ -17460,7 +17471,15 @@ int ssdfs_peb_delegate_log_creation_role(struct ssdfs_peb_container *pebc,
 		return 0;
 	}
 
-	found_pebc = &si->peb_array[found_peb_index];
+	found_pebc = SEG2PEBC(si, found_peb_index);
+
+	if (!found_pebc) {
+		SSDFS_ERR("PEB container is not allocated: "
+			  "seg %llu, peb_index %d, "
+			  "err %d\n",
+			  si->seg_id, pebc->peb_index, err);
+		return -ENOENT;
+	}
 
 	peb_free_blocks = ssdfs_peb_get_free_pages(found_pebc);
 	if (unlikely(peb_free_blocks < 0)) {

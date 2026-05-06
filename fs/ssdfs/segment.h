@@ -68,6 +68,27 @@ struct ssdfs_segment_migration_info {
 };
 
 /*
+ * struct ssdfs_peb_container_array - PEB container array
+ * @state: PEB container array state
+ * @ptr: pointer on PEB container array
+ * @buf: embedded/inline buffer of PEB container array
+ */
+struct ssdfs_peb_container_array {
+	atomic_t state;
+	struct ssdfs_peb_container **ptr;
+#define SSDFS_INLINE_PEBC_ARRAY_SIZE	(16)
+	struct ssdfs_peb_container *buf[SSDFS_INLINE_PEBC_ARRAY_SIZE];
+};
+
+/* PEB container array state */
+enum {
+	SSDFS_PEBC_ARRAY_ABSENT,
+	SSDFS_INLINE_PEBC_ARRAY,
+	SSDFS_DYNAMIC_PEBC_ARRAY,
+	SSDFS_UNKNOWN_PEBC_ARRAY_STATE
+};
+
+/*
  * struct ssdfs_segment_info - segment object description
  * @seg_id: segment identification number
  * @log_pages: count of pages in full partial log
@@ -78,7 +99,7 @@ struct ssdfs_segment_migration_info {
  * @activity_type: type of activity with segment object
  * @modification_lock: lock protecting modificaiton of segment's state
  * @seg_state: current state of segment
- * @peb_array: array of PEB's descriptors
+ * @pebc_array: array of PEB container descriptors
  * @pebs_count: count of items in PEBS array
  * @migration: migration info
  * @refs_count: counter of references on segment object
@@ -115,7 +136,7 @@ struct ssdfs_segment_info {
 	atomic_t seg_state;
 
 	/* Segment's PEB's containers array */
-	struct ssdfs_peb_container *peb_array;
+	struct ssdfs_peb_container_array pebc_array;
 	u16 pebs_count;
 
 	/* Migration info */
@@ -143,6 +164,7 @@ struct ssdfs_segment_info {
 
 	struct ssdfs_segment_blk_bmap blk_bmap;
 	struct ssdfs_blk2off_table *blk2off_table;
+
 	struct ssdfs_fs_info *fsi;
 
 	/* /sys/fs/ssdfs/<device>/segments/<segN> */
@@ -215,6 +237,34 @@ struct ssdfs_segment_search_state {
 /*
  * Inline functions
  */
+
+/*
+ * SEG2PEBC() - get pointer on PEB container
+ */
+static inline
+struct ssdfs_peb_container *SEG2PEBC(struct ssdfs_segment_info *si,
+				     u16 peb_index)
+{
+	if (!si)
+		return NULL;
+
+	if (!si->pebc_array.ptr)
+		return NULL;
+	else if (peb_index >= si->pebs_count)
+		return NULL;
+
+	switch (atomic_read(&si->pebc_array.state)) {
+	case SSDFS_INLINE_PEBC_ARRAY:
+	case SSDFS_DYNAMIC_PEBC_ARRAY:
+		return si->pebc_array.ptr[peb_index];
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return NULL;
+}
 
 /*
  * ssdfs_segment_search_state_init() - initialize segment search state

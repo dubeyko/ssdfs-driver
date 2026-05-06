@@ -45,6 +45,149 @@
 #include "btree.h"
 #include "invalidated_extents_tree.h"
 
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+atomic64_t ssdfs_peb_cont_folio_leaks;
+atomic64_t ssdfs_peb_cont_memory_leaks;
+atomic64_t ssdfs_peb_cont_cache_leaks;
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
+/*
+ * void ssdfs_peb_cont_cache_leaks_increment(void *kaddr)
+ * void ssdfs_peb_cont_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_peb_cont_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_peb_cont_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_peb_cont_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_peb_cont_kfree(void *kaddr)
+ * struct folio *ssdfs_peb_cont_alloc_folio(gfp_t gfp_mask,
+ *                                          unsigned int order)
+ * struct folio *ssdfs_peb_cont_add_batch_folio(struct folio_batch *batch,
+ *                                              unsigned int order)
+ * void ssdfs_peb_cont_free_folio(struct folio *folio)
+ * void ssdfs_peb_cont_folio_batch_release(struct folio_batch *batch)
+ */
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(peb_cont)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(peb_cont)
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
+void ssdfs_peb_container_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_set(&ssdfs_peb_cont_folio_leaks, 0);
+	atomic64_set(&ssdfs_peb_cont_memory_leaks, 0);
+	atomic64_set(&ssdfs_peb_cont_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
+void ssdfs_peb_container_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	if (atomic64_read(&ssdfs_peb_cont_folio_leaks) != 0) {
+		SSDFS_ERR("PEB CONTAINER: "
+			  "memory leaks include %lld folios\n",
+			  atomic64_read(&ssdfs_peb_cont_folio_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_peb_cont_memory_leaks) != 0) {
+		SSDFS_ERR("PEB CONTAINER: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_peb_cont_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_peb_cont_cache_leaks) != 0) {
+		SSDFS_ERR("PEB CONTAINER: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_peb_cont_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
+static struct kmem_cache *ssdfs_peb_container_cachep;
+
+static void ssdfs_init_peb_container_once(void *obj)
+{
+	struct ssdfs_peb_container *pebc = obj;
+
+	memset(pebc, 0, sizeof(struct ssdfs_peb_container));
+}
+
+void ssdfs_shrink_peb_container_obj_cache(void)
+{
+	if (ssdfs_peb_container_cachep)
+		kmem_cache_shrink(ssdfs_peb_container_cachep);
+}
+
+void ssdfs_zero_peb_container_obj_cache_ptr(void)
+{
+	ssdfs_peb_container_cachep = NULL;
+}
+
+void ssdfs_destroy_peb_container_obj_cache(void)
+{
+	if (ssdfs_peb_container_cachep)
+		kmem_cache_destroy(ssdfs_peb_container_cachep);
+}
+
+int ssdfs_init_peb_container_obj_cache(void)
+{
+	ssdfs_peb_container_cachep =
+		kmem_cache_create("ssdfs_peb_container_cache",
+				  sizeof(struct ssdfs_peb_container), 0,
+				  SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
+				  ssdfs_init_peb_container_once);
+	if (!ssdfs_peb_container_cachep) {
+		SSDFS_ERR("unable to create PEB container objects cache\n");
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_peb_container_alloc() - allocate PEB container object
+ *
+ * This function allocates a PEB container object from the slab cache.
+ *
+ * RETURN:
+ * [success] - pointer on allocated PEB container object
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - unable to allocate memory.
+ */
+struct ssdfs_peb_container *ssdfs_peb_container_alloc(void)
+{
+	struct ssdfs_peb_container *pebc;
+	unsigned int nofs_flags;
+
+	nofs_flags = memalloc_nofs_save();
+	pebc = kmem_cache_alloc(ssdfs_peb_container_cachep, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
+	if (!pebc) {
+		SSDFS_ERR("fail to allocate memory for PEB container\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	ssdfs_peb_cont_cache_leaks_increment(pebc);
+	return pebc;
+}
+
+/*
+ * ssdfs_peb_container_free() - free PEB container object
+ * @pebc: pointer on PEB container object
+ *
+ * This function returns a PEB container object to the slab cache.
+ */
+void ssdfs_peb_container_free(struct ssdfs_peb_container *pebc)
+{
+	if (!pebc)
+		return;
+
+	ssdfs_peb_cont_cache_leaks_decrement(pebc);
+	kmem_cache_free(ssdfs_peb_container_cachep, pebc);
+}
+
 enum {
 	SSDFS_SRC_PEB,
 	SSDFS_DST_PEB,
@@ -2729,7 +2872,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !si || !si->peb_array);
+	BUG_ON(!fsi || !si);
 
 	if (seg >= fsi->nsegs) {
 		SSDFS_ERR("requested seg %llu >= nsegs %llu\n",
@@ -2754,7 +2897,29 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 		  fsi, seg, peb_index, peb_type, si);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	pebc = &si->peb_array[peb_index];
+	pebc = ssdfs_peb_container_alloc();
+	if (IS_ERR(pebc)) {
+		err = PTR_ERR(pebc);
+		SSDFS_ERR("fail to allocate PEB container: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  seg, peb_index, err);
+		return err;
+	}
+
+	switch (atomic_read(&si->pebc_array.state)) {
+	case SSDFS_INLINE_PEBC_ARRAY:
+	case SSDFS_DYNAMIC_PEBC_ARRAY:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!si->pebc_array.ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+		si->pebc_array.ptr[peb_index] = pebc;
+		break;
+
+	default:
+		SSDFS_WARN("PEB container array is absent: "
+			   "seg %llu\n", si->seg_id);
+		return -ENOENT;
+	}
 
 	memset(pebc, 0, sizeof(struct ssdfs_peb_container));
 	mutex_init(&pebc->migration_lock);
@@ -3002,16 +3167,16 @@ try_process_relation:
 			goto fail_create_peb_objects;
 		}
 
-		pebi = &si->peb_array[shared_peb_index].items[SSDFS_SEG_PEB2];
+		pebi = &SEG2PEBC(si, shared_peb_index)->items[SSDFS_SEG_PEB2];
 		pebc->dst_peb = pebi;
 		atomic_set(&pebc->items_state,
 				SSDFS_PEB1_SRC_EXT_PTR_DST_CONTAINER);
-		atomic_inc(&si->peb_array[shared_peb_index].dst_peb_refs);
+		atomic_inc(&SEG2PEBC(si, shared_peb_index)->dst_peb_refs);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
 		    pebi->peb_id,
-		    atomic_read(&si->peb_array[shared_peb_index].dst_peb_refs));
+		    atomic_read(&SEG2PEBC(si, shared_peb_index)->dst_peb_refs));
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 		pebi = &pebc->items[SSDFS_SEG_PEB2];
@@ -3100,6 +3265,8 @@ fail_create_peb_objects:
 
 fail_init_peb_container:
 	ssdfs_peb_container_destroy(pebc);
+	ssdfs_peb_container_free(pebc);
+	si->pebc_array.ptr[peb_index] = NULL;
 	return err;
 }
 
@@ -3396,7 +3563,14 @@ try_define_relation:
 		return -ERANGE;
 	}
 
-	relation = &si->peb_array[shared_index];
+	relation = SEG2PEBC(si, shared_index);
+
+	if (!relation) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, shared_index);
+		return -ENOENT;
+	}
 
 	destination_state = atomic_read(&relation->migration_state);
 	switch (destination_state) {
@@ -4234,7 +4408,16 @@ try_start_preparation_again:
 			BUG_ON(destination_index >= si->pebs_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			relation = &si->peb_array[destination_index];
+			relation = SEG2PEBC(si, destination_index);
+
+			if (!relation) {
+				err = -ENOENT;
+				SSDFS_ERR("PEB container has not been allocated: "
+					  "seg %llu, peb_index %u\n",
+					  si->seg_id, destination_index);
+				goto finish_check_destination;
+			}
+
 			if (atomic_read(&relation->shared_free_dst_blks) <= 0) {
 				/* destination hasn't free room */
 				need_create_relation = false;
@@ -4360,6 +4543,7 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
+	struct ssdfs_peb_container *dst_pebc;
 	struct ssdfs_segment_migration_info *mi;
 	struct ssdfs_migration_destination *mdest;
 	int new_state;
@@ -4490,14 +4674,23 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 		return err;
 	}
 
-	atomic_dec(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs);
+	dst_pebc = SEG2PEBC(si, ptr->dst_peb->peb_index);
+
+	if (!dst_pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, ptr->dst_peb->peb_index);
+		return -ENOENT;
+	}
+
+	atomic_dec(&dst_pebc->dst_peb_refs);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, leb_id %llu, "
 		  "peb_id %llu, dst_peb_refs %d\n",
-	    si->seg_id, leb_id,
-	    ptr->dst_peb->peb_id,
-	    atomic_read(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs));
+		  si->seg_id, leb_id,
+		  ptr->dst_peb->peb_id,
+		  atomic_read(&dst_pebc->dst_peb_refs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (ptr->src_peb) {
@@ -4558,6 +4751,7 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
+	struct ssdfs_peb_container *dst_pebc;
 	struct ssdfs_peb_mapping_table *maptbl;
 	u64 leb_id, dst_leb_id;
 	u16 dst_peb_index;
@@ -4607,7 +4801,16 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 		return -ERANGE;
 	}
 
-	dst_peb_refs = atomic_read(&si->peb_array[dst_peb_index].dst_peb_refs);
+	dst_pebc = SEG2PEBC(si, dst_peb_index);
+
+	if (!dst_pebc) {
+		SSDFS_ERR("PEB container has not been allocated: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, ptr->dst_peb->peb_index);
+		return -ENOENT;
+	}
+
+	dst_peb_refs = atomic_read(&dst_pebc->dst_peb_refs);
 
 	err = ssdfs_maptbl_break_indirect_relation(maptbl,
 						   leb_id,
@@ -4638,12 +4841,12 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 		return err;
 	}
 
-	atomic_dec(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs);
+	atomic_dec(&dst_pebc->dst_peb_refs);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
-	    ptr->dst_peb->peb_id,
-	    atomic_read(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs));
+		  ptr->dst_peb->peb_id,
+		  atomic_read(&dst_pebc->dst_peb_refs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (new_state == SSDFS_PEB_CONTAINER_EMPTY) {

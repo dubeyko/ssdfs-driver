@@ -545,6 +545,16 @@ void ssdfs_thread_call_stack_forget(struct ssdfs_thread_call_stack *stack)
 }
 
 /*
+ * PEB container's cache API
+ */
+int ssdfs_init_peb_container_obj_cache(void);
+void ssdfs_destroy_peb_container_obj_cache(void);
+void ssdfs_shrink_peb_container_obj_cache(void);
+void ssdfs_zero_peb_container_obj_cache_ptr(void);
+struct ssdfs_peb_container *ssdfs_peb_container_alloc(void);
+void ssdfs_peb_container_free(struct ssdfs_peb_container *pebc);
+
+/*
  * PEB container's API
  */
 int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,

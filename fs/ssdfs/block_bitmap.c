@@ -3823,6 +3823,8 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 
 	*found_end = U32_MAX;
 
+	max_blk = min_t(u32, max_blk, bmap->items_capacity);
+
 	aligned_start = ALIGNED_START_BLK(start);
 	aligned_end = ALIGNED_END_BLK(max_blk);
 
@@ -4735,7 +4737,8 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	err = ssdfs_block_bmap_find_state_area_end(blk_bmap, found_start,
-						   found_start + len,
+						   min_t(u32, found_start + len,
+							 blk_bmap->items_capacity),
 						   blk_state,
 						   &found_end);
 	if (unlikely(err)) {
