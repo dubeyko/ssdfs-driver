@@ -154,6 +154,9 @@ struct ssdfs_sb_snapshot_seg_info {
  * @trim: support of background erase operation
  * @peb_isbad: check that physical erase block is bad
  * @sync: synchronize page cache with device
+ *
+ * The @write_stream parameter in write_block() and write_blocks() carries
+ * the FDP (Flexible Data Placement) write-stream ID.
  */
 struct ssdfs_device_ops {
 	const char * (*device_name)(struct super_block *sb);
@@ -170,14 +173,54 @@ struct ssdfs_device_ops {
 	int (*can_write_block)(struct super_block *sb, u32 block_size,
 				loff_t offset, bool need_check);
 	int (*write_block)(struct super_block *sb, loff_t offset,
-			   struct folio *folio);
+			   struct folio *folio, u8 write_stream);
 	int (*write_blocks)(struct super_block *sb, loff_t offset,
-			    struct folio_batch *batch);
+			    struct folio_batch *batch, u8 write_stream);
 	int (*erase)(struct super_block *sb, loff_t offset, size_t len);
 	int (*trim)(struct super_block *sb, loff_t offset, size_t len);
 	int (*peb_isbad)(struct super_block *sb, loff_t offset);
 	int (*mark_peb_bad)(struct super_block *sb, loff_t offset);
 	void (*sync)(struct super_block *sb);
+};
+
+/* Device type */
+enum {
+	SSDFS_UNKNOWN_DEVICE_TYPE,
+	SSDFS_MTD_DEVICE,
+	SSDFS_REGULAR_DEVICE,
+	SSDFS_ZNS_DEVICE,
+	SSDFS_FDP_DEVICE,
+};
+
+/*
+ * struct ssdfs_device_features - device features
+ * @type: type of the device
+ * @zns.zone_size: zone size in bytes
+ * @zns.zone_capacity: zone capacity in bytes available for write operations
+ * @zns.max_open_zones: open zones limitation (upper bound)
+ * @zns.open_zones: current number of opened zones
+ * @fdp.streams_count: number of FDP write streams available (0 if not FDP)
+ * @fdp.metadata_streams: number of metadata streams
+ * @fdp.user_data_streams: number of user data streams
+ * @fdp.stream_map: map of FDP streams
+ */
+struct ssdfs_device_features {
+	int type;
+
+	struct {
+		u64 zone_size;
+		u64 zone_capacity;
+		u32 max_open_zones;
+		atomic_t open_zones;
+	} zns;
+
+	struct {
+		u16 streams_count;
+		u16 metadata_streams;
+		u16 user_data_streams;
+#define SSDFS_FDP_STREAM_ARRAY_SIZE	(SSDFS_LAST_KNOWN_SEG_TYPE + 1)
+		u8 stream_map[SSDFS_FDP_STREAM_ARRAY_SIZE];
+	} fdp;
 };
 
 /*
@@ -334,10 +377,7 @@ struct ssdfs_tunefs_user_data_options {
  * @inodes_seg_log_pages: full log size in index nodes segment (pages count)
  * @user_data_log_pages: full log size in user data segment (pages count)
  * @migration_threshold: default value of destination PEBs in migration
- * @is_zns_device: file system volume is on ZNS device
- * @zone_size: zone size in bytes
- * @zone_capacity: zone capacity in bytes available for write operations
- * @max_open_zones: open zones limitation (upper bound)
+ * @device: device features
  */
 struct ssdfs_current_volume_config {
 	unsigned char fs_uuid[SSDFS_UUID_SIZE];
@@ -373,10 +413,7 @@ struct ssdfs_current_volume_config {
 
 	u16 migration_threshold;
 
-	int is_zns_device;
-	u64 zone_size;
-	u64 zone_capacity;
-	u32 max_open_zones;
+	struct ssdfs_device_features device;
 };
 
 /*
@@ -542,11 +579,7 @@ struct ssdfs_btree_nodes_list {
  * @mtd: MTD info
  * @devops: device access operations
  * @pending_bios: count of pending BIOs (dev_bdev.c ONLY)
- * @is_zns_device: file system volume is on ZNS device
- * @zone_size: zone size in bytes
- * @zone_capacity: zone capacity in bytes available for write operations
- * @max_open_zones: open zones limitation (upper bound)
- * @open_zones: current number of opened zones
+ * @device: device features
  * @fsck_priority: define priority of FSCK operations
  * @tunefs_request: tunefs request copy
  * @dev_kobj: /sys/fs/ssdfs/<device> kernel object
@@ -676,11 +709,7 @@ struct ssdfs_fs_info {
 	const struct ssdfs_device_ops *devops;
 	atomic_t pending_bios;			/* for dev_bdev.c */
 
-	bool is_zns_device;
-	u64 zone_size;
-	u64 zone_capacity;
-	u32 max_open_zones;
-	atomic_t open_zones;
+	struct ssdfs_device_features device;
 
 #ifdef CONFIG_SSDFS_ONLINE_FSCK
 	atomic_t fsck_priority;

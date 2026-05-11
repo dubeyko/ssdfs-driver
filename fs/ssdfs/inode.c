@@ -566,6 +566,8 @@ static void ssdfs_init_inode(struct mnt_idmap *idmap,
 		ii->name_hash = U64_MAX;
 	ii->name_len = (u16)qstr->len;
 	ssdfs_init_raw_inode(ii);
+	ii->fdp_write_stream =
+		fsi->device.fdp.stream_map[SSDFS_USER_DATA_SEG_TYPE];
 	up_write(&ii->lock);
 
 	if (fsi->pagesize > SSDFS_8KB)

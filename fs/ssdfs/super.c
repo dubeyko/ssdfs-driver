@@ -967,6 +967,7 @@ int ssdfs_write_padding_block(struct super_block *sb,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_padding_header *hdr;
 	size_t hdr_size = sizeof(struct ssdfs_padding_header);
+	u16 seg_type = SSDFS_SB_SEG_TYPE;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1017,7 +1018,8 @@ int ssdfs_write_padding_block(struct super_block *sb,
 	SSDFS_DBG("offset %llu\n", offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = fsi->devops->write_block(sb, offset, folio);
+	err = fsi->devops->write_block(sb, offset, folio,
+				       ssdfs_seg2fdp_stream(fsi, seg_type));
 	if (err) {
 		SSDFS_ERR("fail to write segment header: "
 			  "offset %llu, size %zu\n",
@@ -1867,7 +1869,7 @@ static int ssdfs_move_on_first_peb_next_sb_seg(struct super_block *sb,
 		  (*sb_pebs)[SSDFS_PREV_SB_SEG][sb_seg_type]);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fsi->is_zns_device) {
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 		cur_peb = (*sb_pebs)[SSDFS_CUR_SB_SEG][sb_seg_type];
 		offset = cur_peb * fsi->erasesize;
 
@@ -2443,6 +2445,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	u64 seg_id;
 	u32 log_pages_count;
 	u32 log_bytes;
+	u16 seg_type;
 	unsigned i;
 	int err;
 
@@ -2598,7 +2601,9 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		}
 	}
 
-	err = fsi->devops->write_block(sb, sb_offset, folio);
+	seg_type = SSDFS_SB_SEG_TYPE;
+	err = fsi->devops->write_block(sb, sb_offset, folio,
+					ssdfs_seg2fdp_stream(fsi, seg_type));
 	if (err) {
 		SSDFS_ERR("fail to write segment header: "
 			  "offset %llu, size %zu\n",
@@ -2675,7 +2680,10 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 			}
 		}
 
-		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
+		seg_type = SSDFS_INITIAL_SNAPSHOT_SEG_TYPE;
+		err = fsi->devops->write_block(sb, sb_snap_offset, folio,
+						ssdfs_seg2fdp_stream(fsi,
+								     seg_type));
 		if (err) {
 			SSDFS_ERR("fail to write segment header: "
 				  "offset %llu, size %zu\n",
@@ -2741,7 +2749,10 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 			}
 		}
 
-		err = fsi->devops->write_block(sb, sb_offset, payload_folio);
+		seg_type = SSDFS_SB_SEG_TYPE;
+		err = fsi->devops->write_block(sb, sb_offset, payload_folio,
+						ssdfs_seg2fdp_stream(fsi,
+								    seg_type));
 		if (err) {
 			SSDFS_ERR("fail to write maptbl cache page: "
 				  "offset %llu, folio_index %u, size %zu\n",
@@ -2795,7 +2806,9 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		}
 	}
 
-	err = fsi->devops->write_block(sb, sb_offset, folio);
+	seg_type = SSDFS_SB_SEG_TYPE;
+	err = fsi->devops->write_block(sb, sb_offset, folio,
+					ssdfs_seg2fdp_stream(fsi, seg_type));
 	if (err) {
 		SSDFS_ERR("fail to write log footer: "
 			  "offset %llu, size %zu\n",
@@ -2861,7 +2874,10 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 			}
 		}
 
-		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
+		seg_type = SSDFS_INITIAL_SNAPSHOT_SEG_TYPE;
+		err = fsi->devops->write_block(sb, sb_snap_offset, folio,
+						ssdfs_seg2fdp_stream(fsi,
+								    seg_type));
 		if (err) {
 			SSDFS_ERR("fail to write log footer: "
 				  "offset %llu, size %zu\n",
@@ -2919,6 +2935,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	u64 seg_id;
 	u32 log_pages_count;
 	u32 log_bytes;
+	u16 seg_type;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3134,7 +3151,9 @@ free_payload_buffer:
 		}
 	}
 
-	err = fsi->devops->write_block(sb, sb_offset, folio);
+	seg_type = SSDFS_SB_SEG_TYPE;
+	err = fsi->devops->write_block(sb, sb_offset, folio,
+					ssdfs_seg2fdp_stream(fsi, seg_type));
 	if (err) {
 		SSDFS_ERR("fail to write segment header: "
 			  "offset %llu, size %zu\n",
@@ -3211,7 +3230,10 @@ free_payload_buffer:
 			}
 		}
 
-		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
+		seg_type = SSDFS_INITIAL_SNAPSHOT_SEG_TYPE;
+		err = fsi->devops->write_block(sb, sb_snap_offset, folio,
+						ssdfs_seg2fdp_stream(fsi,
+								    seg_type));
 		if (err) {
 			SSDFS_ERR("fail to write segment header: "
 				  "offset %llu, size %zu\n",
@@ -3267,7 +3289,9 @@ free_payload_buffer:
 		}
 	}
 
-	err = fsi->devops->write_block(sb, sb_offset, folio);
+	seg_type = SSDFS_SB_SEG_TYPE;
+	err = fsi->devops->write_block(sb, sb_offset, folio,
+					ssdfs_seg2fdp_stream(fsi, seg_type));
 	if (err) {
 		SSDFS_ERR("fail to write log footer: "
 			  "offset %llu, size %zu\n",
@@ -3333,7 +3357,10 @@ free_payload_buffer:
 			}
 		}
 
-		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
+		seg_type = SSDFS_INITIAL_SNAPSHOT_SEG_TYPE;
+		err = fsi->devops->write_block(sb, sb_snap_offset, folio,
+						ssdfs_seg2fdp_stream(fsi,
+								    seg_type));
 		if (err) {
 			SSDFS_ERR("fail to write log footer: "
 				  "offset %llu, size %zu\n",
@@ -3852,11 +3879,11 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	fs_info->do_fork_invalidation = true;
 #endif /* CONFIG_SSDFS_TESTING */
 
-	fs_info->max_open_zones = 0;
-	fs_info->is_zns_device = false;
-	fs_info->zone_size = U64_MAX;
-	fs_info->zone_capacity = U64_MAX;
-	atomic_set(&fs_info->open_zones, 0);
+	fs_info->device.zns.max_open_zones = 0;
+	fs_info->device.type = SSDFS_UNKNOWN_DEVICE_TYPE;
+	fs_info->device.zns.zone_size = U64_MAX;
+	fs_info->device.zns.zone_capacity = U64_MAX;
+	atomic_set(&fs_info->device.zns.open_zones, 0);
 
 #ifdef CONFIG_SSDFS_ONLINE_FSCK
 	atomic_set(&fs_info->fsck_priority, 0);
@@ -3868,35 +3895,43 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		sizeof(struct ssdfs_tunefs_config_request));
 
 #ifdef CONFIG_SSDFS_MTD_DEVICE
+	fs_info->device.type = SSDFS_MTD_DEVICE;
 	fs_info->mtd = sb->s_mtd;
 	fs_info->devops = &ssdfs_mtd_devops;
 #elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
+	fs_info->device.type = SSDFS_REGULAR_DEVICE;
+
 	if (bdev_is_zoned(sb->s_bdev)) {
 		fs_info->devops = &ssdfs_zns_devops;
-		fs_info->is_zns_device = true;
-		fs_info->max_open_zones = bdev_max_open_zones(sb->s_bdev);
+		fs_info->device.type = SSDFS_ZNS_DEVICE;
+		fs_info->device.zns.max_open_zones =
+				bdev_max_open_zones(sb->s_bdev);
 
-		fs_info->zone_size = ssdfs_zns_zone_size(sb,
-						SSDFS_RESERVED_VBR_SIZE);
-		if (fs_info->zone_size >= U64_MAX) {
+		fs_info->device.zns.zone_size =
+			ssdfs_zns_zone_size(sb, SSDFS_RESERVED_VBR_SIZE);
+		if (fs_info->device.zns.zone_size >= U64_MAX) {
 			SSDFS_ERR("fail to get zone size\n");
 			return -ERANGE;
 		}
 
-		fs_info->zone_capacity = ssdfs_zns_zone_capacity(sb,
+		fs_info->device.zns.zone_capacity =
+				ssdfs_zns_zone_capacity(sb,
 						SSDFS_RESERVED_VBR_SIZE);
-		if (fs_info->zone_capacity >= U64_MAX) {
+		if (fs_info->device.zns.zone_capacity >= U64_MAX) {
 			SSDFS_ERR("fail to get zone capacity\n");
 			return -ERANGE;
-		} else if (fs_info->zone_capacity > fs_info->zone_size) {
+		} else if (fs_info->device.zns.zone_capacity >
+					fs_info->device.zns.zone_size) {
 			SSDFS_ERR("invalid zone capacity: "
 				  "capacity %llu, size %llu\n",
-				  fs_info->zone_capacity,
-				  fs_info->zone_size);
+				  fs_info->device.zns.zone_capacity,
+				  fs_info->device.zns.zone_size);
 			return -ERANGE;
 		}
-	} else
+	} else {
 		fs_info->devops = &ssdfs_bdev_devops;
+		ssdfs_bdev_detect_fdp(fs_info);
+	}
 
 	atomic_set(&fs_info->pending_bios, 0);
 #else

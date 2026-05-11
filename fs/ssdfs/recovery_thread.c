@@ -570,9 +570,10 @@ bool is_sb_peb_exhausted(struct ssdfs_recovery_env *env,
 		return true;
 	}
 
-	if (env->fsi->is_zns_device) {
-		pages_per_peb = div64_u64(env->fsi->zone_capacity,
-					  PAGE_SIZE);
+	if (env->fsi->device.type == SSDFS_ZNS_DEVICE) {
+		pages_per_peb =
+			div64_u64(env->fsi->device.zns.zone_capacity,
+				  PAGE_SIZE);
 	} else
 		pages_per_peb = env->fsi->erasesize / PAGE_SIZE;
 

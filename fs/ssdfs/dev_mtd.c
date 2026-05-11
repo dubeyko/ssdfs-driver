@@ -383,7 +383,7 @@ free_buf:
  * %-EIO         - I/O error.
  */
 static int ssdfs_mtd_write_folio(struct super_block *sb, loff_t offset,
-				 struct folio *folio)
+				 struct folio *folio, u8 write_stream)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct mtd_info *mtd = fsi->mtd;
@@ -469,7 +469,8 @@ static int ssdfs_mtd_write_folio(struct super_block *sb, loff_t offset,
  * %-EIO         - I/O error.
  */
 static int ssdfs_mtd_write_blocks(struct super_block *sb, loff_t offset,
-				  struct folio_batch *batch)
+				  struct folio_batch *batch,
+				  u8 write_stream)
 {
 	struct folio *folio;
 	loff_t cur_offset = offset;
@@ -498,7 +499,8 @@ static int ssdfs_mtd_write_blocks(struct super_block *sb, loff_t offset,
 		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_mtd_write_folio(sb, cur_offset, folio);
+		err = ssdfs_mtd_write_folio(sb, cur_offset, folio,
+					    SSDFS_FDP_STREAM_NONE);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to write block: "
 				  "cur_offset %llu, err %d\n",

@@ -166,7 +166,7 @@ int ssdfs_create_using_peb_object(struct ssdfs_peb_info *pebi)
 
 	fsi = pebi->pebc->parent_si->fsi;
 
-	if (fsi->is_zns_device) {
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 		loff_t offset = pebi->peb_id * fsi->erasesize;
 
 		err = fsi->devops->reopen_zone(fsi->sb, offset);

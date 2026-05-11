@@ -4293,7 +4293,8 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
 
-	if (fsi->is_zns_device && is_ssdfs_peb_containing_user_data(ptr))
+	if (fsi->device.type == SSDFS_ZNS_DEVICE &&
+	    is_ssdfs_peb_containing_user_data(ptr))
 		err = ssdfs_peb_container_prepare_zns_destination(ptr);
 	else
 		err = __ssdfs_peb_container_prepare_destination(ptr);
@@ -5200,7 +5201,7 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 			goto finish_forget_source;
 		}
 
-		if (fsi->is_zns_device) {
+		if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 			err = ssdfs_peb_container_break_zns_relation(ptr,
 								 items_state,
 								 new_state);
@@ -5471,7 +5472,7 @@ try_get_current_peb:
 		ssdfs_peb_current_log_unlock(pebi);
 
 		if (is_peb_exhausted) {
-			if (fsi->is_zns_device &&
+			if (fsi->device.type == SSDFS_ZNS_DEVICE &&
 			    is_ssdfs_peb_containing_user_data(pebc)) {
 				atomic_set(&pebc->migration_phase,
 					    SSDFS_SHARED_ZONE_RECEIVES_DATA);

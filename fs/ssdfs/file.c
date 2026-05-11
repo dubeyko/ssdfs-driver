@@ -2428,6 +2428,8 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	pool->fdp_write_stream = ii->fdp_write_stream;
+
 	if (need_add_block(folio)) {
 		err = ssdfs_segment_add_data_extent_async(fsi, pool, batch);
 		if (err == -EAGAIN) {
@@ -2500,6 +2502,8 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->fdp_write_stream = ii->fdp_write_stream;
 
 	if (need_add_block(folio)) {
 		err = ssdfs_segment_add_data_extent_sync(fsi, pool, batch);

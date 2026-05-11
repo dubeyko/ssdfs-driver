@@ -165,10 +165,10 @@ void ssdfs_tunefs_get_current_volume_config(struct ssdfs_fs_info *fsi,
 	maptbl = fsi->maptbl;
 	config->maptbl_flags = (u16)atomic_read(&maptbl->flags);
 
-	config->is_zns_device = fsi->is_zns_device;
-	config->zone_size = fsi->zone_size;
-	config->zone_capacity = fsi->zone_capacity;
-	config->max_open_zones = fsi->max_open_zones;
+	config->device.type = fsi->device.type;
+	config->device.zns.zone_size = fsi->device.zns.zone_size;
+	config->device.zns.zone_capacity = fsi->device.zns.zone_capacity;
+	config->device.zns.max_open_zones = fsi->device.zns.max_open_zones;
 }
 
 /*

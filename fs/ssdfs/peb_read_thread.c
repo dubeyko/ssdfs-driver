@@ -5472,7 +5472,7 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 	full_log_bytes = full_log_blocks * fsi->pagesize;
 
 	if (zone_wp >= U64_MAX)
-		zone_wp = fsi->zone_capacity - full_log_bytes;
+		zone_wp = fsi->device.zns.zone_capacity - full_log_bytes;
 
 	cur_block = (zone_wp - offset) >> PAGE_SHIFT;
 
@@ -6076,7 +6076,7 @@ int ssdfs_peb_read_all_log_headers(struct ssdfs_peb_info *pebi,
 
 	fsi = pebi->pebc->parent_si->fsi;
 
-	if (fsi->is_zns_device) {
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 		err = ssdfs_zone_pre_fetch_last_full_log(fsi, pebi, req);
 		if (err == -ENODATA)
 			return 0;
@@ -10203,7 +10203,7 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 		goto fail_init_using_blk_bmap;
 	}
 
-	if (fsi->is_zns_device &&
+	if (fsi->device.type == SSDFS_ZNS_DEVICE &&
 	    is_ssdfs_peb_containing_user_data(pebi->pebc)) {
 		err = ssdfs_correct_zone_block_bitmap(pebi);
 		if (unlikely(err)) {
@@ -10652,7 +10652,7 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 		goto fail_init_used_blk_bmap;
 	}
 
-	if (fsi->is_zns_device &&
+	if (fsi->device.type == SSDFS_ZNS_DEVICE &&
 	    is_ssdfs_peb_containing_user_data(pebi->pebc)) {
 		err = ssdfs_correct_zone_block_bitmap(pebi);
 		if (unlikely(err)) {

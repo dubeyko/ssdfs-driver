@@ -466,6 +466,102 @@ static int ssdfs_ioctl_force_shutdown(struct file *file, void __user *arg)
 }
 
 /*
+ * ssdfs_ioctl_set_fdp_hint() - set per-inode FDP write-stream preference
+ * @file: open file whose inode will be updated
+ * @arg: user pointer to struct ssdfs_fdp_hint
+ *
+ * Stores the requested write-stream ID in the in-core inode.  The value is
+ * used as a hint when the filesystem submits user-data bios on behalf of
+ * this inode. Passing write_stream == 0 clears any previous hint (auto).
+ */
+static int ssdfs_ioctl_set_fdp_hint(struct file *file, void __user *arg)
+{
+	struct inode *inode = file_inode(file);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_fdp_hint hint;
+	u16 user_data_stream1;
+	u16 write_stream;
+	int err;
+
+	err = mnt_want_write_file(file);
+	if (err)
+		return err;
+
+	if (copy_from_user(&hint, arg, sizeof(hint))) {
+		err = -EFAULT;
+		goto out;
+	}
+
+	if (hint.reserved[0] || hint.reserved[1] || hint.reserved[2]) {
+		err = -EINVAL;
+		goto out;
+	}
+
+	user_data_stream1 =
+		fsi->device.fdp.stream_map[SSDFS_USER_DATA_SEG_TYPE];
+
+	if (hint.write_stream > fsi->device.fdp.user_data_streams) {
+		SSDFS_WARN("FDP stream %u exceeds device max %u; "
+			   "hint will be ignored at write time\n",
+			   hint.write_stream,
+			   fsi->device.fdp.user_data_streams);
+		write_stream = user_data_stream1;
+	} else {
+		write_stream = hint.write_stream;
+		write_stream += user_data_stream1;
+	}
+
+	ii->fdp_write_stream = write_stream;
+
+out:
+	mnt_drop_write_file(file);
+	return err;
+}
+
+/*
+ * ssdfs_ioctl_get_fdp_info() - query FDP capability and per-inode stream
+ * @file: open file to query
+ * @arg:  user pointer to struct ssdfs_fdp_info (output)
+ */
+static int ssdfs_ioctl_get_fdp_info(struct file *file, void __user *arg)
+{
+	struct inode *inode = file_inode(file);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_fdp_info info;
+	u16 user_data_stream1;
+
+	memset(&info, 0, sizeof(info));
+
+	info.streams_count = fsi->device.fdp.user_data_streams;
+
+	user_data_stream1 =
+		fsi->device.fdp.stream_map[SSDFS_USER_DATA_SEG_TYPE];
+
+	if (ii->fdp_write_stream < user_data_stream1) {
+		SSDFS_ERR("invalid write stream: "
+			  "ii->fdp_write_stream %u, user_data_stream1 %u\n",
+			  ii->fdp_write_stream, user_data_stream1);
+		info.inode_stream = user_data_stream1;
+	} else {
+		info.inode_stream = ii->fdp_write_stream - user_data_stream1;
+
+		if (info.inode_stream >= fsi->device.fdp.user_data_streams) {
+			SSDFS_ERR("invalid write stream: "
+				  "ii->fdp_write_stream %u, user_data_stream1 %u\n",
+				  ii->fdp_write_stream, user_data_stream1);
+			info.inode_stream = user_data_stream1;
+		}
+	}
+
+	if (copy_to_user(arg, &info, sizeof(info)))
+		return -EFAULT;
+
+	return 0;
+}
+
+/*
  * The ssdfs_ioctl() is called by the ioctl(2) system call.
  */
 long ssdfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -517,6 +613,10 @@ long ssdfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return ssdfs_ioctl_tunefs_set_fs_config(file, argp);
 	case SSDFS_IOC_SHUTDOWN:
 		return ssdfs_ioctl_force_shutdown(file, argp);
+	case SSDFS_IOC_SET_FDP_HINT:
+		return ssdfs_ioctl_set_fdp_hint(file, argp);
+	case SSDFS_IOC_GET_FDP_INFO:
+		return ssdfs_ioctl_get_fdp_info(file, argp);
 	}
 
 	return -ENOTTY;

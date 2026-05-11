@@ -1231,7 +1231,7 @@ check_migration_state:
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (!fsi->is_zns_device) {
+		if (fsi->device.type != SSDFS_ZNS_DEVICE) {
 			pebi = pebc->dst_peb;
 			if (!pebi) {
 				err = -ERANGE;

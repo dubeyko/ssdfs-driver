@@ -476,12 +476,12 @@ int ssdfs_zns_find_last_non_empty_page(struct ssdfs_fs_info *fsi,
 		  *cur_off, *low_off, *high_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	offset = (loff_t)peb * fsi->zone_size;
+	offset = (loff_t)peb * fsi->device.zns.zone_size;
 
 	zone_wp = ssdfs_zns_zone_write_pointer(fsi->sb, offset);
 
 	if (zone_wp >= U64_MAX)
-		*cur_off = fsi->zone_capacity;
+		*cur_off = fsi->device.zns.zone_capacity;
 	else
 		*cur_off = (zone_wp - offset) >> PAGE_SHIFT;
 
@@ -596,9 +596,10 @@ static int ssdfs_find_latest_valid_sb_snap_info(struct ssdfs_fs_info *fsi)
 		return -ERANGE;
 	}
 
-	if (fsi->is_zns_device)
-		pages_per_peb = div64_u64(fsi->zone_capacity, PAGE_SIZE);
-	else
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
+		pages_per_peb =
+			div64_u64(fsi->device.zns.zone_capacity, PAGE_SIZE);
+	} else
 		pages_per_peb = fsi->erasesize / PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -641,7 +642,7 @@ static int ssdfs_find_latest_valid_sb_snap_info(struct ssdfs_fs_info *fsi)
 		return -ENOENT;
 	}
 
-	if (fsi->is_zns_device) {
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 		err = ssdfs_zns_find_last_non_empty_page(fsi,
 							 leb, peb,
 							 log_pages,
@@ -793,8 +794,8 @@ static int ssdfs_read_sb_snapshot_segment(struct ssdfs_fs_info *fsi,
 	fsi->log_pagesize = vh->log_pagesize;
 	fsi->pagesize = 1 << vh->log_pagesize;
 
-	if (fsi->is_zns_device) {
-		fsi->erasesize = fsi->zone_size;
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
+		fsi->erasesize = fsi->device.zns.zone_size;
 		fsi->segsize = fsi->erasesize * le16_to_cpu(vh->pebs_per_seg);
 	} else {
 		fsi->erasesize = 1 << vh->log_erasesize;
@@ -1072,8 +1073,8 @@ try_again:
 	fsi->log_pagesize = vh->log_pagesize;
 	fsi->pagesize = 1 << vh->log_pagesize;
 
-	if (fsi->is_zns_device) {
-		fsi->erasesize = fsi->zone_size;
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
+		fsi->erasesize = fsi->device.zns.zone_size;
 		fsi->segsize = fsi->erasesize * le16_to_cpu(vh->pebs_per_seg);
 	} else {
 		fsi->erasesize = 1 << vh->log_erasesize;
@@ -1469,8 +1470,9 @@ static inline bool is_sb_peb_exhausted2(struct ssdfs_fs_info *fsi,
 	checking_page.leb_id = leb_id;
 	checking_page.peb_id = peb_id;
 
-	if (fsi->is_zns_device) {
-		pages_per_peb = div64_u64(fsi->zone_capacity, PAGE_SIZE);
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
+		pages_per_peb =
+			div64_u64(fsi->device.zns.zone_capacity, PAGE_SIZE);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(pages_per_peb >= U32_MAX);
@@ -1875,9 +1877,10 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 	peb = fsi->sbi.last_log.peb_id;
 	log_pages = SSDFS_LOG_PAGES(last_seg_hdr);
 
-	if (fsi->is_zns_device)
-		pages_per_peb = div64_u64(fsi->zone_capacity, PAGE_SIZE);
-	else
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
+		pages_per_peb =
+			div64_u64(fsi->device.zns.zone_capacity, PAGE_SIZE);
+	} else
 		pages_per_peb = fsi->erasesize / PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2037,9 +2040,10 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 		return -ERANGE;
 	}
 
-	if (fsi->is_zns_device)
-		pages_per_peb = div64_u64(fsi->zone_capacity, PAGE_SIZE);
-	else
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
+		pages_per_peb =
+			div64_u64(fsi->device.zns.zone_capacity, PAGE_SIZE);
+	} else
 		pages_per_peb = fsi->erasesize / PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2077,7 +2081,7 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 		return 0;
 	}
 
-	if (fsi->is_zns_device) {
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 		err = ssdfs_zns_find_last_non_empty_page(fsi,
 							 leb, peb,
 							 log_pages,
@@ -2282,11 +2286,11 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->pages_per_seg = fsi->segsize / fsi->pagesize;
 	fsi->lebs_per_peb_index = le32_to_cpu(fsi->vh->lebs_per_peb_index);
 
-	if (fsi->is_zns_device) {
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 		u64 peb_pages_capacity =
-			fsi->zone_capacity >> fsi->vh->log_pagesize;
+			fsi->device.zns.zone_capacity >> fsi->vh->log_pagesize;
 
-		fsi->erasesize = fsi->zone_size;
+		fsi->erasesize = fsi->device.zns.zone_size;
 		fsi->segsize = fsi->erasesize *
 				le16_to_cpu(fsi->vh->pebs_per_seg);
 
@@ -2295,11 +2299,12 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		fsi->peb_pages_capacity = (u32)peb_pages_capacity;
-		atomic_set(&fsi->open_zones, le32_to_cpu(fsi->vs->open_zones));
+		atomic_set(&fsi->device.zns.open_zones,
+			   le32_to_cpu(fsi->vs->open_zones));
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("open_zones %d\n",
-			  atomic_read(&fsi->open_zones));
+			  atomic_read(&fsi->device.zns.open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 		fsi->erasesize = 1 << fsi->vh->log_erasesize;
@@ -2329,9 +2334,10 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("zone_size %llu, zone_capacity %llu, "
 		  "leb_pages_capacity %u, peb_pages_capacity %u, "
 		  "open_zones %d\n",
-		  fsi->zone_size, fsi->zone_capacity,
+		  fsi->device.zns.zone_size,
+		  fsi->device.zns.zone_capacity,
 		  fsi->leb_pages_capacity, fsi->peb_pages_capacity,
-		  atomic_read(&fsi->open_zones));
+		  atomic_read(&fsi->device.zns.open_zones));
 	SSDFS_DBG("fs_ctime %llu, fs_cno %llu, "
 		  "raw_inode_size %u, create_threads_per_seg %u\n",
 		  (u64)fsi->fs_ctime, (u64)fsi->fs_cno,
@@ -2481,7 +2487,8 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 			     fsi->pages_per_seg);
 		SSDFS_NOTICE("zone_size %llu, zone_capacity %llu, "
 			     "leb_pages_capacity %u, peb_pages_capacity %u\n",
-			     fsi->zone_size, fsi->zone_capacity,
+			     fsi->device.zns.zone_size,
+			     fsi->device.zns.zone_capacity,
 			     fsi->leb_pages_capacity, fsi->peb_pages_capacity);
 
 		fsi->sb->s_flags |= SB_RDONLY;

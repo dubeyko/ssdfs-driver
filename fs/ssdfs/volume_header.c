@@ -139,15 +139,16 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
 		break;
 
 	default:
-		if (fsi->is_zns_device) {
+		if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 			u64 zone_size = le16_to_cpu(vh->megabytes_per_peb);
 
 			zone_size *= SSDFS_1MB;
 
-			if (fsi->zone_size != zone_size) {
+			if (fsi->device.zns.zone_size != zone_size) {
 				SSDFS_ERR("invalid zone size: "
 					  "size1 %llu != size2 %llu\n",
-					  fsi->zone_size, zone_size);
+					  fsi->device.zns.zone_size,
+					  zone_size);
 				return -ERANGE;
 			}
 
@@ -538,15 +539,16 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
 		break;
 
 	default:
-		if (fsi->is_zns_device) {
+		if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 			u64 zone_size = le16_to_cpu(fsi->vh->megabytes_per_peb);
 
 			zone_size *= SSDFS_1MB;
 
-			if (fsi->zone_size != zone_size) {
+			if (fsi->device.zns.zone_size != zone_size) {
 				SSDFS_ERR("invalid zone size: "
 					  "size1 %llu != size2 %llu\n",
-					  fsi->zone_size, zone_size);
+					  fsi->device.zns.zone_size,
+					  zone_size);
 				return false;
 			}
 
@@ -1066,12 +1068,12 @@ void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 
 	vh->flags = cpu_to_le32(0);
 
-	if (fsi->is_zns_device) {
+	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
 		flags = le32_to_cpu(vh->flags);
 		flags |= SSDFS_VH_ZNS_BASED_VOLUME;
 
 		erase_size = 1 << fsi->log_erasesize;
-		if (erase_size != fsi->zone_size)
+		if (erase_size != fsi->device.zns.zone_size)
 			flags |= SSDFS_VH_UNALIGNED_ZONE;
 
 		vh->flags = cpu_to_le32(flags);
@@ -1400,11 +1402,11 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->lebs_per_peb_index = cpu_to_le32(fsi->lebs_per_peb_index);
 	hdr->create_threads_per_seg = cpu_to_le16(fsi->create_threads_per_seg);
 
-	hdr->open_zones = cpu_to_le32(atomic_read(&fsi->open_zones));
+	hdr->open_zones = cpu_to_le32(atomic_read(&fsi->device.zns.open_zones));
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("open_zones %d\n",
-		  atomic_read(&fsi->open_zones));
+		  atomic_read(&fsi->device.zns.open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr->seg_id = cpu_to_le64(seg_id);

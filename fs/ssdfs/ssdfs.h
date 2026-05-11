@@ -40,6 +40,7 @@
 #include "ssdfs_fs_info.h"
 #include "ssdfs_inline.h"
 #include "fingerprint_array.h"
+#include "fdp.h"
 
 /*
  * struct ssdfs_value_pair - value/position pair
@@ -124,9 +125,9 @@ int ssdfs_bdev_read(struct super_block *sb, u32 block_size, loff_t offset,
 int ssdfs_bdev_can_write_block(struct super_block *sb, u32 block_size,
 				loff_t offset, bool need_check);
 int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
-			   struct folio *folio);
+			   struct folio *folio, u8 write_stream);
 int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
-			    struct folio_batch *batch);
+			    struct folio_batch *batch, u8 write_stream);
 
 /* dev_zns.c */
 u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset);

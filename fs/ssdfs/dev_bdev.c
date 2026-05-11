@@ -196,11 +196,14 @@ int ssdfs_bdev_bio_add_folio(struct bio *bio, struct folio *folio,
  * @offset: offset in bytes from partition's begin
  * @op: direction of I/O
  * @op_flags: request op flags
+ * @write_stream: FDP write-stream ID (SSDFS_FDP_STREAM_NONE for no hint)
  */
 static int ssdfs_bdev_sync_folio_request(struct super_block *sb,
 					 struct folio *folio,
 					 loff_t offset,
-					 unsigned int op, int op_flags)
+					 unsigned int op,
+					 int op_flags,
+					 u8 write_stream)
 {
 	struct bio *bio;
 	loff_t folio_index;
@@ -226,6 +229,8 @@ static int ssdfs_bdev_sync_folio_request(struct super_block *sb,
 	bio->bi_iter.bi_sector = sector;
 	bio_set_dev(bio, sb->s_bdev);
 	bio->bi_opf = op | op_flags;
+	if (op == REQ_OP_WRITE)
+		bio->bi_write_stream = write_stream;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio %p, count %d\n",
@@ -261,11 +266,14 @@ finish_sync_folio_request:
  * @offset: offset in bytes from partition's begin
  * @op: direction of I/O
  * @op_flags: request op flags
+ * @write_stream: FDP write-stream ID (SSDFS_FDP_STREAM_NONE for no hint)
  */
 static int ssdfs_bdev_sync_batch_request(struct super_block *sb,
 					 struct folio_batch *batch,
 					 loff_t offset,
-					 unsigned int op, int op_flags)
+					 unsigned int op,
+					 int op_flags,
+					 u8 write_stream)
 {
 	struct bio *bio;
 	loff_t folio_index;
@@ -307,6 +315,8 @@ static int ssdfs_bdev_sync_batch_request(struct super_block *sb,
 	bio->bi_iter.bi_sector = sector;
 	bio_set_dev(bio, sb->s_bdev);
 	bio->bi_opf = op | op_flags;
+	if (op == REQ_OP_WRITE)
+		bio->bi_write_stream = write_stream;
 
 	for (i = 0; i < folio_batch_count(batch); i++) {
 		struct folio *folio = batch->folios[i];
@@ -362,7 +372,8 @@ int ssdfs_bdev_read_block(struct super_block *sb, struct folio *folio,
 	int err;
 
 	err = ssdfs_bdev_sync_folio_request(sb, folio, offset,
-					    REQ_OP_READ, REQ_SYNC);
+					    REQ_OP_READ, REQ_SYNC,
+					    SSDFS_FDP_STREAM_NONE);
 	if (err) {
 		folio_clear_uptodate(folio);
 	} else {
@@ -397,7 +408,8 @@ int ssdfs_bdev_read_blocks(struct super_block *sb, struct folio_batch *batch,
 	int err = 0;
 
 	err = ssdfs_bdev_sync_batch_request(sb, batch, offset,
-					    REQ_OP_READ, REQ_RAHEAD);
+					    REQ_OP_READ, REQ_RAHEAD,
+					    SSDFS_FDP_STREAM_NONE);
 
 	for (i = 0; i < folio_batch_count(batch); i++) {
 		struct folio *folio = batch->folios[i];
@@ -505,7 +517,8 @@ static int ssdfs_bdev_read_batch(struct super_block *sb,
 	}
 
 	err = ssdfs_bdev_sync_batch_request(sb, &batch, offset,
-					    REQ_OP_READ, REQ_SYNC);
+					    REQ_OP_READ, REQ_SYNC,
+					    SSDFS_FDP_STREAM_NONE);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read folio batch: err %d\n",
 			  err);
@@ -722,6 +735,7 @@ free_buf:
  * @sb: superblock object
  * @offset: offset in bytes from partition's begin
  * @folio: memory folio
+ * @write_stream: FDP write-stream ID (SSDFS_FDP_STREAM_NONE for no hint)
  *
  * This function tries to write from @folio data
  * on @offset from partition's begin.
@@ -734,7 +748,7 @@ free_buf:
  * %-EIO         - I/O error.
  */
 int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
-			   struct folio *folio)
+			   struct folio *folio, u8 write_stream)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 #ifdef CONFIG_SSDFS_DEBUG
@@ -766,7 +780,8 @@ int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
 	atomic_inc(&fsi->pending_bios);
 
 	err = ssdfs_bdev_sync_folio_request(sb, folio, offset,
-					    REQ_OP_WRITE, REQ_SYNC);
+					    REQ_OP_WRITE, REQ_SYNC,
+					    write_stream);
 	if (err) {
 		SSDFS_ERR("failed to write (err %d): offset %llu\n",
 			  err, (unsigned long long)offset);
@@ -794,6 +809,7 @@ int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
  * @sb: superblock object
  * @offset: offset in bytes from partition's begin
  * @batch: memory folios batch
+ * @write_stream: FDP write-stream ID (SSDFS_FDP_STREAM_NONE for no hint)
  *
  * This function tries to write from @batch data
  * on @offset from partition's beginning.
@@ -806,7 +822,7 @@ int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
  * %-EIO         - I/O error.
  */
 int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
-			    struct folio_batch *batch)
+			    struct folio_batch *batch, u8 write_stream)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct folio *folio;
@@ -862,7 +878,8 @@ int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 	atomic_inc(&fsi->pending_bios);
 
 	err = ssdfs_bdev_sync_batch_request(sb, batch, offset,
-					    REQ_OP_WRITE, REQ_SYNC);
+					    REQ_OP_WRITE, REQ_SYNC,
+					    write_stream);
 
 	for (i = 0; i < folio_batch_count(batch); i++) {
 		folio = batch->folios[i];

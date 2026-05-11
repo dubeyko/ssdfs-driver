@@ -240,6 +240,8 @@ struct ssdfs_request_result {
  * @place: logical blocks placement in segment
  * @private: internal data of request
  * @result: request result description
+ * @fdp_write_stream: FDP write-stream preference from the originating inode
+ *                    (0 = use segment-type default, non-zero = user hint).
  */
 struct ssdfs_segment_request {
 	struct list_head list;
@@ -247,6 +249,7 @@ struct ssdfs_segment_request {
 	struct ssdfs_volume_extent place;
 	struct ssdfs_request_internal_data private;
 	struct ssdfs_request_result result;
+	u8 fdp_write_stream;
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_t writeback_folios;
@@ -302,6 +305,7 @@ struct ssdfs_seg2req_pair {
  * @req_class: request class
  * @req_command: request command
  * @req_type: request type
+ * @fdp_write_stream: FDP stream hint from the originating inode (0 = auto).
  */
 struct ssdfs_segment_request_pool {
 #define SSDFS_SEG_REQ_PTR_NUMBER_MAX	(15)
@@ -311,6 +315,7 @@ struct ssdfs_segment_request_pool {
 	int req_class;
 	int req_command;
 	int req_type;
+	u8 fdp_write_stream;
 };
 
 /*

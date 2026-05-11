@@ -135,7 +135,7 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 	SSDFS_DBG("sb %p, offset %llu\n",
 		  sb, (unsigned long long)offset);
 	SSDFS_DBG("BEFORE: open_zones %d\n",
-		  atomic_read(&fsi->open_zones));
+		  atomic_read(&fsi->device.zns.open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	nofs_flags = memalloc_nofs_save();
@@ -148,14 +148,14 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 			  "open_zones %u, max_open_zones %u, "
 			  "err %d\n",
 			  zone_sector, zone_size,
-			  open_zones, fsi->max_open_zones,
+			  open_zones, fsi->device.zns.max_open_zones,
 			  err);
 		return err;
 	}
 
-	open_zones = atomic_inc_return(&fsi->open_zones);
-	if (open_zones > fsi->max_open_zones) {
-		atomic_dec(&fsi->open_zones);
+	open_zones = atomic_inc_return(&fsi->device.zns.open_zones);
+	if (open_zones > fsi->device.zns.max_open_zones) {
+		atomic_dec(&fsi->device.zns.open_zones);
 
 		SSDFS_WARN("open zones limit achieved: "
 			   "open_zones %u\n", open_zones);
@@ -164,7 +164,7 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("AFTER: open_zones %d\n",
-		   atomic_read(&fsi->open_zones));
+		   atomic_read(&fsi->device.zns.open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -340,8 +340,8 @@ static int ssdfs_zns_close_zone(struct super_block *sb, loff_t offset)
 		return err;
 	}
 
-	open_zones = atomic_dec_return(&fsi->open_zones);
-	if (open_zones > fsi->max_open_zones) {
+	open_zones = atomic_dec_return(&fsi->device.zns.open_zones);
+	if (open_zones > fsi->device.zns.max_open_zones) {
 		SSDFS_WARN("open zones limit exhausted: "
 			   "open_zones %u\n", open_zones);
 	}
@@ -1008,7 +1008,7 @@ static int ssdfs_zns_can_write_block(struct super_block *sb, u32 block_size,
  */
 static
 int ssdfs_zns_write_block(struct super_block *sb, loff_t offset,
-			  struct folio *folio)
+			  struct folio *folio, u8 write_stream)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	loff_t zone_start;
@@ -1105,7 +1105,8 @@ int ssdfs_zns_write_block(struct super_block *sb, loff_t offset,
  */
 static
 int ssdfs_zns_write_blocks(struct super_block *sb, loff_t offset,
-			   struct folio_batch *batch)
+			   struct folio_batch *batch,
+			   u8 write_stream)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct folio *folio;

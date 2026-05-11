@@ -89,6 +89,7 @@ static inline __u32 ssdfs_mask_flags(umode_t mode, __u32 flags)
  * @xattrs_tree: extended attributes tree
  * @inline_file: inline file buffer
  * @i_crypt_info: fscrypt per-inode encryption state (NULL if not encrypted)
+ * @fdp_write_stream: user-supplied FDP placement stream (0 = auto).
  * @raw_inode: raw inode
  */
 struct ssdfs_inode_info {
@@ -111,6 +112,8 @@ struct ssdfs_inode_info {
 #ifdef CONFIG_SSDFS_QUOTA
 	struct dquot __rcu *i_dquot[MAXQUOTAS];
 #endif /* CONFIG_SSDFS_QUOTA */
+	u8 fdp_write_stream;
+
 	struct ssdfs_inode raw_inode;
 };
 

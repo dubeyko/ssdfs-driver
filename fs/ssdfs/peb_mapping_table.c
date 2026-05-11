@@ -8649,7 +8649,7 @@ finish_mapping:
 		loff_t offset = peb_id * fsi->erasesize;
 
 		err = fsi->devops->open_zone(fsi->sb, offset);
-		if (err == -EOPNOTSUPP && !fsi->is_zns_device) {
+		if (err == -EOPNOTSUPP && fsi->device.type != SSDFS_ZNS_DEVICE) {
 			/* ignore error */
 			err = 0;
 		} else if (unlikely(err)) {
@@ -9499,7 +9499,7 @@ finish_change_state:
 		}
 	}
 
-	if (!err && fsi->is_zns_device) {
+	if (!err && fsi->device.type == SSDFS_ZNS_DEVICE) {
 		u64 peb_id = U64_MAX;
 
 		err = -ENODATA;
@@ -10732,7 +10732,7 @@ finish_add_migrating_peb:
 		loff_t offset = peb_id * fsi->erasesize;
 
 		err = fsi->devops->open_zone(fsi->sb, offset);
-		if (err == -EOPNOTSUPP && !fsi->is_zns_device) {
+		if (err == -EOPNOTSUPP && fsi->device.type != SSDFS_ZNS_DEVICE) {
 			/* ignore error */
 			err = 0;
 		} else if (unlikely(err)) {

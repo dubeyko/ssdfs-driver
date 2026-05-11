@@ -3577,10 +3577,10 @@ int CHECKED_SEG_TYPE(struct ssdfs_fs_info *fsi, int cur_seg_type)
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!fsi->is_zns_device)
+	if (fsi->device.type != SSDFS_ZNS_DEVICE)
 		return cur_seg_type;
 
-	if (threshold < (fsi->max_open_zones / 2))
+	if (threshold < (fsi->device.zns.max_open_zones / 2))
 		return cur_seg_type;
 
 	switch (cur_seg_type) {
@@ -3611,6 +3611,7 @@ bool can_current_segment_be_added(struct ssdfs_segment_info *si)
 	struct ssdfs_fs_info *fsi;
 	u32 threshold = ssdfs_calculate_zns_reservation_threshold();
 	int open_zones;
+	u32 max_open_zones;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
@@ -3618,16 +3619,17 @@ bool can_current_segment_be_added(struct ssdfs_segment_info *si)
 
 	fsi = si->fsi;
 
-	if (!fsi->is_zns_device)
+	if (fsi->device.type != SSDFS_ZNS_DEVICE)
 		return true;
 
 	switch (si->seg_type) {
 	case SSDFS_LEAF_NODE_SEG_TYPE:
 	case SSDFS_HYBRID_NODE_SEG_TYPE:
 	case SSDFS_INDEX_NODE_SEG_TYPE:
-		open_zones = atomic_read(&fsi->open_zones);
+		open_zones = atomic_read(&fsi->device.zns.open_zones);
+		max_open_zones = fsi->device.zns.max_open_zones;
 
-		if (threshold < ((fsi->max_open_zones - open_zones) / 2))
+		if (threshold < ((max_open_zones - open_zones) / 2))
 			return true;
 		else
 			return false;
@@ -3789,6 +3791,8 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 
 	ssdfs_request_init(req, fsi->pagesize);
 	ssdfs_get_request(req);
+
+	req->fdp_write_stream = pool->fdp_write_stream;
 
 	ssdfs_request_prepare_internal_data(pool->req_class,
 					    pool->req_command,

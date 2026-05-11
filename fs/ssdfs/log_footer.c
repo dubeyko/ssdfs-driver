@@ -862,19 +862,19 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 		     size);
 
 	vs->migration_threshold = cpu_to_le16(fsi->migration_threshold);
-	vs->open_zones = cpu_to_le32(atomic_read(&fsi->open_zones));
+	vs->open_zones = cpu_to_le32(atomic_read(&fsi->device.zns.open_zones));
 
 	spin_unlock(&fsi->volume_state_lock);
 
-	if (atomic_read(&fsi->open_zones) < 0) {
+	if (atomic_read(&fsi->device.zns.open_zones) < 0) {
 		SSDFS_ERR("invalid open_zones %d\n",
-			  atomic_read(&fsi->open_zones));
+			  atomic_read(&fsi->device.zns.open_zones));
 		return -ERANGE;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("open_zones %d\n",
-		  atomic_read(&fsi->open_zones));
+		  atomic_read(&fsi->device.zns.open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_memcpy(&vs->blkbmap,

@@ -76,4 +76,23 @@
  */
 #define SSDFS_IOC_SHUTDOWN	_IOR(SSDFS_IOCTL_MAGIC, 11, __u32)
 
+/*
+ * FDP (Flexible Data Placement) hint IOCTLs
+ *
+ * These IOCTLs allow user-space to participate in FDP placement decisions.
+ * They have no effect on non-FDP devices.
+ */
+
+/*
+ * SSDFS_IOC_SET_FDP_HINT - attach a FDP write-stream preference to an inode
+ */
+#define SSDFS_IOC_SET_FDP_HINT  _IOW(SSDFS_IOCTL_MAGIC, 12, \
+				     struct ssdfs_fdp_hint)
+
+/*
+ * SSDFS_IOC_GET_FDP_INFO - query FDP capabilities and per-inode stream
+ */
+#define SSDFS_IOC_GET_FDP_INFO  _IOR(SSDFS_IOCTL_MAGIC, 13, \
+				     struct ssdfs_fdp_info)
+
 #endif /* _SSDFS_IOCTL_H */

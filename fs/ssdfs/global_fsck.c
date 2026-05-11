@@ -117,6 +117,7 @@ int ssdfs_erase_and_re_write_sb_snapshot_segment(struct super_block *sb)
 	struct ssdfs_fs_info *fsi;
 	struct folio_batch fbatch;
 	struct folio *folio;
+	u16 seg_type = SSDFS_INITIAL_SNAPSHOT_SEG_TYPE;
 	int i;
 	int err = 0;
 
@@ -178,7 +179,8 @@ int ssdfs_erase_and_re_write_sb_snapshot_segment(struct super_block *sb)
 		ssdfs_folio_unlock(folio);
 	}
 
-	err = fsi->devops->write_blocks(sb, 0, &fbatch);
+	err = fsi->devops->write_blocks(sb, 0, &fbatch,
+					ssdfs_seg2fdp_stream(fsi, seg_type));
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to write batch: err %d\n", err);
 		goto finish_re_write_sb_snapshot_segment;

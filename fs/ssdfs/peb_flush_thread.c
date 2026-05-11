@@ -15127,6 +15127,8 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 	u32 log_bytes, written_bytes;
 	u32 log_start_off;
 	unsigned flushed_folios;
+	u16 seg_type;
+	u8 write_stream;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -15146,6 +15148,8 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
+	seg_type = pebi->pebc->parent_si->seg_type;
+	write_stream = ssdfs_seg2fdp_stream(fsi, seg_type);
 	folio_batch_init(&batch);
 
 	peb_offset = (pebi->peb_id * fsi->pages_per_peb) << fsi->log_pagesize;
@@ -15259,7 +15263,7 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_CHECK_LOGICAL_BLOCK_EMPTYNESS */
 
 		err = fsi->devops->write_blocks(fsi->sb, iter_write_offset,
-						&batch);
+						&batch, write_stream);
 		if (unlikely(err)) {
 			folio_batch_reinit(&batch);
 			SSDFS_ERR("fail to flush folio batch: "
