@@ -1822,7 +1822,9 @@ int ssdfs_invextree_init_node(struct ssdfs_btree_node *node)
 	}
 
 	if (node->tree->type == SSDFS_INVALIDATED_EXTENTS_BTREE)
-		tree_info = (struct ssdfs_invextree_info *)node->tree;
+		tree_info = container_of(tree,
+					 struct ssdfs_invextree_info,
+					 generic_tree);
 	else {
 		SSDFS_ERR("invalid tree type %#x\n",
 			  node->tree->type);
@@ -6130,7 +6132,11 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 			}
 		} while (parent_type != SSDFS_BTREE_ROOT_NODE);
 
-		err = ssdfs_invalidate_root_node_hierarchy(parent);
+		down_write(&parent->full_lock);
+		down_write(&parent->header_lock);
+		err = ssdfs_invalidate_root_node_hierarchy(parent, search);
+		up_write(&parent->header_lock);
+		up_write(&parent->full_lock);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate root node hierarchy: "
 				  "err %d\n", err);
@@ -6416,6 +6422,7 @@ int __ssdfs_invextree_node_delete_range(struct ssdfs_btree_node *node,
 	}
 
 	down_write(&node->full_lock);
+	down_write(&node->header_lock);
 
 	direction = is_requested_position_correct(node, &items_area,
 						  search);
@@ -6489,10 +6496,12 @@ int __ssdfs_invextree_node_delete_range(struct ssdfs_btree_node *node,
 
 	err = ssdfs_lock_items_range(node, item_index, locked_len);
 	if (err == -ENOENT) {
+		up_write(&node->header_lock);
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
 		return -ERANGE;
 	} else if (err == -ENODATA) {
+		up_write(&node->header_lock);
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
 		return -ERANGE;
@@ -6502,14 +6511,17 @@ int __ssdfs_invextree_node_delete_range(struct ssdfs_btree_node *node,
 finish_detect_affected_items:
 	downgrade_write(&node->full_lock);
 
-	if (unlikely(err))
+	if (unlikely(err)) {
+		downgrade_write(&node->header_lock);
 		goto finish_delete_range;
+	}
 
 	err = ssdfs_btree_node_clear_range(node, &node->items_area,
 					   item_size, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to clear items range: err %d\n",
 			  err);
+		downgrade_write(&node->header_lock);
 		goto finish_delete_range;
 	}
 
@@ -6530,6 +6542,7 @@ finish_detect_affected_items:
 			  "range_len %u, err %d\n",
 			  node->node_id, item_index,
 			  range_len, err);
+		downgrade_write(&node->header_lock);
 		goto finish_delete_range;
 	}
 
@@ -6545,6 +6558,7 @@ finish_detect_affected_items:
 				  item_index + range_len,
 				  shift_range_len,
 				  err);
+			downgrade_write(&node->header_lock);
 			goto finish_delete_range;
 		}
 
@@ -6558,11 +6572,10 @@ finish_detect_affected_items:
 				  item_index + range_len,
 				  shift_range_len,
 				  err);
+			downgrade_write(&node->header_lock);
 			goto finish_delete_range;
 		}
 	}
-
-	down_write(&node->header_lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("INITIAL STATE: node_id %u, "
@@ -6736,13 +6749,12 @@ finish_detect_affected_items:
 	}
 
 finish_items_area_correction:
-	up_write(&node->header_lock);
-
 	if (unlikely(err))
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 
 finish_delete_range:
 	ssdfs_unlock_items_range(node, item_index, locked_len);
+	up_read(&node->header_lock);
 	up_read(&node->full_lock);
 
 	if (unlikely(err))

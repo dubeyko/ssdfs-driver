@@ -407,6 +407,15 @@ finish_root_node_creation:
 }
 
 /*
+ * is_whole_btree_invalidated() - check that b-tree is invalidated
+ * @tree: btree object
+ */
+bool is_whole_btree_invalidated(struct ssdfs_btree *tree)
+{
+	return atomic_read(&tree->state) == SSDFS_BTREE_INVALIDATED;
+}
+
+/*
  * ssdfs_btree_destroy() - destroy generalized btree object
  * @tree: btree object
  */
@@ -449,6 +458,10 @@ void ssdfs_btree_destroy(struct ssdfs_btree *tree)
 		}
 		break;
 
+	case SSDFS_BTREE_INVALIDATED:
+		/* expected state */
+		break;
+
 	default:
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG();
@@ -477,6 +490,19 @@ void ssdfs_btree_destroy(struct ssdfs_btree *tree)
 				   "index %llu\n",
 				   (u64)iter.index);
 		} else {
+			switch (atomic_read(&node->type)) {
+			case SSDFS_BTREE_ROOT_NODE:
+				if (is_ssdfs_btree_node_pre_deleted(node)) {
+					atomic_set(&tree->state,
+						   SSDFS_BTREE_INVALIDATED);
+				}
+				break;
+
+			default:
+				/* do nothing */
+				break;
+			}
+
 			if (tree->btree_ops && tree->btree_ops->destroy_node)
 				tree->btree_ops->destroy_node(node);
 
@@ -1199,6 +1225,7 @@ int ssdfs_btree_destroy_node_range(struct ssdfs_btree *tree,
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
 	case SSDFS_BTREE_DIRTY:
+	case SSDFS_BTREE_INVALIDATED:
 		/* expected state */
 		break;
 
@@ -2214,9 +2241,9 @@ finish_child_search:
  * And the upper node ID can be decreased if the whold branch of empty
  * nodes will be deleted.
  *
- * <Currently node deletion is simple operation. Any node can be deleted.
+ * Currently node deletion is simple operation. Any node can be deleted.
  * The implementation should be changed if u32 will be not enough for
- * the node ID representation.>
+ * the node ID representation.
  *
  * RETURN:
  * [success] - new node ID
@@ -3326,13 +3353,15 @@ int ssdfs_btree_check_found_leaf_node(struct ssdfs_btree *tree,
 	SSDFS_DBG("node %u (start_hash %llx, end_hash %llx), "
 		  "request (start_hash %llx, end_hash %llx), "
 		  "is_found %#x, is_right_adjacent %#x, "
-		  "items_count %u, items_capacity %u\n",
+		  "items_count %u, items_capacity %u, "
+		  "node_state %#x\n",
 		  node->node_id,
 		  start_hash, end_hash,
 		  search->request.start.hash,
 		  search->request.end.hash,
 		  is_found, is_right_adjacent,
-		  items_count, items_capacity);
+		  items_count, items_capacity,
+		  atomic_read(&node->state));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (node->tree->type) {
@@ -3608,10 +3637,14 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 			up_read(&node->header_lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("node_id %u, start_hash %llx, "
-				  "end_hash %llx, is_found %#x\n",
-				  node->node_id, start_hash,
-				  end_hash, is_found);
+			SSDFS_DBG("node_id %u, node (start_hash %llx, "
+				  "end_hash %llx), "
+				  "request (start_hash %llx, end_hash %llx), "
+				  "is_found %#x\n",
+				  node->node_id, start_hash, end_hash,
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  is_found);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			if (start_hash < U64_MAX && end_hash == U64_MAX) {
@@ -3700,10 +3733,15 @@ try_find_index:
 			err = -ERANGE;
 			SSDFS_ERR("invalid index search request: "
 				  "prev_id %llu, prev_height %u, "
-				  "id %llu, height %u\n",
+				  "id %llu, height %u, state %#x, type %#x\n",
 				  (u64)prev_id, prev_height,
 				  (u64)search->node.id,
-				  search->node.height);
+				  search->node.height,
+				  atomic_read(&search->node.parent->state),
+				  atomic_read(&search->node.parent->type));
+			ssdfs_debug_show_btree_node_indexes(tree,
+							search->node.parent);
+			ssdfs_show_btree_node_info(search->node.parent);
 			goto finish_search_leaf_node;
 		}
 	} while (prev_height > SSDFS_BTREE_LEAF_NODE_HEIGHT);
@@ -4259,6 +4297,7 @@ int ssdfs_btree_delete_node(struct ssdfs_btree *tree,
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
+	case SSDFS_BTREE_NODE_PRE_DELETED:
 		/* expected state */
 		break;
 
@@ -4731,6 +4770,7 @@ int __ssdfs_btree_find_item(struct ssdfs_btree *tree,
 		return -EINVAL;
 	}
 
+try_find_node:
 	err = ssdfs_btree_find_leaf_node(tree, search);
 	if (err == -EEXIST) {
 		err = 0;
@@ -4837,9 +4877,9 @@ try_find_item_again:
 			search->result.err = 0;
 			goto finish_search_item;
 		} else {
-			err = -ENODATA;
-			SSDFS_DBG("node hasn't requested data\n");
-			goto finish_search_item;
+			err = 0;
+			SSDFS_DBG("search result is obsolete!!!\n");
+			goto try_find_node;
 		}
 	} else if (err == -ENODATA || err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5170,6 +5210,7 @@ int ssdfs_btree_find_range(struct ssdfs_btree *tree,
  *
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
+ * %-EAGAIN     - obsolete request.
  */
 int ssdfs_btree_allocate_item(struct ssdfs_btree *tree,
 			      struct ssdfs_btree_search *search)
@@ -5272,6 +5313,19 @@ try_next_search:
 	}
 
 try_allocate_item:
+	if (search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_NODE_ID &&
+	    search->request.node_id != search->node.id) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("obsolete request: "
+			  "search->request.node_id %u, "
+			  "search->node.id %u\n",
+			  search->request.node_id,
+			  search->node.id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		err = -EAGAIN;
+		goto finish_allocate_item;
+	}
+
 	err = ssdfs_btree_node_allocate_item(search);
 	if (err == -EAGAIN) {
 		err = 0;
@@ -6628,6 +6682,10 @@ try_delete_item:
 		}
 		break;
 
+	case SSDFS_BTREE_SEARCH_PLEASE_INVALIDATE_WHOLE_TREE:
+		/* do nothing */
+		break;
+
 	default:
 		if (need_update_parent_node(search)) {
 			hierarchy = ssdfs_btree_hierarchy_allocate(tree);
@@ -6899,6 +6957,10 @@ finish_delete_range:
 				  (u64)search->node.id, err);
 			goto fail_delete_range;
 		}
+		break;
+
+	case SSDFS_BTREE_SEARCH_PLEASE_INVALIDATE_WHOLE_TREE:
+		/* do nothing */
 		break;
 
 	default:
@@ -8244,10 +8306,23 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 			break;
 		}
 
-		if (is_ssdfs_btree_node_pre_deleted(node1)) {
-			SSDFS_DBG("node %u has pre-deleted state\n",
-				  node1->node_id);
-			continue;
+		switch (atomic_read(&node1->type)) {
+		case SSDFS_BTREE_ROOT_NODE:
+			if (is_ssdfs_btree_node_pre_deleted(node1)) {
+				SSDFS_DBG("node %u has pre-deleted state\n",
+					  node1->node_id);
+				rcu_read_unlock();
+				goto finish_check;
+			}
+			break;
+
+		default:
+			if (is_ssdfs_btree_node_pre_deleted(node1)) {
+				SSDFS_DBG("node %u has pre-deleted state\n",
+					  node1->node_id);
+				continue;
+			}
+			break;
 		}
 
 		rcu_read_unlock();
@@ -8457,6 +8532,7 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 	}
 	rcu_read_unlock();
 
+finish_check:
 	up_write(&tree->lock);
 #endif /* CONFIG_SSDFS_BTREE_CONSISTENCY_CHECK */
 }

@@ -6997,6 +6997,7 @@ int ssdfs_extract_intersection(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !str1 || !str2 || !len);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("node_id %u, str1 %p, str2 %p, str2_len %zu\n",
 		  node->node_id, str1, str2, str2_len);
@@ -7005,10 +7006,8 @@ int ssdfs_extract_intersection(struct ssdfs_btree_node *node,
 	fsi = node->tree->fsi;
 	*len = 0;
 
-	down_read(&node->header_lock);
 	area_offset = node->items_area.offset;
 	area_size = node->items_area.area_size;
-	up_read(&node->header_lock);
 
 	if (!str2) {
 		SSDFS_ERR("empty str2 pointer\n");
@@ -7152,6 +7151,7 @@ int ssdfs_extract_intersection_with_left_name(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search || !len);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -7385,6 +7385,7 @@ int ssdfs_extract_intersection_with_right_name(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search || !len);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -12074,6 +12075,7 @@ int ssdfs_add_full_name(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -12096,8 +12098,6 @@ int ssdfs_add_full_name(struct ssdfs_btree_node *node,
 	}
 
 	requested_size = str_len + l2desc_size + hdesc_size;
-
-	down_write(&node->header_lock);
 
 	if (!is_free_space_enough(node, requested_size)) {
 		err = -ENOSPC;
@@ -12264,8 +12264,6 @@ check_node_consistency:
 	atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
 
 finish_add_full_name:
-	up_write(&node->header_lock);
-
 	return err;
 }
 
@@ -12313,6 +12311,7 @@ int ssdfs_create_prefix_for_left_name(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("node_id %u, prefix_len %u\n",
 		  node->node_id, prefix_len);
@@ -12400,8 +12399,6 @@ int ssdfs_create_prefix_for_left_name(struct ssdfs_btree_node *node,
 	}
 
 	requested_size = hdesc_size;
-
-	down_write(&node->header_lock);
 
 	if (!is_free_space_enough(node, requested_size)) {
 		err = -ENOSPC;
@@ -12634,8 +12631,6 @@ check_node_consistency:
 	atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
 
 finish_create_left_prefix:
-	up_write(&node->header_lock);
-
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("DEBUG SEARCH RESULT NAME:\n");
 	ssdfs_debug_btree_search_result_name(search);
@@ -12689,6 +12684,7 @@ int ssdfs_create_prefix_for_right_name(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("node_id %u, prefix_len %u\n",
 		  node->node_id, prefix_len);
@@ -12758,8 +12754,6 @@ int ssdfs_create_prefix_for_right_name(struct ssdfs_btree_node *node,
 	}
 
 	requested_size = hdesc_size;
-
-	down_write(&node->header_lock);
 
 	if (!is_free_space_enough(node, requested_size)) {
 		err = -ENOSPC;
@@ -12981,8 +12975,6 @@ check_node_consistency:
 	atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
 
 finish_create_right_prefix:
-	up_write(&node->header_lock);
-
 	return err;
 }
 #endif /* CONFIG_SSDFS_LONG_NAME_DEDUPLICATION */
@@ -13489,6 +13481,7 @@ int ssdfs_insert_suffix_into_left_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -13597,8 +13590,6 @@ int ssdfs_insert_suffix_into_left_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	down_write(&node->header_lock);
-
 	err = ssdfs_insert_suffix(node, search, prefix_len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to insert name's suffix: err %d\n",
@@ -13621,8 +13612,6 @@ check_node_consistency:
 	atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
 
 finish_insert_left_suffix:
-	up_write(&node->header_lock);
-
 	return err;
 }
 #endif /* CONFIG_SSDFS_LONG_NAME_DEDUPLICATION */
@@ -13660,6 +13649,7 @@ int ssdfs_insert_suffix_into_right_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -13798,8 +13788,6 @@ int ssdfs_insert_suffix_into_right_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	down_write(&node->header_lock);
-
 	err = ssdfs_insert_suffix(node, search, prefix_len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to insert name's suffix: err %d\n",
@@ -13822,8 +13810,6 @@ check_node_consistency:
 	atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
 
 finish_insert_right_suffix:
-	up_write(&node->header_lock);
-
 	return err;
 }
 #endif /* CONFIG_SSDFS_LONG_NAME_DEDUPLICATION */
@@ -14003,8 +13989,8 @@ int __ssdfs_shared_dict_btree_node_insert_item(struct ssdfs_btree_node *node,
 	}
 
 	down_write(&node->full_lock);
+	down_write(&node->header_lock);
 
-	down_read(&node->header_lock);
 	ssdfs_memcpy(&items_area,
 		     0, sizeof(struct ssdfs_btree_node_items_area),
 		     &node->items_area,
@@ -14022,7 +14008,6 @@ int __ssdfs_shared_dict_btree_node_insert_item(struct ssdfs_btree_node *node,
 		     sizeof(struct ssdfs_btree_node_index_area));
 	index_area_size = node->index_area.area_size;
 	old_hash = node->items_area.start_hash;
-	up_read(&node->header_lock);
 
 	err = ssdfs_check_items_area(node, &items_area);
 	if (err == -ENOSPC) {
@@ -14052,10 +14037,7 @@ int __ssdfs_shared_dict_btree_node_insert_item(struct ssdfs_btree_node *node,
 		goto finish_insert_item;
 	}
 
-	down_read(&node->header_lock);
 	err = ssdfs_check_hash_table_area(node, &hash_tbl_area);
-	up_read(&node->header_lock);
-
 	if (unlikely(err)) {
 		SSDFS_ERR("hash table area is corrupted: "
 			  "node_id %u, err %d\n",
@@ -14253,11 +14235,10 @@ int __ssdfs_shared_dict_btree_node_insert_item(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_LONG_NAME_DEDUPLICATION */
 	}
 
-	down_read(&node->header_lock);
 	start_hash = node->items_area.start_hash;
-	up_read(&node->header_lock);
 
 finish_insert_item:
+	up_write(&node->header_lock);
 	up_write(&node->full_lock);
 
 	if (unlikely(err))
@@ -18138,7 +18119,11 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 			}
 		} while (parent_type != SSDFS_BTREE_ROOT_NODE);
 
-		err = ssdfs_invalidate_root_node_hierarchy(parent);
+		down_write(&parent->full_lock);
+		down_write(&parent->header_lock);
+		err = ssdfs_invalidate_root_node_hierarchy(parent, search);
+		up_write(&parent->header_lock);
+		up_write(&parent->full_lock);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate root node hierarchy: "
 				  "err %d\n", err);

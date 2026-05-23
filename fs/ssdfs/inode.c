@@ -763,10 +763,6 @@ static int ssdfs_truncate(struct inode *inode)
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!(S_ISREG(inode->i_mode) || S_ISDIR(inode->i_mode) ||
-	      S_ISLNK(inode->i_mode)))
-		return -EINVAL;
-
 	if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
 		return -EPERM;
 

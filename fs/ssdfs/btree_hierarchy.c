@@ -3062,6 +3062,15 @@ int ssdfs_define_hybrid_node_moving_items(struct ssdfs_btree *tree,
 	used_space = parent_node->items_area.area_size - parent_free_space;
 	up_read(&parent_node->header_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("node %u: items_count %d, items_capacity %u, "
+		  "used_space %u, free_space %u, "
+		  "start_hash %#llx, end_hash %#llx\n",
+		  parent_node->node_id, items_count, items_capacity,
+		  used_space, free_space,
+		  parent_start_hash, parent_end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	if (child_node) {
 		down_read(&child_node->header_lock);
 		free_space = child_node->items_area.free_space;
@@ -3090,6 +3099,10 @@ int ssdfs_define_hybrid_node_moving_items(struct ssdfs_btree *tree,
 
 	switch (tree->type) {
 	case SSDFS_INODES_BTREE:
+		/* no additional check is necessary */
+		calculated_items = items_capacity;
+		break;
+
 	case SSDFS_EXTENTS_BTREE:
 	case SSDFS_SHARED_EXTENTS_BTREE:
 		/* no additional check is necessary */
@@ -3169,8 +3182,10 @@ int ssdfs_define_hybrid_node_moving_items(struct ssdfs_btree *tree,
 
 finish_define_moving_items:
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("items_count %u, calculated_items %d\n",
-		  items_count, calculated_items);
+	SSDFS_DBG("MOVE_TO_CHILD: items_count %u, "
+		  "calculated_items %d, items_capacity %u\n",
+		  items_count, calculated_items,
+		  items_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	parent->flags |= SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
@@ -3229,6 +3244,7 @@ int ssdfs_btree_define_hybrid2leaf_moving_items(struct ssdfs_btree *tree,
 	u16 item_size;
 	int items_count;
 	u16 items_capacity;
+	int calculated_items = 0;
 	u64 start_hash1, end_hash1;
 	u64 start_hash2, end_hash2;
 	bool has_intersection = false;
@@ -3312,9 +3328,14 @@ int ssdfs_btree_define_hybrid2leaf_moving_items(struct ssdfs_btree *tree,
 
 	switch (tree->type) {
 	case SSDFS_INODES_BTREE:
+		/* no additional check is necessary */
+		calculated_items = items_capacity;
+		break;
+
 	case SSDFS_EXTENTS_BTREE:
 	case SSDFS_SHARED_EXTENTS_BTREE:
 		/* no additional check is necessary */
+		calculated_items = items_count;
 		break;
 
 	case SSDFS_DENTRIES_BTREE:
@@ -3342,6 +3363,8 @@ int ssdfs_btree_define_hybrid2leaf_moving_items(struct ssdfs_btree *tree,
 			SSDFS_DBG("need two phase adding\n");
 			return -EAGAIN;
 		}
+
+		calculated_items = items_count;
 		break;
 
 	case SSDFS_SHARED_DICTIONARY_BTREE:
@@ -3395,24 +3418,31 @@ int ssdfs_btree_define_hybrid2leaf_moving_items(struct ssdfs_btree *tree,
 			SSDFS_DBG("need two phase adding\n");
 			return -EAGAIN;
 		}
+
+		calculated_items = items_count;
 		break;
 
 	default:
 		BUG();
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("MOVE_TO_CHILD: items_count %u, items_capacity %u\n",
+		  items_count, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	parent->flags |= SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
 	move->direction = SSDFS_BTREE_MOVE_TO_CHILD;
 	move->pos.state = SSDFS_HASH_RANGE_INTERSECTION;
 	move->pos.start = 0;
-	move->pos.count = items_count;
+	move->pos.count = calculated_items;
 	move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
 
 	insert->pos.state = SSDFS_HASH_RANGE_LEFT_ADJACENT;
 	insert->hash.start = start_hash1;
 	insert->hash.end = end_hash1;
 	insert->pos.start = 0;
-	insert->pos.count = items_count;
+	insert->pos.count = calculated_items;
 	insert->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
 
 	child->flags |= SSDFS_BTREE_LEVEL_ADD_NODE;

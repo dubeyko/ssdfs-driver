@@ -77,6 +77,7 @@ struct ssdfs_btree_search_hash {
  * struct ssdfs_btree_search_request - btree search request
  * @type: request type
  * @flags: request flags
+ * @node_id: requested node ID
  * @start: starting hash value
  * @end: ending hash value
  * @count: range of hashes length in the request
@@ -96,9 +97,11 @@ struct ssdfs_btree_search_request {
 #define SSDFS_BTREE_SEARCH_DONT_EXTRACT_RECORD		(1 << 10)
 #define SSDFS_BTREE_SEARCH_HAS_PEB2TIME_PAIR		(1 << 11)
 #define SSDFS_BTREE_SEARCH_DONT_DELETE_BTREE_NODE	(1 << 12)
-#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x1FFF
+#define SSDFS_BTREE_SEARCH_HAS_VALID_NODE_ID		(1 << 13)
+#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x3FFF
 	u32 flags;
 
+	u32 node_id;
 	struct ssdfs_btree_search_hash start;
 	struct ssdfs_btree_search_hash end;
 	unsigned int count;
@@ -145,6 +148,7 @@ enum {
 	SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE,
 	SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE,
 	SSDFS_BTREE_SEARCH_PLEASE_MOVE_BUF_CONTENT,
+	SSDFS_BTREE_SEARCH_PLEASE_INVALIDATE_WHOLE_TREE,
 	SSDFS_BTREE_SEARCH_RESULT_STATE_MAX
 };
 
@@ -298,6 +302,8 @@ struct ssdfs_name_string_range {
  * @start_index: starting found item index
  * @count: count of found items
  * @search_cno: checkpoint of search activity
+ * @alloc_bmap: pointer on allocation bitmap
+ * @alloc_bmap_size: size of allocation bitmap in bytes
  * @name_buf: name(s) buffer
  * @range_buf: buffer with names range
  * @raw_buf: raw buffer with item(s)
@@ -309,13 +315,17 @@ struct ssdfs_btree_search_result {
 #define SSDFS_BTREE_SEARCH_RESULT_HAS_NAME		(1 << 0)
 #define SSDFS_BTREE_SEARCH_RESULT_HAS_RANGE		(1 << 1)
 #define SSDFS_BTREE_SEARCH_RESULT_HAS_RAW_DATA		(1 << 2)
-#define SSDFS_BTREE_SEARCH_RESULT_FLAGS_MASK		0x7
+#define SSDFS_BTREE_SEARCH_RESULT_HAS_ALLOC_BMAP	(1 << 3)
+#define SSDFS_BTREE_SEARCH_RESULT_FLAGS_MASK		0xF
 	u32 flags;
 
 	u16 start_index;
 	u16 count;
 
 	u64 search_cno;
+
+	u8 *alloc_bmap;
+	size_t alloc_bmap_size;
 
 	struct ssdfs_btree_search_buffer name_buf;
 	struct ssdfs_btree_search_buffer range_buf;

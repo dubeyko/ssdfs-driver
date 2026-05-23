@@ -3940,6 +3940,8 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_xattrs_btree_info *tree)
 		goto finish_process_range;
 	}
 
+	atomic_set(&tree->buffer.tree.state, SSDFS_BTREE_INVALIDATED);
+
 	err = ssdfs_btree_destroy_node_range(&tree->buffer.tree,
 					     0);
 	if (unlikely(err)) {
@@ -7842,6 +7844,7 @@ int __ssdfs_xattrs_btree_node_insert_range(struct ssdfs_btree_node *node,
 	}
 
 	down_write(&node->full_lock);
+	down_write(&node->header_lock);
 
 	direction = is_requested_position_correct(node, &items_area,
 						  search);
@@ -7983,10 +7986,12 @@ int __ssdfs_xattrs_btree_node_insert_range(struct ssdfs_btree_node *node,
 lock_items_range:
 	err = ssdfs_lock_items_range(node, item_index, xattrs_count);
 	if (err == -ENOENT) {
+		up_write(&node->header_lock);
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
 		return -ERANGE;
 	} else if (err == -ENODATA) {
+		up_write(&node->header_lock);
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
 		return -ERANGE;
@@ -7996,8 +8001,10 @@ lock_items_range:
 finish_detect_affected_items:
 	downgrade_write(&node->full_lock);
 
-	if (unlikely(err))
+	if (unlikely(err)) {
+		downgrade_write(&node->header_lock);
 		goto finish_insert_item;
+	}
 
 	err = ssdfs_shift_range_right(node, &items_area, item_size,
 				      item_index, range_len,
@@ -8008,6 +8015,7 @@ finish_detect_affected_items:
 			  "start %u, count %u, err %d\n",
 			  item_index, search->request.count,
 			  err);
+		downgrade_write(&node->header_lock);
 		goto unlock_items_range;
 	}
 
@@ -8019,10 +8027,9 @@ finish_detect_affected_items:
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 		SSDFS_ERR("fail to insert item: err %d\n",
 			  err);
+		downgrade_write(&node->header_lock);
 		goto unlock_items_range;
 	}
-
-	down_write(&node->header_lock);
 
 	node->items_area.items_count += search->request.count;
 	if (node->items_area.items_count > node->items_area.items_capacity) {
@@ -8102,7 +8109,7 @@ finish_detect_affected_items:
 	hdr->free_space = cpu_to_le16(node->items_area.free_space);
 
 finish_items_area_correction:
-	up_write(&node->header_lock);
+	downgrade_write(&node->header_lock);
 
 	if (unlikely(err)) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
@@ -8129,6 +8136,7 @@ unlock_items_range:
 	ssdfs_unlock_items_range(node, item_index, xattrs_count);
 
 finish_insert_item:
+	up_read(&node->header_lock);
 	up_read(&node->full_lock);
 
 	switch (atomic_read(&node->type)) {
@@ -8436,6 +8444,7 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -8474,8 +8483,6 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 			  err);
 		return err;
 	}
-
-	down_write(&node->header_lock);
 
 	start_hash = node->items_area.start_hash;
 	end_hash = node->items_area.end_hash;
@@ -8523,8 +8530,6 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 	}
 
 finish_items_area_correction:
-	up_write(&node->header_lock);
-
 	if (unlikely(err))
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 
@@ -8670,6 +8675,7 @@ int ssdfs_xattrs_btree_node_change_item(struct ssdfs_btree_node *node,
 	}
 
 	down_write(&node->full_lock);
+	down_write(&node->header_lock);
 
 	direction = is_requested_position_correct(node, &items_area,
 						  search);
@@ -8724,7 +8730,6 @@ int ssdfs_xattrs_btree_node_change_item(struct ssdfs_btree_node *node,
 		goto finish_define_changing_items;
 	}
 
-
 	switch (search->request.type) {
 	case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
 		/* range_len doesn't need to be changed */
@@ -8739,10 +8744,12 @@ int ssdfs_xattrs_btree_node_change_item(struct ssdfs_btree_node *node,
 
 	err = ssdfs_lock_items_range(node, item_index, range_len);
 	if (err == -ENOENT) {
+		up_write(&node->header_lock);
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
 		return -ERANGE;
 	} else if (err == -ENODATA) {
+		up_write(&node->header_lock);
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
 		return -ERANGE;
@@ -8752,10 +8759,13 @@ int ssdfs_xattrs_btree_node_change_item(struct ssdfs_btree_node *node,
 finish_define_changing_items:
 	downgrade_write(&node->full_lock);
 
-	if (unlikely(err))
+	if (unlikely(err)) {
+		downgrade_write(&node->header_lock);
 		goto finish_change_item;
-	else {
+	} else {
 		err = ssdfs_change_item_only(node, &items_area, search);
+		downgrade_write(&node->header_lock);
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to change item: err %d\n",
 				  err);
@@ -8784,6 +8794,7 @@ unlock_items_range:
 	ssdfs_unlock_items_range(node, item_index, range_len);
 
 finish_change_item:
+	up_read(&node->header_lock);
 	up_read(&node->full_lock);
 
 	ssdfs_debug_btree_node_object(node);
@@ -8954,6 +8965,7 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 
 	SSDFS_DBG("node_id %u, start_index %u, range_len %u\n",
 		  node->node_id, start_index, range_len);
@@ -8995,8 +9007,6 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 		}
 	}
 
-	down_write(&node->header_lock);
-
 	switch (atomic_read(&node->items_area.state)) {
 	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
 		if (node->items_area.items_count == range_len)
@@ -9024,8 +9034,6 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 		index_area_empty = false;
 		break;
 	}
-
-	up_write(&node->header_lock);
 
 	if (unlikely(err)) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
@@ -9084,7 +9092,11 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 			}
 		} while (parent_type != SSDFS_BTREE_ROOT_NODE);
 
-		err = ssdfs_invalidate_root_node_hierarchy(parent);
+		down_write(&parent->full_lock);
+		down_write(&parent->header_lock);
+		err = ssdfs_invalidate_root_node_hierarchy(parent, search);
+		up_write(&parent->header_lock);
+		up_write(&parent->full_lock);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate root node hierarchy: "
 				  "err %d\n", err);
@@ -9362,6 +9374,7 @@ int __ssdfs_xattrs_btree_node_delete_range(struct ssdfs_btree_node *node,
 	}
 
 	down_write(&node->full_lock);
+	down_write(&node->header_lock);
 
 	direction = is_requested_position_correct(node, &items_area,
 						  search);
@@ -9435,10 +9448,12 @@ int __ssdfs_xattrs_btree_node_delete_range(struct ssdfs_btree_node *node,
 
 	err = ssdfs_lock_items_range(node, item_index, locked_len);
 	if (err == -ENOENT) {
+		up_write(&node->header_lock);
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
 		return -ERANGE;
 	} else if (err == -ENODATA) {
+		up_write(&node->header_lock);
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
 		return -ERANGE;
@@ -9448,8 +9463,10 @@ int __ssdfs_xattrs_btree_node_delete_range(struct ssdfs_btree_node *node,
 finish_detect_affected_items:
 	downgrade_write(&node->full_lock);
 
-	if (unlikely(err))
+	if (unlikely(err)) {
+		downgrade_write(&node->header_lock);
 		goto finish_delete_range;
+	}
 
 	if (range_len == items_area.items_count) {
 		/* items area is empty */
@@ -9468,6 +9485,7 @@ finish_detect_affected_items:
 			  "range_len %u, err %d\n",
 			  node->node_id, item_index,
 			  range_len, err);
+		downgrade_write(&node->header_lock);
 		goto unlock_items_range;
 	}
 
@@ -9481,6 +9499,7 @@ finish_detect_affected_items:
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to clear items range: err %d\n",
 			  err);
+		downgrade_write(&node->header_lock);
 		goto unlock_items_range;
 	}
 
@@ -9496,6 +9515,7 @@ finish_detect_affected_items:
 				  item_index + range_len,
 				  shift_range_len,
 				  err);
+			downgrade_write(&node->header_lock);
 			goto unlock_items_range;
 		}
 
@@ -9509,11 +9529,10 @@ finish_detect_affected_items:
 				  item_index + range_len,
 				  shift_range_len,
 				  err);
+			downgrade_write(&node->header_lock);
 			goto unlock_items_range;
 		}
 	}
-
-	down_write(&node->header_lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("INITIAL STATE: node_id %u, "
@@ -9676,7 +9695,7 @@ finish_detect_affected_items:
 	}
 
 finish_items_area_correction:
-	up_write(&node->header_lock);
+	downgrade_write(&node->header_lock);
 
 	if (unlikely(err))
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
@@ -9685,6 +9704,7 @@ unlock_items_range:
 	ssdfs_unlock_items_range(node, item_index, locked_len);
 
 finish_delete_range:
+	up_read(&node->header_lock);
 	up_read(&node->full_lock);
 
 	if (unlikely(err))

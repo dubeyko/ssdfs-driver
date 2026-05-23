@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.74 [May 23, 2026]
+    (*) Fix generic/011 xfstests related issues.
+
 v.5.73 [May 10, 2026]
     (*) Introduce FDP SSD support.
 

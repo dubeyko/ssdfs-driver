@@ -131,6 +131,7 @@ enum {
 	SSDFS_BTREE_UNKNOWN_STATE,
 	SSDFS_BTREE_CREATED,
 	SSDFS_BTREE_DIRTY,
+	SSDFS_BTREE_INVALIDATED,
 	SSDFS_BTREE_STATE_MAX
 };
 
@@ -173,6 +174,7 @@ int ssdfs_btree_delete_all(struct ssdfs_btree *tree);
 /*
  * Internal Btree API
  */
+bool is_whole_btree_invalidated(struct ssdfs_btree *tree);
 bool need_migrate_generic2inline_btree(struct ssdfs_btree *tree,
 					int items_threshold);
 int ssdfs_btree_desc_init(struct ssdfs_fs_info *fsi,

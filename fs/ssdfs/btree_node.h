@@ -838,7 +838,8 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 				struct ssdfs_btree_node_items_area *area,
 				size_t item_size,
 				struct ssdfs_btree_search *search);
-int ssdfs_invalidate_root_node_hierarchy(struct ssdfs_btree_node *node);
+int ssdfs_invalidate_root_node_hierarchy(struct ssdfs_btree_node *node,
+					 struct ssdfs_btree_search *search);
 int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 				     u16 start_index, u16 count,
 				     size_t item_size,
