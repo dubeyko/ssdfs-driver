@@ -1286,13 +1286,14 @@ int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
 	}
 
 	nofs_flags = memalloc_nofs_save();
-	buf->ptr = krealloc(buf->ptr, new_size, GFP_KERNEL);
+	void *new_ptr = krealloc(buf->ptr, new_size, GFP_KERNEL);
 	memalloc_nofs_restore(nofs_flags);
 
-	if (!buf->ptr) {
+	if (!new_ptr) {
 		SSDFS_ERR("fail to allocate buffer\n");
 		return -ENOMEM;
 	}
+	buf->ptr = new_ptr;
 
 	buf->buf_size = new_size;
 
