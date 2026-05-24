@@ -3,6 +3,11 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.75 [May 23, 2026]
+    (*) Fix incorrect logic of synchronization the mapping
+        table with mapping thable cache during flush of
+        mapping table.
+
 v.5.74 [May 23, 2026]
     (*) Fix generic/011 xfstests related issues.
 

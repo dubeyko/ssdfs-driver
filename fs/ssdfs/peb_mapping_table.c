@@ -109,6 +109,27 @@ void ssdfs_map_tbl_check_memory_leaks(void)
 }
 
 /*
+ * is_unmount_finishing_flushing() - can mapping table be modified
+ * @fsi: shared file system info
+ */
+static inline
+bool is_unmount_finishing_flushing(struct ssdfs_fs_info *fsi)
+{
+	switch (atomic_read(&fsi->global_fs_state)) {
+	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
+	case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
+	case SSDFS_UNMOUNT_DESTROY_METADATA:
+		return true;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	return false;
+}
+
+/*
  * ssdfs_get_not_guaranted_migration() - calculate NOT guaranted migration
  * @fdesc: fragment descriptor
  */
@@ -6011,6 +6032,18 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 
 			return err;
 		}
+	} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+		if (should_cache_peb_info(peb_type)) {
+			err = ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id,
+								 pebr);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, err %d\n",
+					  leb_id, err);
+			}
+
+			return err;
+		}
 	}
 
 	down_read(&tbl->tbl_lock);
@@ -8485,6 +8518,12 @@ int ssdfs_maptbl_map_leb2peb(struct ssdfs_fs_info *fsi,
 		return -EAGAIN;
 	}
 
+	if (is_unmount_finishing_flushing(tbl->fsi)) {
+		SSDFS_WARN("fail to map LEB to PEB: "
+			   "leb_id %llu\n", leb_id);
+		return -EFAULT;
+	}
+
 	down_read(&tbl->tbl_lock);
 
 	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
@@ -9236,6 +9275,35 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
+	if (is_unmount_finishing_flushing(tbl->fsi)) {
+		if (should_cache_peb_info(peb_type)) {
+			consistency = SSDFS_PEB_STATE_INCONSISTENT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("leb_id %llu, consistency %#x\n",
+				  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_maptbl_cache_change_peb_state(cache,
+								  leb_id,
+								  peb_state,
+								  consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change PEB state: "
+					  "leb_id %llu, peb_state %#x, "
+					  "err %d\n",
+					  leb_id, peb_state, err);
+			}
+
+			return err;
+		} else {
+			SSDFS_WARN("fail to change PEB state: "
+				   "leb_id %llu, peb_state %#x\n",
+				   leb_id, peb_state);
+			return -EFAULT;
+		}
+	}
+
 	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_INCONSISTENT;
@@ -9724,6 +9792,11 @@ int ssdfs_maptbl_prepare_pre_erase_state(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
+	if (is_unmount_finishing_flushing(fsi)) {
+		SSDFS_WARN("unmount is in progress\n");
+		return -EFAULT;
+	}
+
 	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
 	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
 		/*
@@ -9924,6 +9997,11 @@ int ssdfs_maptbl_set_pre_erased_snapshot_peb(struct ssdfs_fs_info *fsi,
 		ssdfs_fs_error(tbl->fsi->sb,
 				__FILE__, __func__, __LINE__,
 				"maptbl has corrupted state\n");
+		return -EFAULT;
+	}
+
+	if (is_unmount_finishing_flushing(fsi)) {
+		SSDFS_WARN("unmount is in progress\n");
 		return -EFAULT;
 	}
 
@@ -10516,11 +10594,21 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
-		/*
-		 * Continue logic
-		 */
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+			/*
+			 * Continue logic
+			 */
+		} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+			SSDFS_WARN("unmount is in progress\n");
+			return -EFAULT;
+		} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+			SSDFS_WARN("mapping table is under flush\n");
+			return -EFAULT;
+		}
+	} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+		SSDFS_WARN("unmount is in progress\n");
+		return -EFAULT;
 	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		*end = &tbl->flush_end;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11216,6 +11304,32 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 				  leb_id, peb_type);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return -EAGAIN;
+		}
+	}
+
+	if (is_unmount_finishing_flushing(tbl->fsi)) {
+		if (should_cache_peb_info(peb_type)) {
+			consistency = SSDFS_PEB_STATE_PRE_DELETED;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("leb_id %llu, consistency %#x\n",
+				  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
+								leb_id,
+								consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to exclude migration PEB: "
+					  "leb_id %llu, err %d\n",
+					  leb_id, err);
+			}
+
+			return err;
+		} else {
+			SSDFS_WARN("fail to exclude migration PEB: "
+				   "leb_id %llu\n", leb_id);
+			return -EFAULT;
 		}
 	}
 
@@ -12098,11 +12212,21 @@ int ssdfs_maptbl_set_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		return -EFAULT;
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
-		/*
-		 * Continue logic
-		 */
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+			/*
+			 * Continue logic
+			 */
+		} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+			SSDFS_WARN("unmount is in progress\n");
+			return -EFAULT;
+		} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+			SSDFS_WARN("mapping table is under flush\n");
+			return -EFAULT;
+		}
+	} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+		SSDFS_WARN("unmount is in progress\n");
+		return -EFAULT;
 	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		*end = &tbl->flush_end;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -12435,11 +12559,21 @@ int ssdfs_maptbl_set_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		return -EFAULT;
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
-		/*
-		 * Continue logic
-		 */
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+			/*
+			 * Continue logic
+			 */
+		} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+			SSDFS_WARN("unmount is in progress\n");
+			return -EFAULT;
+		} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+			SSDFS_WARN("mapping table is under flush\n");
+			return -EFAULT;
+		}
+	} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+		SSDFS_WARN("unmount is in progress\n");
+		return -EFAULT;
 	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		*end = &tbl->flush_end;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -13019,11 +13153,21 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		return -ERANGE;
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
-		/*
-		 * Continue logic
-		 */
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+			/*
+			 * Continue logic
+			 */
+		} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+			SSDFS_WARN("unmount is in progress\n");
+			return -EFAULT;
+		} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+			SSDFS_WARN("mapping table is under flush\n");
+			return -EFAULT;
+		}
+	} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+		SSDFS_WARN("unmount is in progress\n");
+		return -EFAULT;
 	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		*end = &tbl->flush_end;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -13393,11 +13537,21 @@ int ssdfs_maptbl_break_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl
 		return -EFAULT;
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
-		/*
-		 * Continue logic
-		 */
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+			/*
+			 * Continue logic
+			 */
+		} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+			SSDFS_WARN("unmount is in progress\n");
+			return -EFAULT;
+		} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+			SSDFS_WARN("mapping table is under flush\n");
+			return -EFAULT;
+		}
+	} else if (is_unmount_finishing_flushing(tbl->fsi)) {
+		SSDFS_WARN("unmount is in progress\n");
+		return -EFAULT;
 	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		*end = &tbl->flush_end;
 #ifdef CONFIG_SSDFS_DEBUG

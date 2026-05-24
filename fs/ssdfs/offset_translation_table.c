@@ -8183,10 +8183,10 @@ finish_check_fragment:
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!has_offset_id_found) {
-			SSDFS_DBG("ignore fragment: "
-				  "sequence_id %u, "
-				  "fragment (start_id %u, id_count %d)\n",
-				  sequence_id, frag_start_id, frag_id_count);
+		SSDFS_DBG("ignore fragment: "
+			  "sequence_id %u, "
+			  "fragment (start_id %u, id_count %d)\n",
+			  sequence_id, frag_start_id, frag_id_count);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 

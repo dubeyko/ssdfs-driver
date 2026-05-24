@@ -181,9 +181,11 @@ check_migration_state:
 	err = ssdfs_peb_container_create_destination(pebc);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to start PEB migration: "
-			  "seg %llu, peb_index %u, err %d\n",
+			  "seg %llu, peb_index %u, "
+			  "is_peb_under_migration %#x, err %d\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index,
+			  is_peb_under_migration(pebc),
 			  err);
 		goto start_migration_done;
 	}
@@ -555,6 +557,12 @@ repeat_valid_blocks_processing:
 
 	sub_range.start = copy_range.start;
 	sub_range.len = copy_range.len;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("copy blocks range: "
+		  "(start %u, len %u)\n",
+		  sub_range.start, sub_range.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_copy_blocks_range(pebc, &sub_range, req);
 	if (err == -EAGAIN) {
