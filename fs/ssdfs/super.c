@@ -1063,12 +1063,12 @@ static int ssdfs_write_padding(struct super_block *sb,
 	}
 
 	while (written < size) {
-		offset = offset + written;
+		loff_t cur_offset = offset + written;
 
-		err = ssdfs_write_padding_block(sb, folio, offset);
+		err = ssdfs_write_padding_block(sb, folio, cur_offset);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to write padding block: "
-				  "offset %llu\n", offset);
+				  "offset %llu\n", cur_offset);
 			goto free_folio;
 		}
 
