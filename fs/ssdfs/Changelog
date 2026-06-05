@@ -3,9 +3,12 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.76 [June 05, 2026]
+    (*) Fix multiple PEB mapping table cache issues.
+
 v.5.75 [May 23, 2026]
     (*) Fix incorrect logic of synchronization the mapping
-        table with mapping thable cache during flush of
+        table with mapping table cache during flush of
         mapping table.
 
 v.5.74 [May 23, 2026]

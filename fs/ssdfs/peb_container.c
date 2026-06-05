@@ -3749,6 +3749,7 @@ int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	struct ssdfs_maptbl_peb_relation pebr;
 	struct ssdfs_peb_info *pebi;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	struct ssdfs_peb_mapping_table *tbl;
 	int shared_index;
 	int destination_state;
 	int items_state;
@@ -3778,6 +3779,7 @@ int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
+	tbl = fsi->maptbl;
 	seg = si->seg_id;
 	peb_index = ptr->peb_index;
 	log_blocks = ptr->log_blocks;
@@ -3838,6 +3840,65 @@ int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 			  leb_id, ptr->peb_type);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto fail_prepare_destination;
+	} else if (err == -EBUSY && is_unmount_in_progress(si)) {
+do_erase_now:
+		err = ssdfs_maptbl_erase_dirty_pebs_now(fsi->maptbl);
+		if (unlikely(err)) {
+			err = 0;
+			SSDFS_ERR("fail to erase dirty PEBs: err %d\n", err);
+			/* continue logic */
+		}
+
+		err = ssdfs_maptbl_add_migration_peb(fsi, leb_id, ptr->peb_type,
+						     &pebr, &end);
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find PEB for migration: "
+				  "leb_id %llu, peb_type %#x\n",
+				  leb_id, ptr->peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto fail_prepare_destination;
+		} else if (err == -EBUSY) {
+			/*
+			 * We still have pre-erased PEBs.
+			 * Let's wait more.
+			 */
+			if (number_of_tries == 0) {
+				total_pre_erase_pebs =
+					atomic_read(&tbl->total_pre_erase_pebs);
+				number_of_tries++;
+			} else {
+				int pre_erase_pebs;
+
+				pre_erase_pebs =
+					atomic_read(&tbl->total_pre_erase_pebs);
+
+				if (total_pre_erase_pebs > pre_erase_pebs &&
+				    number_of_tries > 0)
+					number_of_tries--;
+				else
+					number_of_tries++;
+
+				total_pre_erase_pebs =
+					atomic_read(&tbl->total_pre_erase_pebs);
+			}
+
+			if (number_of_tries >= SSDFS_MAX_NUMBER_OF_TRIES) {
+				err = -EFAULT;
+				SSDFS_ERR("fail to add migration PEB: "
+					  "leb_id %llu, peb_type %#x, "
+					  "err %d\n",
+					  leb_id, ptr->peb_type, err);
+				goto fail_prepare_destination;
+			} else
+				goto do_erase_now;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to add migration PEB: "
+				  "leb_id %llu, peb_type %#x, "
+				  "err %d\n",
+				  leb_id, ptr->peb_type, err);
+			goto fail_prepare_destination;
+		}
 	} else if (err == -EBUSY) {
 		DEFINE_WAIT(wait);
 
@@ -3871,8 +3932,6 @@ wait_erase_operation_end:
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto fail_prepare_destination;
 		} else if (err == -EBUSY) {
-			struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
-
 			/*
 			 * We still have pre-erased PEBs.
 			 * Let's wait more.

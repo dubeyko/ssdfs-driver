@@ -6007,6 +6007,26 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		return err;
 	}
 
+	switch (atomic_read(&fsi->global_fs_state)) {
+	case SSDFS_UNKNOWN_GLOBAL_FS_STATE:
+		if (should_cache_peb_info(peb_type)) {
+			err = ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id,
+								 pebr);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, err %d\n",
+					  leb_id, err);
+			}
+
+			return err;
+		}
+		break;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
 	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_ERROR) {
 		ssdfs_fs_error(tbl->fsi->sb,
 				__FILE__, __func__, __LINE__,

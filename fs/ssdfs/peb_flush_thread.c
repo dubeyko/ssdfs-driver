@@ -18702,6 +18702,8 @@ static inline
 int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 {
 	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_peb_info *pebi;
+	struct ssdfs_peb_mapping_table *maptbl;
 	struct ssdfs_segment_request *req;
 	int err = 0;
 
@@ -18711,6 +18713,8 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 
 	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	maptbl = si->fsi->maptbl;
 
 	err = ssdfs_mark_segment_under_finishing_migration(si);
 	if (unlikely(err)) {
@@ -18779,6 +18783,31 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index,
 			  err);
+		goto finish_method;
+	}
+
+	pebi = ssdfs_get_current_peb_locked(pebc);
+	if (IS_ERR_OR_NULL(pebi)) {
+		err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+		SSDFS_ERR("fail to get PEB object: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index, err);
+		goto finish_method;
+	}
+
+	if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
+		SSDFS_WARN("seg %llu, peb_index %u\n",
+			   pebc->parent_si->seg_id,
+			   pebc->peb_index);
+	}
+
+	err = ssdfs_peb_container_change_state(pebc);
+	ssdfs_unlock_current_peb(pebc);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change peb state: "
+			  "err %d\n", err);
 		goto finish_method;
 	}
 
@@ -19878,22 +19907,6 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  "seg %llu, peb_index %u, err %d\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index, err);
-			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-			thread_state->err = err;
-			goto finish_method;
-		}
-
-		if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
-			SSDFS_WARN("seg %llu, peb_index %u\n",
-				   pebc->parent_si->seg_id,
-				   pebc->peb_index);
-		}
-
-		err = ssdfs_peb_container_change_state(pebc);
-		if (unlikely(err)) {
-			ssdfs_unlock_current_peb(pebc);
-			SSDFS_ERR("fail to change peb state: "
-				  "err %d\n", err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
 			goto finish_method;
@@ -22432,19 +22445,6 @@ int ssdfs_process_start_migration_now_state(struct ssdfs_peb_container *pebc)
 		ssdfs_unlock_current_peb(pebc);
 
 		if (is_peb_under_migration(pebc)) {
-			err = ssdfs_mark_segment_under_finishing_migration(si);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to mark segment under "
-					  "finishing migration: "
-					  "seg %llu, peb_index %u, err %d\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index,
-					  err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				thread_state->err = err;
-				goto process_migration_failure;
-			}
-
 			/*
 			 * START_MIGRATION_NOW is requested during
 			 * the flush operation of PEB mapping table,
@@ -22455,26 +22455,13 @@ int ssdfs_process_start_migration_now_state(struct ssdfs_peb_container *pebc)
 			 * request. So, it doesn't need to request
 			 * the COMMIT_LOG_NOW here.
 			 */
-			err = ssdfs_peb_finish_migration(pebc);
+			err = __ssdfs_peb_finish_migration(pebc);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to finish migration: "
 					  "seg %llu, peb_index %u, "
 					  "err %d\n",
 					  pebc->parent_si->seg_id,
 					  pebc->peb_index, err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				thread_state->err = err;
-				goto process_migration_failure;
-			}
-
-			err = ssdfs_revert_segment_to_regular_activity(si);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to revert segment "
-					  "to regular activity: "
-					  "seg %llu, peb_index %u, err %d\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index,
-					  err);
 				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 				thread_state->err = err;
 				goto process_migration_failure;
