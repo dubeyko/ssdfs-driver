@@ -2981,9 +2981,6 @@ try_add_folio_into_request:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				folio_mark_dirty(cur_folio);
-				ssdfs_folio_start_writeback(fsi, U64_MAX,
-						    logical_offset, cur_folio);
-				ssdfs_clear_dirty_folio(cur_folio);
 
 				err =
 				    ssdfs_dirty_folios_batch_add_folio(cur_folio,
