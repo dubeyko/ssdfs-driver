@@ -2545,7 +2545,7 @@ int ssdfs_check_maptbl_cache_header(struct ssdfs_maptbl_cache_header *hdr,
 	end_leb = le64_to_cpu(hdr->end_leb);
 
 	if (start_leb > end_leb ||
-	    (prev_end_leb != U64_MAX && prev_end_leb >= start_leb)) {
+	    (prev_end_leb != U64_MAX && prev_end_leb > start_leb)) {
 		SSDFS_ERR("invalid LEB range: start_leb %llu, "
 			  "end_leb %llu, prev_end_leb %llu\n",
 			  start_leb, end_leb, prev_end_leb);
