@@ -5762,19 +5762,6 @@ ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
 	physical_index = le16_to_cpu(leb_desc.physical_index);
 	relation_index = le16_to_cpu(leb_desc.relation_index);
 
-	peb_state = pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state;
-
-	switch (peb_state) {
-	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
-		/* expected state */
-		break;
-
-	default:
-		SSDFS_ERR("invalid state %#x of source PEB\n",
-			  peb_state);
-		return -ERANGE;
-	}
-
 	err = ssdfs_maptbl_set_pre_erase_state(fdesc, physical_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to move PEB into pre-erase state: "
@@ -6217,29 +6204,6 @@ finish_consistent_case:
 			goto finish_inconsistent_case;
 		}
 
-		err = ssdfs_maptbl_get_leb_descriptor(fdesc, leb_id, &leb_desc);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to get leb descriptor: "
-				  "leb_id %llu, err %d\n",
-				  leb_id, err);
-			goto finish_inconsistent_case;
-		}
-
-		err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, pebr);
-		if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to get peb relation: "
-				  "leb_id %llu, err %d\n",
-				  leb_id, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_inconsistent_case;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to get peb relation: "
-				  "leb_id %llu, err %d\n",
-				  leb_id, err);
-			goto finish_inconsistent_case;
-		}
-
 		peb_id = cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id;
 		peb_state = cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].state;
 		if (peb_id != U64_MAX) {
@@ -6272,6 +6236,29 @@ finish_consistent_case:
 					  leb_id, peb_state, err);
 				goto finish_inconsistent_case;
 			}
+		}
+
+		err = ssdfs_maptbl_get_leb_descriptor(fdesc, leb_id, &leb_desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get leb descriptor: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			goto finish_inconsistent_case;
+		}
+
+		err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, pebr);
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to get peb relation: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_inconsistent_case;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to get peb relation: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			goto finish_inconsistent_case;
 		}
 
 finish_inconsistent_case:
@@ -8459,6 +8446,57 @@ int ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 }
 
 /*
+ * need_erase_pebs_now() - does it need to erase dirty PEBs now?
+ * @fdesc: fragment descriptor
+ */
+static inline
+bool need_erase_pebs_now(struct ssdfs_maptbl_fragment_desc *fdesc)
+{
+	u32 percentage;
+	u32 unused_lebs;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fdesc);
+	BUG_ON(!rwsem_is_locked(&fdesc->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	unused_lebs = fdesc->lebs_count;
+	unused_lebs -= fdesc->mapped_lebs;
+	unused_lebs -= fdesc->migrating_lebs;
+	unused_lebs -= fdesc->pre_erase_pebs;
+	unused_lebs -= fdesc->recovering_pebs;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("lebs_count %u, mapped_lebs %u, "
+		  "migrating_lebs %u, pre_erase_pebs %u, "
+		  "recovering_pebs %u, reserved_pebs %u, "
+		  "unused_lebs %u\n",
+		  fdesc->lebs_count, fdesc->mapped_lebs,
+		  fdesc->migrating_lebs, fdesc->pre_erase_pebs,
+		  fdesc->recovering_pebs, fdesc->reserved_pebs,
+		  unused_lebs);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unused_lebs > 0)
+		return false;
+
+	percentage = (fdesc->pre_erase_pebs * 100) / fdesc->lebs_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("lebs_count %u, pre_erase_pebs %u, "
+		  "percentage %u\n",
+		  fdesc->lebs_count,
+		  fdesc->pre_erase_pebs,
+		  percentage);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (percentage > SSDFS_PRE_ERASE_PEB_THRESHOLD_PCT)
+		return true;
+
+	return false;
+}
+
+/*
  * ssdfs_maptbl_map_leb2peb() - map LEB into PEB
  * @fsi: file system info object
  * @leb_id: LEB ID number
@@ -8573,8 +8611,7 @@ int ssdfs_maptbl_map_leb2peb(struct ssdfs_fs_info *fsi,
 
 	down_write(&fdesc->lock);
 
-	if (ssdfs_unused_lebs_in_fragment(fdesc) == 0 &&
-	    fdesc->pre_erase_pebs > 0) {
+	if (need_erase_pebs_now(fdesc)) {
 		up_write(&fdesc->lock);
 
 		err = ssdfs_maptbl_erase_dirty_pebs_now(tbl);
@@ -10696,8 +10733,7 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 
 	down_write(&fdesc->lock);
 
-	if (ssdfs_unused_lebs_in_fragment(fdesc) == 0 &&
-	    fdesc->pre_erase_pebs > 0) {
+	if (need_erase_pebs_now(fdesc)) {
 		up_write(&fdesc->lock);
 
 		err = ssdfs_maptbl_erase_dirty_pebs_now(tbl);
@@ -10858,59 +10894,6 @@ finish_add_migrating_peb:
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
-}
-
-/*
- * need_erase_peb_now() - does it need to erase PEB now?
- * @fdesc: fragment descriptor
- */
-static inline
-bool need_erase_peb_now(struct ssdfs_maptbl_fragment_desc *fdesc)
-{
-	u32 percentage;
-	u32 unused_lebs;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fdesc);
-	BUG_ON(!rwsem_is_locked(&fdesc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	percentage = (fdesc->pre_erase_pebs * 100) / fdesc->lebs_count;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("lebs_count %u, pre_erase_pebs %u, "
-		  "percentage %u\n",
-		  fdesc->lebs_count,
-		  fdesc->pre_erase_pebs,
-		  percentage);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (percentage > SSDFS_PRE_ERASE_PEB_THRESHOLD_PCT)
-		return true;
-
-	unused_lebs = fdesc->lebs_count;
-	unused_lebs -= fdesc->mapped_lebs;
-	unused_lebs -= fdesc->migrating_lebs;
-	unused_lebs -= fdesc->pre_erase_pebs;
-	unused_lebs -= fdesc->recovering_pebs;
-
-	percentage = (unused_lebs * 100) / fdesc->lebs_count;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("lebs_count %u, mapped_lebs %u, "
-		  "migrating_lebs %u, pre_erase_pebs %u, "
-		  "recovering_pebs %u, reserved_pebs %u, "
-		  "percentage %u\n",
-		  fdesc->lebs_count, fdesc->mapped_lebs,
-		  fdesc->migrating_lebs, fdesc->pre_erase_pebs,
-		  fdesc->recovering_pebs, fdesc->reserved_pebs,
-		  percentage);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (percentage <= SSDFS_UNUSED_LEB_THRESHOLD_PCT)
-		return true;
-
-	return false;
 }
 
 /*
@@ -11230,14 +11213,10 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 	struct ssdfs_snapshots_btree_info *snap_tree;
 	struct ssdfs_maptbl_fragment_desc *fdesc;
 	struct ssdfs_maptbl_peb_relation pebr;
-	struct ssdfs_maptbl_peb_descriptor *ptr;
-	struct ssdfs_erase_result res;
 	int state;
 	struct ssdfs_leb_descriptor leb_desc;
 	u16 physical_index, relation_index;
 	int consistency;
-	u64 peb_id;
-	bool need_erase = false;
 	bool peb_contains_snapshot = false;
 	int err = 0;
 
@@ -11407,9 +11386,17 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 		  peb_create_time, last_log_time);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	peb_contains_snapshot = is_ssdfs_peb_contains_snapshot(fsi, peb_type,
+	if (should_cache_peb_info(peb_type)) {
+		/*
+		 * These PEB types cannot be snapshotted.
+		 */
+		peb_contains_snapshot = false;
+	} else {
+		peb_contains_snapshot = is_ssdfs_peb_contains_snapshot(fsi,
+								peb_type,
 								peb_create_time,
 								last_log_time);
+	}
 
 	down_read(&tbl->tbl_lock);
 
@@ -11472,13 +11459,9 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 	physical_index = le16_to_cpu(leb_desc.physical_index);
 	relation_index = le16_to_cpu(leb_desc.relation_index);
 
-	need_erase = need_erase_peb_now(fdesc);
-
 	if (peb_contains_snapshot) {
 		struct ssdfs_peb_timestamps peb2time;
 		struct ssdfs_btree_search *search = NULL;
-
-		need_erase = false;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("set snapshot state: "
@@ -11550,83 +11533,6 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 				  leb_id, err);
 			goto finish_fragment_change;
 		}
-	} else if (need_erase) {
-		err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, &pebr);
-		if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to get peb relation: "
-				  "leb_id %llu, err %d\n",
-				  leb_id, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_fragment_change;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to get peb relation: "
-				  "leb_id %llu, err %d\n",
-				  leb_id, err);
-			goto finish_fragment_change;
-		}
-
-		err = ssdfs_maptbl_set_source_state(fdesc, relation_index,
-					    SSDFS_MAPTBL_UNKNOWN_PEB_STATE);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to move PEB into source state: "
-				  "index %u, err %d\n",
-				  relation_index, err);
-			goto finish_fragment_change;
-		}
-
-		err = __ssdfs_maptbl_exclude_migration_peb(fdesc, leb_id);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to change leb descriptor: "
-				  "leb_id %llu, err %d\n",
-				  leb_id, err);
-			goto finish_fragment_change;
-		}
-
-		err = ssdfs_maptbl_set_under_erase_state(fdesc, physical_index);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to set PEB as under erase state: "
-				  "index %u, err %d\n",
-				  physical_index, err);
-			goto finish_fragment_change;
-		}
-
-		ptr = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
-		peb_id = ptr->peb_id;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("erase peb_id %llu now\n",
-			  peb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		SSDFS_ERASE_RESULT_INIT(fdesc->fragment_id, physical_index,
-					peb_id, SSDFS_ERASE_RESULT_UNKNOWN,
-					&res);
-
-		up_write(&fdesc->lock);
-		err = ssdfs_maptbl_erase_peb(fsi, &res);
-		down_write(&fdesc->lock);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to erase: "
-				  "peb_id %llu, err %d\n",
-				  peb_id, err);
-			ssdfs_maptbl_set_pre_erase_state(fdesc, physical_index);
-			goto finish_fragment_change;
-		}
-
-		switch (res.state) {
-		case SSDFS_ERASE_DONE:
-			/* expected state */
-			break;
-
-		default:
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to erase: peb_id %llu\n",
-				  peb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-			break;
-		}
 	} else {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("set pre_erase state: "
@@ -11679,15 +11585,6 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 		  atomic_read(&tbl->min_pre_erase_pebs),
 		  atomic_read(&tbl->total_pre_erase_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	if (need_erase) {
-		err = ssdfs_maptbl_correct_dirty_peb(tbl, fdesc, &res);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to correct dirty PEB's state: "
-				  "err %d\n", err);
-			goto finish_fragment_change;
-		}
-	}
 
 	wake_up(&tbl->wait_queue);
 

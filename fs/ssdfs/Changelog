@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.77 [June 06, 2026]
+    (*) Fix logic of resolving PEB's pre-deleted state.
+
 v.5.76 [June 05, 2026]
     (*) Fix multiple PEB mapping table cache issues.
 

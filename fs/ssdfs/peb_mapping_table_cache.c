@@ -1409,12 +1409,6 @@ int __ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cache || !pebr);
-	BUG_ON(atomic_read(&cache->bytes_count) == 0);
-	BUG_ON(folio_batch_count(&cache->batch) == 0);
-	BUG_ON(atomic_read(&cache->bytes_count) >
-		(folio_batch_count(&cache->batch) * PAGE_SIZE));
-	BUG_ON(atomic_read(&cache->bytes_count) <=
-		((folio_batch_count(&cache->batch) - 1) * PAGE_SIZE));
 
 	SSDFS_DBG("cache %p, leb_id %llu, pebr %p\n",
 		  cache, leb_id, pebr);
@@ -1451,12 +1445,6 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cache || !pebr);
-	BUG_ON(atomic_read(&cache->bytes_count) == 0);
-	BUG_ON(folio_batch_count(&cache->batch) == 0);
-	BUG_ON(atomic_read(&cache->bytes_count) >
-		(folio_batch_count(&cache->batch) * PAGE_SIZE));
-	BUG_ON(atomic_read(&cache->bytes_count) <=
-		((folio_batch_count(&cache->batch) - 1) * PAGE_SIZE));
 
 	SSDFS_DBG("cache %p, leb_id %llu, pebr %p\n",
 		  cache, leb_id, pebr);
