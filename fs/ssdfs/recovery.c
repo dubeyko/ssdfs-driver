@@ -21,7 +21,7 @@
  */
 
 #include <linux/slab.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/blkdev.h>
 
 #include "peb_mapping_queue.h"
@@ -2593,7 +2593,7 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 	bytes_count = le32_to_cpu(meta_desc->size);
 
 	if (bytes_count == 0 ||
-	    bytes_count > (u32)PAGEVEC_SIZE * PAGE_SIZE) {
+	    bytes_count > (u32)FOLIO_BATCH_SIZE * PAGE_SIZE) {
 		SSDFS_ERR("invalid maptbl cache size %u\n",
 			  bytes_count);
 		err = -EFBIG;
@@ -2604,9 +2604,9 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 
 	folios_count = (bytes_count + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
-	if (folios_count > PAGEVEC_SIZE) {
+	if (folios_count > FOLIO_BATCH_SIZE) {
 		SSDFS_ERR("folios_count %u exceeds batch capacity %u\n",
-			  folios_count, (unsigned)PAGEVEC_SIZE);
+			  folios_count, (unsigned)FOLIO_BATCH_SIZE);
 		err = -ERANGE;
 		goto finish_read_maptbl_cache;
 	}

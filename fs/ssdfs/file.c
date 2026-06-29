@@ -18,7 +18,7 @@
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/writeback.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/blkdev.h>
 
 #include "peb_mapping_queue.h"
@@ -160,7 +160,7 @@ int ssdfs_allocate_inline_file_buffer(struct inode *inode)
 			ssdfs_file_kzalloc(inline_capacity, GFP_KERNEL);
 		if (!ii->inline_file) {
 			SSDFS_ERR("fail to allocate inline buffer: "
-				  "ino %lu, inline_capacity %zu\n",
+				  "ino %llu, inline_capacity %zu\n",
 				  inode->i_ino, inline_capacity);
 			return -ENOMEM;
 		}
@@ -424,7 +424,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 	struct ssdfs_inode_info *ii;
 	struct folio *folio;
 	struct ssdfs_segment_request *req = NULL;
-	ino_t ino;
+	u64 ino;
 	loff_t logical_offset;
 	loff_t data_bytes = 0;
 	loff_t file_size;
@@ -432,7 +432,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, read_mode %#x\n",
+	SSDFS_DBG("ino %llu, read_mode %#x\n",
 		  ino, read_mode);
 
 	BUG_ON(folio_batch_count(batch) == 0);
@@ -572,7 +572,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 		err = ssdfs_request_add_folio(folio, 0, req);
 		if (err) {
 			SSDFS_ERR("fail to add folio into request: "
-				  "ino %lu, folio_index %lu, err %d\n",
+				  "ino %llu, folio_index %lu, err %d\n",
 				  ino, folio->index, err);
 			goto fail_read_block;
 		}
@@ -606,7 +606,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 		err = SSDFS_WAIT_COMPLETION(&req->result.wait);
 		if (unlikely(err)) {
 			SSDFS_ERR("read request failed: "
-				  "ino %lu, logical_offset %llu, "
+				  "ino %llu, logical_offset %llu, "
 				  "size %u, err %d\n",
 				  ino, (u64)logical_offset,
 				  (u32)data_bytes, err);
@@ -615,7 +615,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 
 		if (req->result.err) {
 			SSDFS_ERR("read request failed: "
-				  "ino %lu, logical_offset %llu, "
+				  "ino %llu, logical_offset %llu, "
 				  "size %u, err %d\n",
 				  ino, (u64)logical_offset,
 				  (u32)data_bytes,
@@ -678,7 +678,7 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, folio_index %lu, "
+	SSDFS_DBG("ino %llu, folio_index %lu, "
 		  "folio_size %zu\n",
 		  file_inode(file)->i_ino, folio->index,
 		  folio_size(folio));
@@ -749,7 +749,7 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 
 	if (processed_bytes != fsi->pagesize) {
 		SSDFS_ERR("invalid block batch: "
-			  "ino %lu, folio_index %lu, "
+			  "ino %llu, folio_index %lu, "
 			  "folio_size %zu, processed_bytes %u, "
 			  "pagesize %u\n",
 			  file_inode(file)->i_ino, folio->index,
@@ -1081,7 +1081,7 @@ int ssdfs_readahead_block(struct ssdfs_readahead_env *env)
 	struct ssdfs_fs_info *fsi;
 	struct inode *inode;
 	struct folio *folio;
-	ino_t ino;
+	u64 ino;
 	pgoff_t index;
 	loff_t logical_offset;
 	loff_t data_bytes;
@@ -1237,7 +1237,7 @@ void ssdfs_readahead(struct readahead_control *rac)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, nr_pages %u\n",
+	SSDFS_DBG("ino %llu, nr_pages %u\n",
 		  file_inode(rac->file)->i_ino,
 		  readahead_count(rac));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1407,12 +1407,12 @@ finish_requests_processing:
 #ifdef CONFIG_SSDFS_DEBUG
 	if (err) {
 		SSDFS_DBG("readahead fails: "
-			  "ino %lu, nr_pages %u, err %d\n",
+			  "ino %llu, nr_pages %u, err %d\n",
 			  file_inode(rac->file)->i_ino,
 			  readahead_count(rac), err);
 	} else {
 		SSDFS_DBG("readahead finished: "
-			  "ino %lu, nr_pages %u, err %d\n",
+			  "ino %llu, nr_pages %u, err %d\n",
 			  file_inode(rac->file)->i_ino,
 			  readahead_count(rac), err);
 	}
@@ -1439,7 +1439,7 @@ static ssize_t ssdfs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	ssize_t res = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, pos %llu, iter_bytes %zu\n",
+	SSDFS_DBG("ino %llu, pos %llu, iter_bytes %zu\n",
 		  inode->i_ino, iocb->ki_pos, iter_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2242,7 +2242,7 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 	struct inode *inode;
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_fs_info *fsi;
-	ino_t ino;
+	u64 ino;
 	u64 logical_offset;
 	u32 data_bytes;
 	int err;
@@ -2277,7 +2277,7 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 	data_bytes = batch->requested_extent.data_bytes;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, logical_offset %llu, "
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2298,7 +2298,7 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 
 	if (err) {
 		SSDFS_ERR("fail to write folio async: "
-			  "ino %lu, folio_index %llu, err %d\n",
+			  "ino %llu, folio_index %llu, err %d\n",
 			  ino, (u64)folio->index, err);
 		return err;
 	}
@@ -2315,7 +2315,7 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 	struct inode *inode;
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_fs_info *fsi;
-	ino_t ino;
+	u64 ino;
 	u64 logical_offset;
 	u32 data_bytes;
 	int err;
@@ -2350,7 +2350,7 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 	data_bytes = batch->requested_extent.data_bytes;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, logical_offset %llu, "
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2371,7 +2371,7 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 
 	if (err) {
 		SSDFS_ERR("fail to write folio sync: "
-			  "ino %lu, folio_index %llu, err %d\n",
+			  "ino %llu, folio_index %llu, err %d\n",
 			  ino, (u64)folio->index, err);
 		return err;
 	}
@@ -2388,7 +2388,7 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 	struct inode *inode;
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_fs_info *fsi;
-	ino_t ino;
+	u64 ino;
 	u64 logical_offset;
 	u32 data_bytes;
 	int err;
@@ -2423,7 +2423,7 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 	data_bytes = batch->requested_extent.data_bytes;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, logical_offset %llu, "
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2446,7 +2446,7 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 
 	if (err) {
 		SSDFS_ERR("fail to write extent async: "
-			  "ino %lu, folio_index %llu, err %d\n",
+			  "ino %llu, folio_index %llu, err %d\n",
 			  ino, (u64)folio->index, err);
 		return err;
 	}
@@ -2463,7 +2463,7 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 	struct inode *inode;
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_fs_info *fsi;
-	ino_t ino;
+	u64 ino;
 	u64 logical_offset;
 	u32 data_bytes;
 	int err;
@@ -2498,7 +2498,7 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 	data_bytes = batch->requested_extent.data_bytes;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, logical_offset %llu, "
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2521,7 +2521,7 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 
 	if (err) {
 		SSDFS_ERR("fail to write folio sync: "
-			  "ino %lu, folio_index %llu, err %d\n",
+			  "ino %llu, folio_index %llu, err %d\n",
 			  ino, (u64)folio->index, err);
 		return err;
 	}
@@ -2688,7 +2688,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 	struct address_space *mapping;
 	struct folio *folio;
 	struct ssdfs_content_block *blk_state;
-	ino_t ino;
+	u64 ino;
 	u64 logical_offset;
 	u32 data_bytes;
 	u64 start_index;
@@ -2718,7 +2718,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 	data_bytes = batch->requested_extent.data_bytes;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, logical_offset %llu, "
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 
@@ -2759,7 +2759,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 
 		if (block_bytes != fsi->pagesize) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("ino %lu, logical_offset %llu, "
+			SSDFS_DBG("ino %llu, logical_offset %llu, "
 				  "data_bytes %u, blk_index %d, "
 				  "block_bytes %zu, pagesize %u\n",
 				  ino, logical_offset, data_bytes, i,
@@ -2787,7 +2787,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 			if (start_index != index) {
 				err = -ERANGE;
 				SSDFS_WARN("block batch hasn't first folio: "
-					   "ino %lu, logical_offset %llu, "
+					   "ino %llu, logical_offset %llu, "
 					   "data_bytes %u, blk_index %d, "
 					   "block_bytes %zu, pagesize %u, "
 					   "start_index %llu, index %lu\n",
@@ -2875,7 +2875,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 							batch, req_type);
 		if (err) {
 			SSDFS_ERR("fail to write async: "
-				  "ino %lu, err %d\n",
+				  "ino %llu, err %d\n",
 				  ino, err);
 			goto finish_issue_write_request;
 		}
@@ -2884,7 +2884,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 						     batch, req_type);
 		if (err) {
 			SSDFS_ERR("fail to write sync: "
-				  "ino %lu, err %d\n",
+				  "ino %llu, err %d\n",
 				  ino, err);
 			goto finish_issue_write_request;
 		}
@@ -2925,14 +2925,14 @@ int __ssdfs_writepages(struct folio *folio, u32 len,
 	struct inode *inode = folio->mapping->host;
 	struct address_space *mapping = folio->mapping;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	ino_t ino = inode->i_ino;
+	u64 ino = inode->i_ino;
 	pgoff_t start_index;
 	pgoff_t index = folio->index;
 	loff_t logical_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, folio_index %llu, len %u, sync_mode %#x\n",
+	SSDFS_DBG("ino %llu, folio_index %llu, len %u, sync_mode %#x\n",
 		  ino, (u64)index, len, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2988,7 +2988,7 @@ try_add_folio_into_request:
 									batch);
 				if (err) {
 					SSDFS_ERR("fail to add folio into batch: "
-						  "ino %lu, folio_index %lu, err %d\n",
+						  "ino %llu, folio_index %lu, err %d\n",
 						  ino, index, err);
 					goto fail_write_folios;
 				}
@@ -3013,7 +3013,7 @@ try_add_folio_into_request:
 								 batch);
 			if (err) {
 				SSDFS_ERR("fail to add folio into batch: "
-					  "ino %lu, folio_index %lu, err %d\n",
+					  "ino %llu, folio_index %lu, err %d\n",
 					  ino, index, err);
 				goto fail_write_folios;
 			}
@@ -3038,7 +3038,7 @@ try_add_folio_into_request:
 							 batch);
 			if (err) {
 				SSDFS_ERR("fail to add folio into batch: "
-					  "ino %lu, folio_index %lu, err %d\n",
+					  "ino %llu, folio_index %lu, err %d\n",
 					  ino, index, err);
 				goto fail_write_folios;
 			}
@@ -3180,7 +3180,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 	struct inode *inode = folio->mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
-	ino_t ino = inode->i_ino;
+	u64 ino = inode->i_ino;
 	pgoff_t index = folio->index;
 	loff_t i_size = i_size_read(inode);
 	pgoff_t end_index = i_size >> PAGE_SHIFT;
@@ -3195,7 +3195,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, page_index %llu, "
+	SSDFS_DBG("ino %llu, page_index %llu, "
 		  "i_size %llu, len %d\n",
 		  ino, (u64)index,
 		  (u64)i_size, len);
@@ -3296,7 +3296,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 			ssdfs_fs_error(inode->i_sb, __FILE__,
 					__func__, __LINE__,
 					"fail to write block: "
-					"ino %lu, page_index %llu, err %d\n",
+					"ino %llu, page_index %llu, err %d\n",
 					ino, (u64)index, err);
 			goto discard_folio;
 		}
@@ -3315,7 +3315,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 			ssdfs_fs_error(inode->i_sb, __FILE__,
 					__func__, __LINE__,
 					"fail to write block: "
-					"ino %lu, page_index %llu, err %d\n",
+					"ino %llu, page_index %llu, err %d\n",
 					ino, (u64)index, err);
 			goto discard_folio;
 		}
@@ -3326,7 +3326,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 			ssdfs_fs_error(inode->i_sb, __FILE__,
 					__func__, __LINE__,
 					"fail to write block: "
-					"ino %lu, page_index %llu, err %d\n",
+					"ino %llu, page_index %llu, err %d\n",
 					ino, (u64)index, err);
 			goto discard_folio;
 		}
@@ -3338,7 +3338,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 	if ((offset_inside_block + folio_size(folio)) < fsi->pagesize) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("NOT WHOLE BLOCK IS PROCESSED: "
-			  "ino %lu, cur_blk %llu, "
+			  "ino %llu, cur_blk %llu, "
 			  "page_index %llu, "
 			  "offset_inside_block %u, "
 			  "folio_size %zu, block_size %u\n",
@@ -3376,7 +3376,7 @@ int ssdfs_writepages(struct address_space *mapping,
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
-	ino_t ino = inode->i_ino;
+	u64 ino = inode->i_ino;
 	struct ssdfs_segment_request_pool pool;
 	struct ssdfs_dirty_folios_batch *batch;
 	struct folio_batch fvec;
@@ -3391,7 +3391,7 @@ int ssdfs_writepages(struct address_space *mapping,
 	int ret = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, nr_to_write %lu, "
+	SSDFS_DBG("ino %llu, nr_to_write %lu, "
 		  "range_start %llu, range_end %llu, "
 		  "writeback_index %llu, "
 		  "wbc->range_cyclic %#x\n",
@@ -3458,7 +3458,7 @@ int ssdfs_writepages(struct address_space *mapping,
 						&pool, batch,
 						SSDFS_EXTENT_BASED_REQUEST);
 				if (ret < 0) {
-					SSDFS_ERR("ino %lu, nr_to_write %lu, "
+					SSDFS_ERR("ino %llu, nr_to_write %lu, "
 						  "range_start %llu, "
 						  "range_end %llu, "
 						  "writeback_index %llu, "
@@ -3661,7 +3661,7 @@ continue_unlock:
 			ret = ssdfs_issue_write_request(wbc, &pool, batch,
 						SSDFS_EXTENT_BASED_REQUEST);
 			if (ret < 0) {
-				SSDFS_ERR("ino %lu, nr_to_write %lu, "
+				SSDFS_ERR("ino %llu, nr_to_write %lu, "
 					  "range_start %llu, range_end %llu, "
 					  "writeback_index %llu, "
 					  "wbc->range_cyclic %#x, "
@@ -3713,7 +3713,7 @@ out_writepages:
 		mapping->writeback_index = done_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, nr_to_write %lu, "
+	SSDFS_DBG("ino %llu, nr_to_write %lu, "
 		  "range_whole %d, done_index %llu, done %#x, "
 		  "range_start %llu, range_end %llu, "
 		  "writeback_index %llu\n",
@@ -3750,7 +3750,7 @@ struct folio *ssdfs_get_block_folio(struct file *file,
 	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, index %lu\n",
+	SSDFS_DBG("ino %llu, index %lu\n",
 		  inode->i_ino, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -3812,7 +3812,7 @@ void ssdfs_folio_test_and_set_if_new(struct inode *inode,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!inode || !folio);
 
-	SSDFS_DBG("ino %lu, folio_index %lu\n",
+	SSDFS_DBG("ino %llu, folio_index %lu\n",
 		  inode->i_ino, folio->index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -3870,7 +3870,7 @@ int ssdfs_process_whole_block(struct file *file,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!requested_folio);
 
-	SSDFS_DBG("ino %lu, pos %llu, len %u\n",
+	SSDFS_DBG("ino %llu, pos %llu, len %u\n",
 		  inode->i_ino, pos, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -3987,12 +3987,12 @@ int ssdfs_write_begin_inline_file(struct file *file,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, pos %llu, len %u\n",
+	SSDFS_DBG("ino %llu, pos %llu, len %u\n",
 		  inode->i_ino, pos, len);
 
 	if (!can_file_be_inline(inode, i_size_read(inode))) {
 		SSDFS_ERR("not inline file: "
-			  "ino %lu, pos %llu, "
+			  "ino %llu, pos %llu, "
 			  "len %u, file size %llu\n",
 			  inode->i_ino, pos, len,
 			  (u64)i_size_read(inode));
@@ -4046,7 +4046,7 @@ int ssdfs_write_begin_inline_file(struct file *file,
 					pos, len, false, 0);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to process thw whole block: "
-			  "ino %lu, pos %llu, len %u, err %d\n",
+			  "ino %llu, pos %llu, len %u, err %d\n",
 			  inode->i_ino, pos, len, err);
 		return err;
 	}
@@ -4073,7 +4073,7 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, pos %llu, len %u\n",
+	SSDFS_DBG("ino %llu, pos %llu, len %u\n",
 		  inode->i_ino, pos, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -4169,7 +4169,7 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 					pos, len, is_new_blk, extra_fgp);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to process the whole block: "
-			  "ino %lu, pos %llu, len %u, err %d\n",
+			  "ino %llu, pos %llu, len %u, err %d\n",
 			  inode->i_ino, pos, len, err);
 		return ERR_PTR(err);
 	}
@@ -4199,7 +4199,7 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, pos %llu, len %u\n",
+	SSDFS_DBG("ino %llu, pos %llu, len %u\n",
 		  inode->i_ino, pos, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -4218,7 +4218,7 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 	file = iocb ? iocb->ki_filp : NULL;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, large_folios_support %#x\n",
+	SSDFS_DBG("ino %llu, large_folios_support %#x\n",
 		  inode->i_ino,
 		  mapping_large_folio_support(mapping));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -4240,7 +4240,7 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 			goto try_regular_write;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to process inline file: "
-				  "ino %lu, pos %llu, len %u, err %d\n",
+				  "ino %llu, pos %llu, len %u, err %d\n",
 				  inode->i_ino, pos, len, err);
 			goto finish_write_begin;
 		} else
@@ -4279,7 +4279,7 @@ try_regular_write:
 			if (IS_ERR_OR_NULL(folio)) {
 				err = IS_ERR(folio) ? PTR_ERR(folio) : -ERANGE;
 				SSDFS_ERR("fail to process folio: "
-					  "ino %lu, pos %llu, err %d\n",
+					  "ino %llu, pos %llu, err %d\n",
 					  inode->i_ino, cur_pos, err);
 				goto finish_write_begin;
 			}
@@ -4323,7 +4323,7 @@ int ssdfs_write_end(const struct kiocb *iocb,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, pos %llu, len %u, copied %u, "
+	SSDFS_DBG("ino %llu, pos %llu, len %u, copied %u, "
 		  "index %lu, start %u, end %u, old_size %llu, "
 		  "folio_size %zu, need_add_block %#x, "
 		  "folio_test_dirty %#x\n",
@@ -4356,7 +4356,7 @@ int ssdfs_write_end(const struct kiocb *iocb,
 		if (offset_inside_folio == 0) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("ACCOUNT UPDATED USER DATA PAGES: "
-				  "ino %lu, pos %llu, len %u, "
+				  "ino %llu, pos %llu, len %u, "
 				  "folio_index %lu\n",
 				  inode->i_ino, pos, len,
 				  folio->index);
@@ -4421,7 +4421,7 @@ int ssdfs_direct_IO_inline_read(struct kiocb *iocb, struct iov_iter *iter)
 	ssize_t done = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, pos %llu, count %zu, "
+	SSDFS_DBG("ino %llu, pos %llu, count %zu, "
 		  "isize %llu, inline_capacity %zd\n",
 		  inode->i_ino, pos, (size_t)count,
 		  isize, inline_capacity);
@@ -4500,7 +4500,7 @@ static int ssdfs_direct_read_block(struct kiocb *iocb,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, pos %llu, data_bytes %u\n",
+	SSDFS_DBG("ino %llu, pos %llu, data_bytes %u\n",
 		  inode->i_ino, pos, data_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -4512,7 +4512,7 @@ static int ssdfs_direct_read_block(struct kiocb *iocb,
 	if (IS_ERR_OR_NULL(folio)) {
 		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
 		SSDFS_ERR("fail to allocate bounce folio: "
-			  "ino %lu, pos %llu, err %d\n",
+			  "ino %llu, pos %llu, err %d\n",
 			  inode->i_ino, pos, err);
 		return err;
 	}
@@ -4521,7 +4521,7 @@ static int ssdfs_direct_read_block(struct kiocb *iocb,
 	if (IS_ERR_OR_NULL(req)) {
 		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 		SSDFS_ERR("fail to allocate segment request: "
-			  "ino %lu, pos %llu, err %d\n",
+			  "ino %llu, pos %llu, err %d\n",
 			  inode->i_ino, pos, err);
 		goto free_folio;
 	}
@@ -4540,7 +4540,7 @@ static int ssdfs_direct_read_block(struct kiocb *iocb,
 	err = ssdfs_request_add_folio(folio, 0, req);
 	if (err) {
 		SSDFS_ERR("fail to add folio into request: "
-			  "ino %lu, pos %llu, err %d\n",
+			  "ino %llu, pos %llu, err %d\n",
 			  inode->i_ino, pos, err);
 		goto cleanup;
 	}
@@ -4555,7 +4555,7 @@ static int ssdfs_direct_read_block(struct kiocb *iocb,
 		goto copy_to_user;
 	} else if (err) {
 		SSDFS_ERR("fail to read block: "
-			  "ino %lu, pos %llu, err %d\n",
+			  "ino %llu, pos %llu, err %d\n",
 			  inode->i_ino, pos, err);
 		goto cleanup;
 	}
@@ -4563,7 +4563,7 @@ static int ssdfs_direct_read_block(struct kiocb *iocb,
 	err = SSDFS_WAIT_COMPLETION(&req->result.wait);
 	if (unlikely(err)) {
 		SSDFS_ERR("read request failed: "
-			  "ino %lu, pos %llu, err %d\n",
+			  "ino %llu, pos %llu, err %d\n",
 			  inode->i_ino, pos, err);
 		goto cleanup;
 	}
@@ -4571,7 +4571,7 @@ static int ssdfs_direct_read_block(struct kiocb *iocb,
 	if (req->result.err) {
 		err = req->result.err;
 		SSDFS_ERR("read request result failed: "
-			  "ino %lu, pos %llu, err %d\n",
+			  "ino %llu, pos %llu, err %d\n",
 			  inode->i_ino, pos, err);
 		goto cleanup;
 	}
@@ -4581,7 +4581,7 @@ copy_to_user:
 	if (copied != data_bytes) {
 		err = -EFAULT;
 		SSDFS_ERR("fail to copy folio to iter: "
-			  "ino %lu, pos %llu, data_bytes %u, copied %zu\n",
+			  "ino %llu, pos %llu, data_bytes %u, copied %zu\n",
 			  inode->i_ino, pos, data_bytes, copied);
 	}
 
@@ -4629,7 +4629,7 @@ static int ssdfs_direct_write_block(struct kiocb *iocb,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, pos %llu, data_bytes %u\n",
+	SSDFS_DBG("ino %llu, pos %llu, data_bytes %u\n",
 		  inode->i_ino, pos, data_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -4637,7 +4637,7 @@ static int ssdfs_direct_write_block(struct kiocb *iocb,
 				&folio, &fsdata);
 	if (err) {
 		SSDFS_ERR("fail to begin write: "
-			  "ino %lu, pos %llu, data_bytes %u, err %d\n",
+			  "ino %llu, pos %llu, data_bytes %u, err %d\n",
 			  inode->i_ino, pos, data_bytes, err);
 		return err;
 	}
@@ -4669,14 +4669,14 @@ static int ssdfs_direct_write_block(struct kiocb *iocb,
 				  (unsigned)copied_from_iter, folio, fsdata);
 	if (written < 0) {
 		SSDFS_ERR("fail to end write: "
-			  "ino %lu, pos %llu, data_bytes %u, err %d\n",
+			  "ino %llu, pos %llu, data_bytes %u, err %d\n",
 			  inode->i_ino, pos, data_bytes, written);
 		return written;
 	}
 
 	if (written == 0) {
 		SSDFS_ERR("zero bytes written: "
-			  "ino %lu, pos %llu, data_bytes %u\n",
+			  "ino %llu, pos %llu, data_bytes %u\n",
 			  inode->i_ino, pos, data_bytes);
 		return -EIO;
 	}
@@ -4686,7 +4686,7 @@ static int ssdfs_direct_write_block(struct kiocb *iocb,
 					   pos + fsi->pagesize - 1);
 	if (err) {
 		SSDFS_ERR("fail to writeback block: "
-			  "ino %lu, pos %llu, err %d\n",
+			  "ino %llu, pos %llu, err %d\n",
 			  inode->i_ino, pos, err);
 		return err;
 	}
@@ -4717,7 +4717,7 @@ static ssize_t ssdfs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, pos %llu, count %zu, type %#x, rw %u\n",
+	SSDFS_DBG("ino %llu, pos %llu, count %zu, type %#x, rw %u\n",
 		  inode->i_ino, pos, (size_t)count,
 		  iov_iter_type(iter),
 		  (unsigned)iov_iter_rw(iter));
@@ -4792,8 +4792,8 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, start %llu, end %llu, datasync %#x\n",
-		  (unsigned long)inode->i_ino, (unsigned long long)start,
+	SSDFS_DBG("ino %llu, start %llu, end %llu, datasync %#x\n",
+		  inode->i_ino, (unsigned long long)start,
 		  (unsigned long long)end, datasync);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -4805,9 +4805,9 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	err = filemap_write_and_wait_range(inode->i_mapping, start, end);
 	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fsync failed: ino %lu, start %llu, "
+		SSDFS_DBG("fsync failed: ino %llu, start %llu, "
 			  "end %llu, err %d\n",
-			  (unsigned long)inode->i_ino,
+			  inode->i_ino,
 			  (unsigned long long)start,
 			  (unsigned long long)end,
 			  err);
@@ -4823,9 +4823,9 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	err = ssdfs_sync_metadata(fsi);
 	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("metadata flush failed: ino %lu, start %llu, "
+		SSDFS_DBG("metadata flush failed: ino %llu, start %llu, "
 			  "end %llu, err %d\n",
-			  (unsigned long)inode->i_ino,
+			  inode->i_ino,
 			  (unsigned long long)start,
 			  (unsigned long long)end,
 			  err);
@@ -4845,7 +4845,7 @@ static int ssdfs_file_open(struct inode *inode, struct file *filp)
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = fscrypt_file_open(inode, filp);

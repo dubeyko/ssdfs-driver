@@ -16,7 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/fscrypt.h>
 
 #include "peb_mapping_queue.h"
@@ -33,7 +33,7 @@
 static int ssdfs_get_context(struct inode *inode, void *ctx, size_t len)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, len %zu\n", (unsigned long)inode->i_ino, len);
+	SSDFS_DBG("ino %llu, len %zu\n", inode->i_ino, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return ssdfs_getxattr(inode, SSDFS_ENCRYPTION_XATTR_ID,
@@ -51,7 +51,7 @@ static int ssdfs_set_fscrypt_context(struct inode *inode, const void *ctx,
 				     size_t len, void *fs_data)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, len %zu\n", (unsigned long)inode->i_ino, len);
+	SSDFS_DBG("ino %llu, len %zu\n", inode->i_ino, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return ssdfs_setxattr(inode, SSDFS_ENCRYPTION_XATTR_ID,

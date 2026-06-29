@@ -26,7 +26,7 @@
 #include <linux/mount.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/fs_parser.h>
 #include <linux/fs_context.h>
 

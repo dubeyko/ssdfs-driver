@@ -16,7 +16,7 @@
 #include <linux/vmalloc.h>
 #include <linux/random.h>
 #include <linux/lz4.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"

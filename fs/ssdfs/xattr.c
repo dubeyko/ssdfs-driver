@@ -22,7 +22,7 @@
 
 #include <linux/kernel.h>
 #include <linux/rwsem.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/sched/signal.h>
 
 #include "peb_mapping_queue.h"
@@ -617,7 +617,7 @@ ssize_t ssdfs_listxattr_inline_tree(struct inode *inode,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, buffer %p, size %zu\n",
+	SSDFS_DBG("ino %llu, buffer %p, size %zu\n",
 		  inode->i_ino, buffer, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -642,13 +642,13 @@ ssize_t ssdfs_listxattr_inline_tree(struct inode *inode,
 	if (err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to extract inline xattr: "
-			  "ino %lu\n",
+			  "ino %llu\n",
 			  inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_tree_processing;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to extract inline xattr: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  inode->i_ino, err);
 		goto finish_tree_processing;
 	}
@@ -726,7 +726,7 @@ ssize_t ssdfs_listxattr_generic_tree(struct inode *inode,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, buffer %p, size %zu\n",
+	SSDFS_DBG("ino %llu, buffer %p, size %zu\n",
 		  inode->i_ino, buffer, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -764,7 +764,7 @@ finish_get_start_hash:
 		err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to extract start hash: "
-			  "ino %lu\n",
+			  "ino %llu\n",
 			  inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto clean_up;
@@ -935,7 +935,7 @@ ssize_t ssdfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, buffer %p, size %zu\n",
+	SSDFS_DBG("ino %llu, buffer %p, size %zu\n",
 		  inode->i_ino, buffer, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -950,7 +950,7 @@ ssize_t ssdfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	default:
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("xattrs tree is absent: "
-			  "ino %lu\n",
+			  "ino %llu\n",
 			  inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
@@ -1339,16 +1339,14 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("inode %lu hasn't xattr %s\n",
-				  (unsigned long)inode->i_ino,
-				  name);
+			SSDFS_DBG("inode %llu hasn't xattr %s\n",
+				  inode->i_ino, name);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto xattr_is_not_available;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the xattr: "
-				  "inode %lu, name %s\n",
-				  (unsigned long)inode->i_ino,
-				  name);
+				  "inode %llu, name %s\n",
+				  inode->i_ino, name);
 			goto xattr_is_not_available;
 		}
 
@@ -1483,8 +1481,8 @@ finish_search_xattr:
 		err = -ENODATA;
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("xattrs tree is absent: "
-			  "ino %lu\n",
-			  (unsigned long)inode->i_ino);
+			  "ino %llu\n",
+			  inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		break;
 	}
@@ -1560,7 +1558,7 @@ int __ssdfs_setxattr(struct inode *inode, int name_index, const char *name,
 			err = ssdfs_xattrs_tree_create(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to create the xattrs tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto finish_create_xattrs_tree;
 			}
@@ -1603,13 +1601,13 @@ finish_create_xattrs_tree:
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to remove xattr: "
-				  "ino %lu, name %s, err %d\n",
+				  "ino %llu, name %s, err %d\n",
 				  inode->i_ino, name, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto clean_up;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to remove xattr: "
-				  "ino %lu, name %s, err %d\n",
+				  "ino %llu, name %s, err %d\n",
 				  inode->i_ino, name, err);
 			goto clean_up;
 		}
@@ -1623,13 +1621,13 @@ finish_create_xattrs_tree:
 		if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to create xattr: "
-				  "ino %lu, name %s, err %d\n",
+				  "ino %llu, name %s, err %d\n",
 				  inode->i_ino, name, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto clean_up;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create xattr: "
-				  "ino %lu, name %s, err %d\n",
+				  "ino %llu, name %s, err %d\n",
 				  inode->i_ino, name, err);
 			goto clean_up;
 		}
@@ -1643,13 +1641,13 @@ finish_create_xattrs_tree:
 		if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to replace xattr: "
-				  "ino %lu, name %s, err %d\n",
+				  "ino %llu, name %s, err %d\n",
 				  inode->i_ino, name, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto clean_up;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to replace xattr: "
-				  "ino %lu, name %s, err %d\n",
+				  "ino %llu, name %s, err %d\n",
 				  inode->i_ino, name, err);
 			goto clean_up;
 		}
@@ -1662,12 +1660,12 @@ finish_create_xattrs_tree:
 			err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no requested xattr in the tree: "
-				  "ino %lu, name %s\n",
+				  "ino %llu, name %s\n",
 				  inode->i_ino, name);
 #endif /* CONFIG_SSDFS_DEBUG */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to remove xattr: "
-				  "ino %lu, name %s, err %d\n",
+				  "ino %llu, name %s, err %d\n",
 				  inode->i_ino, name, err);
 			goto clean_up;
 		}
@@ -1683,13 +1681,13 @@ finish_create_xattrs_tree:
 		if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to create xattr: "
-				  "ino %lu, name %s, err %d\n",
+				  "ino %llu, name %s, err %d\n",
 				  inode->i_ino, name, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto clean_up;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create xattr: "
-				  "ino %lu, name %s, err %d\n",
+				  "ino %llu, name %s, err %d\n",
 				  inode->i_ino, name, err);
 			goto clean_up;
 		}

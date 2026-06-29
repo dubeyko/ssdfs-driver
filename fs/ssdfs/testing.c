@@ -13,7 +13,7 @@
  */
 
 #include <linux/slab.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/wait.h>
 
 #include "peb_mapping_queue.h"
@@ -100,7 +100,6 @@ void ssdfs_testing_mapping_init(struct address_space *mapping,
 	mapping->flags = 0;
 	atomic_set(&mapping->i_mmap_writable, 0);
 	mapping_set_gfp_mask(mapping, GFP_KERNEL);
-	mapping->i_private_data = NULL;
 	mapping->writeback_index = 0;
 	inode->i_mapping = mapping;
 }
@@ -1663,7 +1662,7 @@ int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
 					 u32 page_size)
 {
 	struct ssdfs_segment_request *req;
-	ino_t ino;
+	u64 ino;
 	int err = 0;
 
 	req = ssdfs_request_alloc();
@@ -1690,7 +1689,7 @@ int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
 	err = ssdfs_extents_tree_add_extent(fsi->testing_inode, req);
 	if (err) {
 		SSDFS_ERR("fail to add extent: "
-			  "ino %lu, logical_offset %llu, "
+			  "ino %llu, logical_offset %llu, "
 			  "seg_id %llu, logical_blk %llu, err %d\n",
 			  ino, (u64)logical_offset,
 			  seg_id, (u64)logical_blk, err);
@@ -1974,7 +1973,7 @@ int ssdfs_testing_dentries_tree_check_file(struct ssdfs_fs_info *fsi,
 {
 	struct qstr qstr_dname;
 	size_t name_len = 0;
-	ino_t ino;
+	u64 ino;
 	int err = 0;
 
 	err = ssdfs_testing_prepare_file_name(file_index, name_buf,
@@ -2019,7 +2018,7 @@ int ssdfs_testing_dentries_tree_delete_file(struct ssdfs_fs_info *fsi,
 	struct ssdfs_btree_search *search;
 	size_t name_len = 0;
 	u64 name_hash;
-	ino_t ino;
+	u64 ino;
 	int err = 0;
 
 	ii = SSDFS_I(root_i);
@@ -2079,7 +2078,7 @@ int ssdfs_testing_dentries_tree_delete_file(struct ssdfs_fs_info *fsi,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to delete the dentry: "
-			  "name_hash %llx, ino %lu, err %d\n",
+			  "name_hash %llx, ino %llu, err %d\n",
 			  name_hash, ino, err);
 	}
 
@@ -2094,7 +2093,7 @@ finish_delete_dentry:
 	err = ssdfs_inodes_btree_delete(fsi->inodes_tree, ino);
 	if (err) {
 		SSDFS_ERR("fail to deallocate raw inode: "
-			   "ino %lu, err %d\n",
+			   "ino %llu, err %d\n",
 			   ino, err);
 	}
 
@@ -2196,7 +2195,7 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to flush dentries tree: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  root_i->i_ino, err);
 		goto put_root_inode;
 	}
@@ -4272,7 +4271,7 @@ int ssdfs_testing_xattr_tree_add(struct ssdfs_fs_info *fsi,
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_btree_search *search;
 	unsigned char name[SSDFS_MAX_NAME_LEN];
-	ino_t ino;
+	u64 ino;
 	void *blob = NULL;
 	int err = 0;
 
@@ -4314,7 +4313,7 @@ int ssdfs_testing_xattr_tree_add(struct ssdfs_fs_info *fsi,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create xattr: "
-			  "ino %lu, name %s, err %d\n",
+			  "ino %llu, name %s, err %d\n",
 			  ino, name, err);
 		goto free_blob;
 	}
@@ -4336,7 +4335,7 @@ int ssdfs_testing_xattr_tree_check(struct ssdfs_fs_info *fsi,
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_btree_search *search;
 	unsigned char name[SSDFS_MAX_NAME_LEN];
-	ino_t ino;
+	u64 ino;
 	int err = 0;
 
 	ii = SSDFS_I(fsi->testing_inode);
@@ -4363,7 +4362,7 @@ int ssdfs_testing_xattr_tree_check(struct ssdfs_fs_info *fsi,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to check xattr: "
-			  "ino %lu, name %s, err %d\n",
+			  "ino %llu, name %s, err %d\n",
 			  ino, name, err);
 		goto finish_check_xattr;
 	}
@@ -4383,7 +4382,7 @@ int ssdfs_testing_xattr_tree_resize_blob(struct ssdfs_fs_info *fsi,
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_btree_search *search;
 	unsigned char name[SSDFS_MAX_NAME_LEN];
-	ino_t ino;
+	u64 ino;
 	void *blob = NULL;
 	u64 name_hash;
 	int err = 0;
@@ -4434,7 +4433,7 @@ int ssdfs_testing_xattr_tree_resize_blob(struct ssdfs_fs_info *fsi,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to change xattr: "
-			  "ino %lu, name %s, err %d\n",
+			  "ino %llu, name %s, err %d\n",
 			  ino, name, err);
 		goto free_blob;
 	}
@@ -4474,7 +4473,7 @@ int ssdfs_testing_xattr_tree_delete(struct ssdfs_fs_info *fsi,
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_btree_search *search;
 	unsigned char name[SSDFS_MAX_NAME_LEN];
-	ino_t ino;
+	u64 ino;
 	u64 name_hash;
 	int err = 0;
 
@@ -4512,7 +4511,7 @@ int ssdfs_testing_xattr_tree_delete(struct ssdfs_fs_info *fsi,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to delete xattr: "
-			  "ino %lu, name %s, err %d\n",
+			  "ino %llu, name %s, err %d\n",
 			  ino, name, err);
 		goto finish_delete_xattr;
 	}
@@ -4709,7 +4708,7 @@ int ssdfs_do_xattr_tree_testing(struct ssdfs_fs_info *fsi,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to flush xattrs tree: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  ii->vfs_inode.i_ino, err);
 		goto destroy_tree;
 	}

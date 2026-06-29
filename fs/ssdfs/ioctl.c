@@ -22,7 +22,7 @@
 
 #include <linux/kernel.h>
 #include <linux/rwsem.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/blkdev.h>
 #include <linux/mount.h>
 #include <linux/fs.h>

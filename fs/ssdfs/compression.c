@@ -19,7 +19,7 @@
 #include <linux/pagemap.h>
 #include <linux/rwsem.h>
 #include <linux/zlib.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include <kunit/visibility.h>
 

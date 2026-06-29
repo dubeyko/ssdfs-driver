@@ -15,7 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/rwsem.h>
 #include <linux/slab.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/sched/signal.h>
 
 #include "peb_mapping_queue.h"
@@ -108,7 +108,7 @@ ssdfs_filetype_table[SSDFS_FT_MAX] = {
 
 int ssdfs_inode_by_name(struct inode *dir,
 			const struct qstr *child,
-			ino_t *ino)
+			u64 *ino)
 {
 	struct ssdfs_inode_info *ii = SSDFS_I(dir);
 	struct ssdfs_btree_search *search;
@@ -120,9 +120,8 @@ int ssdfs_inode_by_name(struct inode *dir,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!rwsem_is_locked(&ii->lock));
 
-	SSDFS_DBG("dir_ino %lu, target_name %s\n",
-		  (unsigned long)dir->i_ino,
-		  child->name);
+	SSDFS_DBG("dir_ino %llu, target_name %s\n",
+		  dir->i_ino, child->name);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*ino = 0;
@@ -152,16 +151,14 @@ int ssdfs_inode_by_name(struct inode *dir,
 		if (err == -ENODATA) {
 			err = -ENOENT;
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("dir %lu hasn't child %s\n",
-				  (unsigned long)dir->i_ino,
-				  child->name);
+			SSDFS_DBG("dir %llu hasn't child %s\n",
+				  dir->i_ino, child->name);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto dentry_is_not_available;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the dentry: "
-				  "dir %lu, child %s\n",
-				  (unsigned long)dir->i_ino,
-				  child->name);
+				  "dir %llu, child %s\n",
+				  dir->i_ino, child->name);
 			goto dentry_is_not_available;
 		}
 
@@ -206,7 +203,7 @@ int ssdfs_inode_by_name(struct inode *dir,
 		BUG_ON(le64_to_cpu(raw_dentry->ino) >= U32_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		*ino = (ino_t)le64_to_cpu(raw_dentry->ino);
+		*ino = le64_to_cpu(raw_dentry->ino);
 
 dentry_is_not_available:
 		ssdfs_btree_search_free(search);
@@ -214,8 +211,8 @@ dentry_is_not_available:
 		err = -ENOENT;
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("dentries tree is absent: "
-			  "ino %lu\n",
-			  (unsigned long)dir->i_ino);
+			  "ino %llu\n",
+			  dir->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
@@ -234,7 +231,7 @@ static struct dentry *ssdfs_lookup(struct inode *dir, struct dentry *target,
 				  unsigned int flags)
 {
 	struct inode *inode = NULL;
-	ino_t ino;
+	u64 ino;
 	int err;
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
 	struct fscrypt_name fname;
@@ -243,7 +240,7 @@ static struct dentry *ssdfs_lookup(struct inode *dir, struct dentry *target,
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu, flags %#x\n", (unsigned long)dir->i_ino, flags);
+	SSDFS_DBG("dir %llu, flags %#x\n", dir->i_ino, flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (target->d_name.len > SSDFS_MAX_NAME_LEN)
@@ -317,8 +314,8 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!rwsem_is_locked(&dir_ii->lock));
 
-	SSDFS_DBG("Created ino %lu with mode %o, nlink %d, nrpages %ld\n",
-		  (unsigned long)inode->i_ino, inode->i_mode,
+	SSDFS_DBG("Created ino %llu with mode %o, nlink %d, nrpages %ld\n",
+		  inode->i_ino, inode->i_mode,
 		  inode->i_nlink, inode->i_mapping->nrpages);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -340,7 +337,7 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 			err = ssdfs_dentries_tree_create(fsi, dir_ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to create the dentries tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  dir->i_ino, err);
 				goto finish_create_dentries_tree;
 			}
@@ -391,7 +388,7 @@ finish_create_dentries_tree:
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add the dentry: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  inode->i_ino, err);
 	} else {
 		cur_time = current_time(dir);
@@ -417,8 +414,8 @@ static int ssdfs_add_nondir(struct inode *dir, struct dentry *dentry,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("Created ino %lu with mode %o, nlink %d, nrpages %ld\n",
-		  (unsigned long)inode->i_ino, inode->i_mode,
+	SSDFS_DBG("Created ino %llu with mode %o, nlink %d, nrpages %ld\n",
+		  inode->i_ino, inode->i_mode,
 		  inode->i_nlink, inode->i_mapping->nrpages);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -468,7 +465,7 @@ int ssdfs_create(struct mnt_idmap *idmap,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu, mode %o\n", (unsigned long)dir->i_ino, mode);
+	SSDFS_DBG("dir %llu, mode %o\n", dir->i_ino, mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
@@ -509,8 +506,8 @@ static int ssdfs_mknod(struct mnt_idmap *idmap,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu, mode %o, rdev %#x\n",
-		  (unsigned long)dir->i_ino, mode, rdev);
+	SSDFS_DBG("dir %llu, mode %o, rdev %#x\n",
+		  dir->i_ino, mode, rdev);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
@@ -562,8 +559,8 @@ static int ssdfs_symlink(struct mnt_idmap *idmap,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu, target_len %zu\n",
-		  (unsigned long)dir->i_ino, target_len);
+	SSDFS_DBG("dir %llu, target_len %zu\n",
+		  dir->i_ino, target_len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
@@ -675,8 +672,8 @@ static int ssdfs_link(struct dentry *old_dentry, struct inode *dir,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu, inode %lu\n",
-		  (unsigned long)dir->i_ino, (unsigned long)inode->i_ino);
+	SSDFS_DBG("dir %llu, inode %llu\n",
+		  dir->i_ino, inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
@@ -747,8 +744,8 @@ static int ssdfs_make_empty(struct inode *inode, struct inode *parent)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("Created ino %lu with mode %o, nlink %d, nrpages %ld\n",
-		  (unsigned long)inode->i_ino, inode->i_mode,
+	SSDFS_DBG("Created ino %llu with mode %o, nlink %d, nrpages %ld\n",
+		  inode->i_ino, inode->i_mode,
 		  inode->i_nlink, inode->i_mapping->nrpages);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -774,7 +771,7 @@ static int ssdfs_make_empty(struct inode *inode, struct inode *parent)
 			err = ssdfs_dentries_tree_create(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to create the dentries tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto finish_create_dentries_tree;
 			}
@@ -803,7 +800,7 @@ finish_create_dentries_tree:
 				      &dot, ii, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add dentry: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  inode->i_ino, err);
 		goto free_search_object;
 	}
@@ -813,7 +810,7 @@ finish_create_dentries_tree:
 				      search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add dentry: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  parent->i_ino, err);
 		goto free_search_object;
 	}
@@ -840,8 +837,8 @@ static int __ssdfs_mkdir(struct mnt_idmap *idmap,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu, mode %o\n",
-		  (unsigned long)dir->i_ino, mode);
+	SSDFS_DBG("dir %llu, mode %o\n",
+		  dir->i_ino, mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
@@ -886,9 +883,9 @@ static int __ssdfs_mkdir(struct mnt_idmap *idmap,
 		goto out_fail;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu -> i_nlink %u, subdir %lu -> i_nlink %u\n",
-		  (unsigned long)dir->i_ino, dir->i_nlink,
-		  (unsigned long)inode->i_ino, inode->i_nlink);
+	SSDFS_DBG("dir %llu -> i_nlink %u, subdir %llu -> i_nlink %u\n",
+		  dir->i_ino, dir->i_nlink,
+		  inode->i_ino, inode->i_nlink);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	d_instantiate(dentry, inode);
@@ -934,8 +931,8 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu, inode %lu\n",
-		  (unsigned long)dir->i_ino, (unsigned long)inode->i_ino);
+	SSDFS_DBG("dir %llu, inode %llu\n",
+		  dir->i_ino, inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
@@ -987,7 +984,7 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 						 search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to delete the dentry: "
-				  "name_hash %llx, ino %lu, err %d\n",
+				  "name_hash %llx, ino %llu, err %d\n",
 				  name_hash, inode->i_ino, err);
 			goto dentry_is_not_available;
 		}
@@ -1086,9 +1083,9 @@ static int ssdfs_rmdir(struct inode *dir, struct dentry *dentry)
 	int err = -ENOTEMPTY;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu -> i_nlink %u, subdir %lu -> i_nlink %u\n",
-		  (unsigned long)dir->i_ino, dir->i_nlink,
-		  (unsigned long)inode->i_ino, inode->i_nlink);
+	SSDFS_DBG("dir %llu -> i_nlink %u, subdir %llu -> i_nlink %u\n",
+		  dir->i_ino, dir->i_nlink,
+		  inode->i_ino, inode->i_nlink);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))
@@ -1165,7 +1162,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	struct inode *new_inode = d_inode(new_dentry);
 	struct ssdfs_btree_search *search;
 	struct qstr dotdot = QSTR_INIT("..", 2);
-	ino_t old_ino, old_parent_ino;
+	u64 old_ino, old_parent_ino;
 	struct timespec64 time;
 	u64 name_hash;
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
@@ -1178,12 +1175,10 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	int err = -ENOENT;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("old_dir %lu, old_inode %lu, "
-		  "new_dir %lu, new_inode %p\n",
-		  (unsigned long)old_dir->i_ino,
-		  (unsigned long)old_inode->i_ino,
-		  (unsigned long)new_dir->i_ino,
-		  new_inode);
+	SSDFS_DBG("old_dir %llu, old_inode %llu, "
+		  "new_dir %llu, new_inode %p\n",
+		  old_dir->i_ino, old_inode->i_ino,
+		  new_dir->i_ino, new_inode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
@@ -1237,7 +1232,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 		goto finish_target_rename;
 	} else if (old_ino != old_inode->i_ino) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid ino: found ino %lu != requested ino %lu\n",
+		SSDFS_ERR("invalid ino: found ino %llu != requested ino %llu\n",
 			  old_ino, old_inode->i_ino);
 		goto finish_target_rename;
 	}
@@ -1250,7 +1245,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 		} else if (old_parent_ino != old_dir->i_ino) {
 			err = -ERANGE;
 			SSDFS_ERR("invalid ino: "
-				  "found ino %lu != requested ino %lu\n",
+				  "found ino %llu != requested ino %llu\n",
 				  old_parent_ino, old_dir->i_ino);
 			goto finish_target_rename;
 		}
@@ -1291,7 +1286,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 		if (unlikely(err)) {
 			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
 					"fail to delete the dentry: "
-					"name_hash %llx, ino %lu, err %d\n",
+					"name_hash %llx, ino %llu, err %d\n",
 					name_hash, new_inode->i_ino, err);
 			goto finish_target_rename;
 		}
@@ -1358,7 +1353,7 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 	struct ssdfs_inode_info *new_ii = SSDFS_I(new_inode);
 	struct ssdfs_btree_search *search;
 	struct qstr dotdot = QSTR_INIT("..", 2);
-	ino_t old_ino, new_ino;
+	u64 old_ino, new_ino;
 	struct timespec64 time;
 	u64 name_hash;
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
@@ -1370,10 +1365,8 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 	int err = -ENOENT;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("old_dir %lu, old_inode %lu, new_dir %lu\n",
-		  (unsigned long)old_dir->i_ino,
-		  (unsigned long)old_inode->i_ino,
-		  (unsigned long)new_dir->i_ino);
+	SSDFS_DBG("old_dir %llu, old_inode %llu, new_dir %llu\n",
+		  old_dir->i_ino, old_inode->i_ino, new_dir->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
@@ -1439,7 +1432,7 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 		goto finish_cross_rename;
 	} else if (old_ino != old_inode->i_ino) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid ino: found ino %lu != requested ino %lu\n",
+		SSDFS_ERR("invalid ino: found ino %llu != requested ino %llu\n",
 			  old_ino, old_inode->i_ino);
 		goto finish_cross_rename;
 	}
@@ -1450,7 +1443,7 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 		goto finish_cross_rename;
 	} else if (new_ino != new_inode->i_ino) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid ino: found ino %lu != requested ino %lu\n",
+		SSDFS_ERR("invalid ino: found ino %llu != requested ino %llu\n",
 			  new_ino, new_inode->i_ino);
 		goto finish_cross_rename;
 	}
@@ -1600,10 +1593,10 @@ static int ssdfs_rename(struct mnt_idmap *idmap,
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("old_dir %lu, old_inode %lu, new_dir %lu\n",
-		  (unsigned long)old_dir->i_ino,
-		  (unsigned long)old_dentry->d_inode->i_ino,
-		  (unsigned long)new_dir->i_ino);
+	SSDFS_DBG("old_dir %llu, old_inode %llu, new_dir %llu\n",
+		  old_dir->i_ino,
+		  old_dentry->d_inode->i_ino,
+		  new_dir->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(old_dir->i_sb)))
@@ -2044,7 +2037,7 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 	u64 hash = U64_MAX;
 	u64 start_pos;
 	u16 items_count;
-	ino_t ino;
+	u64 ino;
 	int i;
 	int err = 0;
 
@@ -2313,7 +2306,7 @@ finish_tree_processing:
 				if (!dir_emit(ctx,
 				    search->name.string.str,
 				    search->name.string.len,
-				    (ino_t)le64_to_cpu(dentry->ino),
+				    le64_to_cpu(dentry->ino),
 				    ssdfs_filetype_table[dentry->file_type])) {
 					/* stopped by some reason */
 					err = 1;
@@ -2337,7 +2330,7 @@ finish_tree_processing:
 				if (!dir_emit(ctx,
 				    dentry->inline_string,
 				    dentry->name_len,
-				    (ino_t)le64_to_cpu(dentry->ino),
+				    le64_to_cpu(dentry->ino),
 				    ssdfs_filetype_table[dentry->file_type])) {
 					/* stopped by some reason */
 					err = 1;
@@ -2400,7 +2393,7 @@ static int ssdfs_tmpfile(struct mnt_idmap *idmap,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir %lu, mode %o\n", (unsigned long)dir->i_ino, mode);
+	SSDFS_DBG("dir %llu, mode %o\n", dir->i_ino, mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(dir->i_sb)))

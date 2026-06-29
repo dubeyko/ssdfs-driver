@@ -26,7 +26,7 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/super.h>
 #include <linux/exportfs.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
 #include <linux/delay.h>
@@ -213,7 +213,7 @@ void ssdfs_destroy_btree_of_inode(struct inode *inode)
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (ii->extents_tree) {
@@ -242,7 +242,7 @@ void ssdfs_destroy_and_decrement_btree_of_inode(struct inode *inode)
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_destroy_btree_of_inode(inode);
@@ -261,7 +261,7 @@ static void ssdfs_i_callback(struct rcu_head *head)
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_destroy_btree_of_inode(inode);
@@ -796,7 +796,7 @@ static struct dentry *ssdfs_fh_to_parent(struct super_block *sb,
 static struct dentry *ssdfs_get_parent(struct dentry *child)
 {
 	struct qstr dotdot = QSTR_INIT("..", 2);
-	ino_t ino;
+	u64 ino;
 	int err;
 
 	down_read(&SSDFS_I(d_inode(child))->lock);

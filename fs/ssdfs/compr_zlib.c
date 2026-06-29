@@ -25,7 +25,7 @@
 #include <linux/zlib.h>
 #include <linux/zutil.h>
 #include <linux/vmalloc.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include <kunit/visibility.h>
 

@@ -22,7 +22,7 @@
 
 #include <linux/kernel.h>
 #include <linux/rwsem.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -97,8 +97,8 @@ struct posix_acl *ssdfs_get_acl(struct inode *inode, int type, bool rcu)
 	ssize_t size;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, type %#x\n",
-		  (unsigned long)inode->i_ino, type);
+	SSDFS_DBG("ino %llu, type %#x\n",
+		  inode->i_ino, type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (rcu)
@@ -151,8 +151,8 @@ int __ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, type %#x, acl %p\n",
-		  (unsigned long)inode->i_ino, type, acl);
+	SSDFS_DBG("ino %llu, type %#x, acl %p\n",
+		  inode->i_ino, type, acl);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (type) {
@@ -199,8 +199,8 @@ int ssdfs_set_acl(struct mnt_idmap *idmap, struct dentry *dentry,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, type %#x, acl %p\n",
-		  (unsigned long)inode->i_ino, type, acl);
+	SSDFS_DBG("ino %llu, type %#x, acl %p\n",
+		  inode->i_ino, type, acl);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (type == ACL_TYPE_ACCESS && acl) {
@@ -230,8 +230,8 @@ int ssdfs_init_acl(struct inode *inode, struct inode *dir)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir_ino %lu, ino %lu\n",
-		  (unsigned long)dir->i_ino, (unsigned long)inode->i_ino);
+	SSDFS_DBG("dir_ino %llu, ino %llu\n",
+		  dir->i_ino, inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = posix_acl_create(dir, &inode->i_mode, &default_acl, &acl);

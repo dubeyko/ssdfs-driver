@@ -26,7 +26,7 @@
 #ifndef _SSDFS_OFFSET_TRANSLATION_TABLE_H
 #define _SSDFS_OFFSET_TRANSLATION_TABLE_H
 
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include "request_queue.h"
 #include "sequence_array.h"

@@ -26,7 +26,7 @@
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/writeback.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -1020,10 +1020,10 @@ int ssdfs_extents_tree_create(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("ii %p, ino %lu\n",
+	SSDFS_ERR("ii %p, ino %llu\n",
 		  ii, ii->vfs_inode.i_ino);
 #else
-	SSDFS_DBG("ii %p, ino %lu\n",
+	SSDFS_DBG("ii %p, ino %llu\n",
 		  ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -1092,10 +1092,10 @@ void ssdfs_extents_tree_destroy(struct ssdfs_inode_info *ii)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("ii %p, ino %lu\n",
+	SSDFS_ERR("ii %p, ino %llu\n",
 		  ii, ii->vfs_inode.i_ino);
 #else
-	SSDFS_DBG("ii %p, ino %lu\n",
+	SSDFS_DBG("ii %p, ino %llu\n",
 		  ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -1103,7 +1103,7 @@ void ssdfs_extents_tree_destroy(struct ssdfs_inode_info *ii)
 
 	if (!tree) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("extents tree is absent: ino %lu\n",
+		SSDFS_DBG("extents tree is absent: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return;
@@ -1117,14 +1117,14 @@ void ssdfs_extents_tree_destroy(struct ssdfs_inode_info *ii)
 
 	case SSDFS_EXTENTS_BTREE_CORRUPTED:
 		SSDFS_WARN("extents tree is corrupted: "
-			   "ino %lu\n",
+			   "ino %llu\n",
 			   ii->vfs_inode.i_ino);
 		break;
 
 	case SSDFS_EXTENTS_BTREE_DIRTY:
 		if (atomic64_read(&tree->forks_count) > 0) {
 			SSDFS_WARN("extents tree is dirty: "
-				   "ino %lu\n",
+				   "ino %llu\n",
 				   ii->vfs_inode.i_ino);
 		} else {
 			/* regular destroy */
@@ -1135,7 +1135,7 @@ void ssdfs_extents_tree_destroy(struct ssdfs_inode_info *ii)
 
 	default:
 		SSDFS_WARN("invalid state of extents tree: "
-			   "ino %lu, state %#x\n",
+			   "ino %llu, state %#x\n",
 			   ii->vfs_inode.i_ino,
 			   atomic_read(&tree->state));
 		return;
@@ -1234,17 +1234,17 @@ int ssdfs_extents_tree_init(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("si %p, ii %p, ino %lu\n",
+	SSDFS_ERR("si %p, ii %p, ino %llu\n",
 		  fsi, ii, ii->vfs_inode.i_ino);
 #else
-	SSDFS_DBG("si %p, ii %p, ino %lu\n",
+	SSDFS_DBG("si %p, ii %p, ino %llu\n",
 		  fsi, ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tree = SSDFS_EXTREE(ii);
 	if (!tree) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("extents tree is absent: ino %lu\n",
+		SSDFS_DBG("extents tree is absent: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -ERANGE;
@@ -1706,17 +1706,17 @@ int ssdfs_extents_tree_flush(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("fsi %p, ii %p, ino %lu\n",
+	SSDFS_ERR("fsi %p, ii %p, ino %llu\n",
 		  fsi, ii, ii->vfs_inode.i_ino);
 #else
-	SSDFS_DBG("fsi %p, ii %p, ino %lu\n",
+	SSDFS_DBG("fsi %p, ii %p, ino %llu\n",
 		  fsi, ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tree = SSDFS_EXTREE(ii);
 	if (!tree) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("extents tree is absent: ino %lu\n",
+		SSDFS_DBG("extents tree is absent: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -ERANGE;
@@ -1741,7 +1741,7 @@ int ssdfs_extents_tree_flush(struct ssdfs_fs_info *fsi,
 	case SSDFS_EXTENTS_BTREE_CORRUPTED:
 		err = -EOPNOTSUPP;
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("extents btree corrupted: ino %lu\n",
+		SSDFS_DBG("extents btree corrupted: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_extents_tree_flush;
@@ -1798,7 +1798,7 @@ int ssdfs_extents_tree_flush(struct ssdfs_fs_info *fsi,
 				err = -EAGAIN;
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("tree should be converted: "
-					  "ino %lu\n",
+					  "ino %llu\n",
 					  ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 			} else {
@@ -1846,7 +1846,7 @@ try_generic_tree_flush:
 		err = ssdfs_btree_flush(tree->generic_tree);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to flush extents btree: "
-				  "ino %lu, err %d\n",
+				  "ino %llu, err %d\n",
 				  ii->vfs_inode.i_ino, err);
 			goto finish_generic_tree_flush;
 		}
@@ -1884,7 +1884,7 @@ commit_logs_now:
 	err = ssdfs_extents_tree_commit_logs_now(tree);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to commit logs: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  ii->vfs_inode.i_ino, err);
 		goto finish_extents_tree_flush;
 	}
@@ -2395,7 +2395,7 @@ bool ssdfs_extents_tree_has_logical_block(u64 blk_offset, struct inode *inode)
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_extents_btree_info *tree;
 	struct ssdfs_btree_search *search;
-	ino_t ino;
+	u64 ino;
 	bool is_found = false;
 	int err;
 
@@ -2407,14 +2407,14 @@ bool ssdfs_extents_tree_has_logical_block(u64 blk_offset, struct inode *inode)
 	ino = inode->i_ino;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, blk_offset %llu\n",
+	SSDFS_DBG("ino %llu, blk_offset %llu\n",
 		  ino, blk_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = SSDFS_EXTREE(ii);
 	if (!tree) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("extents tree is absent: ino %lu\n",
+		SSDFS_DBG("extents tree is absent: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return false;
@@ -2467,7 +2467,7 @@ int ssdfs_extents_tree_add_extent(struct inode *inode,
 	struct ssdfs_extents_btree_info *tree;
 	struct ssdfs_btree_search *search;
 	struct ssdfs_raw_extent extent;
-	ino_t ino;
+	u64 ino;
 	u64 requested_blk;
 	int err = 0;
 
@@ -2480,13 +2480,13 @@ int ssdfs_extents_tree_add_extent(struct inode *inode,
 	ino = inode->i_ino;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("ino %lu, logical_offset %llu, "
+	SSDFS_ERR("ino %llu, logical_offset %llu, "
 		  "seg_id %llu, start_blk %u, len %u\n",
 		  ino, req->extent.logical_offset,
 		  req->place.start.seg_id,
 		  req->place.start.blk_index, req->place.len);
 #else
-	SSDFS_DBG("ino %lu, logical_offset %llu, "
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "seg_id %llu, start_blk %u, len %u\n",
 		  ino, req->extent.logical_offset,
 		  req->place.start.seg_id,
@@ -2581,7 +2581,7 @@ int ssdfs_extents_tree_truncate(struct inode *inode)
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_extents_btree_info *tree;
 	struct ssdfs_btree_search *search;
-	ino_t ino;
+	u64 ino;
 	loff_t size;
 	u64 blk_offset;
 	int err = 0;
@@ -2596,17 +2596,17 @@ int ssdfs_extents_tree_truncate(struct inode *inode)
 	size = i_size_read(inode);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("ino %lu, size %llu\n",
+	SSDFS_ERR("ino %llu, size %llu\n",
 		  ino, size);
 #else
-	SSDFS_DBG("ino %lu, size %llu\n",
+	SSDFS_DBG("ino %llu, size %llu\n",
 		  ino, size);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tree = SSDFS_EXTREE(ii);
 	if (!tree) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("extents tree is absent: ino %lu\n",
+		SSDFS_DBG("extents tree is absent: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
@@ -4036,7 +4036,7 @@ int ssdfs_invalidate_inline_tail_forks(struct ssdfs_extents_btree_info *tree,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_raw_fork *cur;
-	ino_t ino;
+	u64 ino;
 	s64 forks_count;
 	int lower_bound, upper_bound;
 	int i, j;
@@ -4197,7 +4197,7 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_raw_fork *cur;
 	size_t fork_size = sizeof(struct ssdfs_raw_fork);
-	ino_t ino;
+	u64 ino;
 	u64 start_hash;
 	int private_flags;
 	s64 forks_count, forks_capacity;
@@ -6053,7 +6053,7 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 	struct ssdfs_raw_fork *fork;
 	size_t fork_size = sizeof(struct ssdfs_raw_fork);
 	size_t inline_forks_size = fork_size * SSDFS_INLINE_FORKS_COUNT;
-	ino_t ino;
+	u64 ino;
 	u64 start_hash;
 	s64 forks_count;
 	u16 start_index;
@@ -7453,7 +7453,7 @@ int __ssdfs_inline_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_raw_fork fork;
-	ino_t ino;
+	u64 ino;
 	bool need_delete_whole_tree = false;
 	int err = 0;
 
@@ -8022,7 +8022,7 @@ int __ssdfs_inline_tree_delete_extent(struct ssdfs_extents_btree_info *tree,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_file_fragment fragment;
-	ino_t ino;
+	u64 ino;
 	u32 len;
 	int err = 0;
 
@@ -8348,7 +8348,7 @@ int ssdfs_delete_all_inline_forks(struct ssdfs_extents_btree_info *tree)
 	struct ssdfs_raw_fork *fork;
 	struct ssdfs_raw_extent *extent;
 	u64 forks_count;
-	ino_t ino;
+	u64 ino;
 	int i, j;
 	int err;
 
@@ -9529,7 +9529,7 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 
 	if (parent_ino != tree_info->owner->vfs_inode.i_ino) {
 		err = -EIO;
-		SSDFS_ERR("parent_ino %u != ino %lu\n",
+		SSDFS_ERR("parent_ino %u != ino %llu\n",
 			  parent_ino,
 			  tree_info->owner->vfs_inode.i_ino);
 		goto finish_header_init;

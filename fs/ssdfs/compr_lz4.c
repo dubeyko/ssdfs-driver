@@ -17,7 +17,7 @@
 #include <linux/init.h>
 #include <linux/pagemap.h>
 #include <linux/lz4.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include <kunit/visibility.h>
 

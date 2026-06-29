@@ -15,7 +15,7 @@
 #include <linux/slab.h>
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>

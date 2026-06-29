@@ -23,7 +23,7 @@
 #include <linux/kernel.h>
 #include <linux/rwsem.h>
 #include <linux/security.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -45,9 +45,8 @@ int ssdfs_security_getxattr(const struct xattr_handler *handler,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, name %s, buffer %p, size %zu\n",
-		  (unsigned long)inode->i_ino,
-		  name, buffer, size);
+	SSDFS_DBG("ino %llu, name %s, buffer %p, size %zu\n",
+		  inode->i_ino, name, buffer, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	len = strlen(name);
@@ -74,9 +73,8 @@ int ssdfs_security_setxattr(const struct xattr_handler *handler,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, name %s, value %p, size %zu, flags %#x\n",
-		  (unsigned long)inode->i_ino,
-		  name, value, size, flags);
+	SSDFS_DBG("ino %llu, name %s, value %p, size %zu, flags %#x\n",
+		  inode->i_ino, name, value, size, flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	len = strlen(name);
@@ -96,9 +94,8 @@ int ssdfs_initxattrs(struct inode *inode, const struct xattr *xattr_array,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, xattr_array %p, fs_info %p\n",
-		  (unsigned long)inode->i_ino,
-		  xattr_array, fs_info);
+	SSDFS_DBG("ino %llu, xattr_array %p, fs_info %p\n",
+		  inode->i_ino, xattr_array, fs_info);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (xattr = xattr_array; xattr->name != NULL; xattr++) {
@@ -126,9 +123,8 @@ int ssdfs_init_security(struct inode *inode, struct inode *dir,
 			const struct qstr *qstr)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir_ino %lu, ino %lu\n",
-		  (unsigned long)dir->i_ino,
-		  (unsigned long)inode->i_ino);
+	SSDFS_DBG("dir_ino %llu, ino %llu\n",
+		  dir->i_ino, inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return security_inode_init_security(inode, dir, qstr,
@@ -141,9 +137,8 @@ int ssdfs_init_inode_security(struct inode *inode, struct inode *dir,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir_ino %lu, ino %lu\n",
-		  (unsigned long)dir->i_ino,
-		  (unsigned long)inode->i_ino);
+	SSDFS_DBG("dir_ino %llu, ino %llu\n",
+		  dir->i_ino, inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_init_acl(inode, dir);

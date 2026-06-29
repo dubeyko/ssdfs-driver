@@ -21,7 +21,7 @@
  */
 
 #include <linux/slab.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/wait.h>
 
 #include "peb_mapping_queue.h"

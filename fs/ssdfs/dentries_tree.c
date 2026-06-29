@@ -23,7 +23,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -145,10 +145,10 @@ int ssdfs_dentries_tree_create(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("ii %p, ino %lu\n",
+	SSDFS_ERR("ii %p, ino %llu\n",
 		  ii, ii->vfs_inode.i_ino);
 #else
-	SSDFS_DBG("ii %p, ino %lu\n",
+	SSDFS_DBG("ii %p, ino %llu\n",
 		  ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -213,17 +213,17 @@ void ssdfs_dentries_tree_destroy(struct ssdfs_inode_info *ii)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("ii %p, ino %lu\n",
+	SSDFS_ERR("ii %p, ino %llu\n",
 		  ii, ii->vfs_inode.i_ino);
 #else
-	SSDFS_DBG("ii %p, ino %lu\n",
+	SSDFS_DBG("ii %p, ino %llu\n",
 		  ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tree = SSDFS_DTREE(ii);
 
 	if (!tree) {
-		SSDFS_DBG("dentries tree is absent: ino %lu\n",
+		SSDFS_DBG("dentries tree is absent: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 		return;
 	}
@@ -236,7 +236,7 @@ void ssdfs_dentries_tree_destroy(struct ssdfs_inode_info *ii)
 
 	case SSDFS_DENTRIES_BTREE_CORRUPTED:
 		SSDFS_WARN("dentries tree is corrupted: "
-			   "ino %lu\n",
+			   "ino %llu\n",
 			   ii->vfs_inode.i_ino);
 		break;
 
@@ -244,7 +244,7 @@ void ssdfs_dentries_tree_destroy(struct ssdfs_inode_info *ii)
 		if (atomic64_read(&tree->dentries_count) >
 				SSDFS_FOLDER_DEFAULT_SHORTCUTS_COUNT) {
 			SSDFS_WARN("dentries tree is dirty: "
-				   "ino %lu, dentries_count %llx\n",
+				   "ino %llu, dentries_count %llx\n",
 				   ii->vfs_inode.i_ino,
 				   atomic64_read(&tree->dentries_count));
 		} else {
@@ -256,7 +256,7 @@ void ssdfs_dentries_tree_destroy(struct ssdfs_inode_info *ii)
 
 	default:
 		SSDFS_WARN("invalid state of dentries tree: "
-			   "ino %lu, state %#x\n",
+			   "ino %llu, state %#x\n",
 			   ii->vfs_inode.i_ino,
 			   atomic_read(&tree->state));
 		return;
@@ -351,16 +351,16 @@ int ssdfs_dentries_tree_init(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("fsi %p, ii %p, ino %lu\n",
+	SSDFS_ERR("fsi %p, ii %p, ino %llu\n",
 		  fsi, ii, ii->vfs_inode.i_ino);
 #else
-	SSDFS_DBG("fsi %p, ii %p, ino %lu\n",
+	SSDFS_DBG("fsi %p, ii %p, ino %llu\n",
 		  fsi, ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tree = SSDFS_DTREE(ii);
 	if (!tree) {
-		SSDFS_DBG("dentries tree is absent: ino %lu\n",
+		SSDFS_DBG("dentries tree is absent: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 		return -ERANGE;
 	}
@@ -883,16 +883,16 @@ int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("fsi %p, ii %p, ino %lu\n",
+	SSDFS_ERR("fsi %p, ii %p, ino %llu\n",
 		  fsi, ii, ii->vfs_inode.i_ino);
 #else
-	SSDFS_DBG("fsi %p, ii %p, ino %lu\n",
+	SSDFS_DBG("fsi %p, ii %p, ino %llu\n",
 		  fsi, ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tree = SSDFS_DTREE(ii);
 	if (!tree) {
-		SSDFS_DBG("dentries tree is absent: ino %lu\n",
+		SSDFS_DBG("dentries tree is absent: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 		return -ERANGE;
 	}
@@ -910,7 +910,7 @@ int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
 		return 0;
 
 	case SSDFS_DENTRIES_BTREE_CORRUPTED:
-		SSDFS_DBG("dentries btree corrupted: ino %lu\n",
+		SSDFS_DBG("dentries btree corrupted: ino %llu\n",
 			  ii->vfs_inode.i_ino);
 		return -EOPNOTSUPP;
 
@@ -982,7 +982,7 @@ int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
 				err = -EAGAIN;
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("tree should be converted: "
-					  "ino %lu\n",
+					  "ino %llu\n",
 					  ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 			} else {
@@ -1032,7 +1032,7 @@ try_generic_tree_flush:
 		err = ssdfs_btree_flush(tree->generic_tree);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to flush dentries btree: "
-				  "ino %lu, err %d\n",
+				  "ino %llu, err %d\n",
 				  ii->vfs_inode.i_ino, err);
 			goto finish_dentries_tree_flush;
 		}
@@ -2260,7 +2260,7 @@ int __ssdfs_inline_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !str || !ii || !search);
 
-	SSDFS_DBG("tree %p, ii %p, ino %lu, name_hash %llx\n",
+	SSDFS_DBG("tree %p, ii %p, ino %llu, name_hash %llx\n",
 		  tree, ii, ii->vfs_inode.i_ino, name_hash);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2310,7 +2310,7 @@ int __ssdfs_inline_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 					   search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare the dentry: "
-				  "name_hash %llx, ino %lu, "
+				  "name_hash %llx, ino %llu, "
 				  "err %d\n",
 				  name_hash,
 				  ii->vfs_inode.i_ino,
@@ -2335,7 +2335,7 @@ int __ssdfs_inline_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 			}
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add the dentry: "
-				  "name_hash %llx, ino %lu, "
+				  "name_hash %llx, ino %llu, "
 				  "err %d\n",
 				  name_hash,
 				  ii->vfs_inode.i_ino,
@@ -2358,7 +2358,7 @@ int __ssdfs_inline_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 		err = -EEXIST;
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("dentry exists in the tree: "
-			  "name_hash %llx, ino %lu\n",
+			  "name_hash %llx, ino %llu\n",
 			  name_hash, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_add_inline_dentry;
@@ -2406,7 +2406,7 @@ int __ssdfs_regular_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !str || !ii || !search);
 
-	SSDFS_DBG("tree %p, ii %p, ino %lu, name_hash %llx\n",
+	SSDFS_DBG("tree %p, ii %p, ino %llu, name_hash %llx\n",
 		  tree, ii, ii->vfs_inode.i_ino, name_hash);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2443,7 +2443,7 @@ int __ssdfs_regular_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 		 */
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the dentry: "
-			  "name_hash %llx, ino %lu, "
+			  "name_hash %llx, ino %llu, "
 			  "err %d\n",
 			  name_hash,
 			  ii->vfs_inode.i_ino,
@@ -2459,7 +2459,7 @@ int __ssdfs_regular_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 					   search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare the dentry: "
-				  "name_hash %llx, ino %lu, "
+				  "name_hash %llx, ino %llu, "
 				  "err %d\n",
 				  name_hash,
 				  ii->vfs_inode.i_ino,
@@ -2475,7 +2475,7 @@ int __ssdfs_regular_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add the dentry: "
-				  "name_hash %llx, ino %lu, "
+				  "name_hash %llx, ino %llu, "
 				  "err %d\n",
 				  name_hash,
 				  ii->vfs_inode.i_ino,
@@ -2498,7 +2498,7 @@ int __ssdfs_regular_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 		err = -EEXIST;
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("dentry exists in the tree: "
-			  "name_hash %llx, ino %lu\n",
+			  "name_hash %llx, ino %llu\n",
 			  name_hash, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_add_generic_dentry;
@@ -2545,10 +2545,10 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, ii %p, ino %lu\n",
+	SSDFS_ERR("tree %p, ii %p, ino %llu\n",
 		  tree, ii, ii->vfs_inode.i_ino);
 #else
-	SSDFS_DBG("tree %p, ii %p, ino %lu\n",
+	SSDFS_DBG("tree %p, ii %p, ino %llu\n",
 		  tree, ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -2634,12 +2634,12 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 	if (err == -EEXIST) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("dentry exists in the tree: "
-			  "name_hash %llx, ino %lu\n",
+			  "name_hash %llx, ino %llu\n",
 			  name_hash, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add the dentry: "
-			  "name_hash %llx, ino %lu, "
+			  "name_hash %llx, ino %llu, "
 			  "err %d\n",
 			  name_hash,
 			  ii->vfs_inode.i_ino,
@@ -3393,7 +3393,7 @@ finish_process_range:
  */
 static
 int __ssdfs_inline_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
-					u64 name_hash, ino_t ino,
+					u64 name_hash, u64 ino,
 					struct ssdfs_btree_search *search)
 {
 	int err = 0;
@@ -3472,7 +3472,7 @@ finish_delete_inline_dentry:
  */
 static
 int __ssdfs_regular_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
-					 u64 name_hash, ino_t ino,
+					 u64 name_hash, u64 ino,
 					 struct ssdfs_btree_search *search)
 {
 	int threshold = SSDFS_INLINE_DENTRIES_PER_AREA;
@@ -3571,7 +3571,7 @@ finish_delete_generic_dentry:
  * %-ENODATA    - dentry doesn't exist in the tree.
  */
 int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
-				u64 name_hash, ino_t ino,
+				u64 name_hash, u64 ino,
 				struct ssdfs_btree_search *search)
 {
 	int number_of_tries = 0;
@@ -3582,10 +3582,10 @@ int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, search %p, ino %lu, name_hash %llx\n",
+	SSDFS_ERR("tree %p, search %p, ino %llu, name_hash %llx\n",
 		  tree, search, ino, name_hash);
 #else
-	SSDFS_DBG("tree %p, search %p, ino %lu, name_hash %llx\n",
+	SSDFS_DBG("tree %p, search %p, ino %llu, name_hash %llx\n",
 		  tree, search, ino, name_hash);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -3660,7 +3660,7 @@ int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to delete the dentry: "
-			  "name_hash %llx, ino %lu, "
+			  "name_hash %llx, ino %llu, "
 			  "err %d\n",
 			  name_hash, ino, err);
 	}
@@ -3864,7 +3864,7 @@ int ssdfs_dentries_tree_delete_all(struct ssdfs_dentries_btree_info *tree)
  */
 static
 int __ssdfs_inline_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
-					u64 name_hash, ino_t old_ino,
+					u64 name_hash, u64 old_ino,
 					const struct qstr *str,
 					u64 new_name_hash,
 					struct ssdfs_inode_info *new_ii,
@@ -4069,7 +4069,7 @@ int __ssdfs_inline_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 					   search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare the dentry: "
-				  "new_name_hash %llx, ino %lu, "
+				  "new_name_hash %llx, ino %llu, "
 				  "err %d\n",
 				  new_name_hash, old_ino, err);
 			goto finish_change_inline_dentry;
@@ -4079,7 +4079,7 @@ int __ssdfs_inline_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 		err = ssdfs_dentries_tree_add_inline_dentry(tree, search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add the dentry: "
-				  "name_hash %llx, ino %lu, err %d\n",
+				  "name_hash %llx, ino %llu, err %d\n",
 				  name_hash, new_ii->vfs_inode.i_ino, err);
 			goto finish_change_inline_dentry;
 		}
@@ -4133,7 +4133,7 @@ finish_change_inline_dentry:
  */
 static
 int __ssdfs_regular_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
-					 u64 name_hash, ino_t old_ino,
+					 u64 name_hash, u64 old_ino,
 					 const struct qstr *str,
 					 u64 new_name_hash,
 					 struct ssdfs_inode_info *new_ii,
@@ -4149,7 +4149,7 @@ int __ssdfs_regular_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 	BUG_ON(!tree || !search);
 
 	SSDFS_DBG("tree %p, search %p, "
-		  "name_hash %llx, old_ino %lu, "
+		  "name_hash %llx, old_ino %llu, "
 		  "new_name_hash %llx\n",
 		  tree, search, name_hash, old_ino, new_name_hash);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -4303,7 +4303,7 @@ int __ssdfs_regular_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 					   search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare the dentry: "
-				  "new_name_hash %llx, ino %lu, "
+				  "new_name_hash %llx, ino %llu, "
 				  "err %d\n",
 				  new_name_hash, old_ino, err);
 			goto finish_change_generic_dentry;
@@ -4317,7 +4317,7 @@ int __ssdfs_regular_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add the dentry: "
-				  "name_hash %llx, ino %lu, err %d\n",
+				  "name_hash %llx, ino %llu, err %d\n",
 				  name_hash, new_ii->vfs_inode.i_ino, err);
 			goto finish_change_generic_dentry;
 		}
@@ -4375,7 +4375,7 @@ finish_change_generic_dentry:
  * %-ENODATA    - dentry doesn't exist in the tree.
  */
 int ssdfs_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
-				u64 name_hash, ino_t old_ino,
+				u64 name_hash, u64 old_ino,
 				const struct qstr *str,
 				struct ssdfs_inode_info *new_ii,
 				struct ssdfs_btree_search *search)
@@ -4389,10 +4389,10 @@ int ssdfs_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, search %p, old_ino %lu, name_hash %llx\n",
+	SSDFS_ERR("tree %p, search %p, old_ino %llu, name_hash %llx\n",
 		  tree, search, old_ino, name_hash);
 #else
-	SSDFS_DBG("tree %p, search %p, old_ino %lu, name_hash %llx\n",
+	SSDFS_DBG("tree %p, search %p, old_ino %llu, name_hash %llx\n",
 		  tree, search, old_ino, name_hash);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -4475,7 +4475,7 @@ int ssdfs_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to change the dentry: "
-			  "name_hash %llx, ino %lu, "
+			  "name_hash %llx, ino %llu, "
 			  "err %d\n",
 			  name_hash, old_ino, err);
 	}
@@ -5636,7 +5636,7 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 
 	if (parent_ino != tree_info->owner->vfs_inode.i_ino) {
 		err = -EIO;
-		SSDFS_ERR("parent_ino %llu != ino %lu\n",
+		SSDFS_ERR("parent_ino %llu != ino %llu\n",
 			  parent_ino,
 			  tree_info->owner->vfs_inode.i_ino);
 		goto finish_header_init;

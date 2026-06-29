@@ -14,7 +14,7 @@
 #include <kunit/test.h>
 #include <linux/slab.h>
 #include <linux/pagemap.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/xarray.h>
 
 #include "peb_mapping_queue.h"

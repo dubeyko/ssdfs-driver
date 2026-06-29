@@ -125,12 +125,12 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 			    struct ssdfs_inode_info *ii,
 			    struct ssdfs_btree_search *search);
 int ssdfs_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
-				u64 name_hash, ino_t old_ino,
+				u64 name_hash, u64 old_ino,
 				const struct qstr *str,
 				struct ssdfs_inode_info *new_ii,
 				struct ssdfs_btree_search *search);
 int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
-				u64 name_hash, ino_t ino,
+				u64 name_hash, u64 ino,
 				struct ssdfs_btree_search *search);
 int ssdfs_dentries_tree_delete_all(struct ssdfs_dentries_btree_info *tree);
 

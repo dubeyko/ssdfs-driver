@@ -17,7 +17,7 @@
 
 #include <crypto/hash_info.h>
 #include <crypto/ghash.h>
-#include <crypto/polyval.h>
+#include <crypto/gf128hash.h>
 
 /*
  * struct ssdfs_fingerprint - fingerprint object

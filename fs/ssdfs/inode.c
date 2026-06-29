@@ -23,7 +23,7 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mm.h>
 #include <linux/statfs.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/dcache.h>
 #include <linux/random.h>
 
@@ -188,8 +188,8 @@ static int ssdfs_inode_setops(struct inode *inode)
 		inode->i_op = &ssdfs_special_inode_operations;
 		init_special_inode(inode, inode->i_mode, inode->i_rdev);
 	} else {
-		SSDFS_ERR("bogus i_mode %o for ino %lu\n",
-			  inode->i_mode, (unsigned long)inode->i_ino);
+		SSDFS_ERR("bogus i_mode %o for ino %llu\n",
+			  inode->i_mode, inode->i_ino);
 		return -EINVAL;
 	}
 
@@ -207,7 +207,7 @@ static int ssdfs_read_inode(struct inode *inode)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
@@ -221,7 +221,7 @@ static int ssdfs_read_inode(struct inode *inode)
 	err = ssdfs_inodes_btree_find(fsi->inodes_tree, inode->i_ino, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find the raw inode: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  inode->i_ino, err);
 		goto finish_read_inode;
 	}
@@ -270,7 +270,7 @@ static int ssdfs_read_inode(struct inode *inode)
 
 	if (!is_raw_inode_checksum_correct(fsi, raw_inode, raw_inode_size)) {
 		err = -EIO;
-		SSDFS_ERR("invalid inode's checksum: ino %lu\n",
+		SSDFS_ERR("invalid inode's checksum: ino %llu\n",
 			  inode->i_ino);
 		goto finish_read_inode;
 	}
@@ -284,7 +284,7 @@ static int ssdfs_read_inode(struct inode *inode)
 
 	if (le64_to_cpu(raw_inode->ino) != inode->i_ino) {
 		err = -EIO;
-		SSDFS_ERR("raw_inode->ino %llu != i_ino %lu\n",
+		SSDFS_ERR("raw_inode->ino %llu != i_ino %llu\n",
 			  le64_to_cpu(raw_inode->ino),
 			  inode->i_ino);
 		goto finish_read_inode;
@@ -366,7 +366,7 @@ static int ssdfs_read_inode(struct inode *inode)
 			err = ssdfs_extents_tree_create(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to create the extents tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto unlock_mutable_fields;
 			}
@@ -374,7 +374,7 @@ static int ssdfs_read_inode(struct inode *inode)
 			err = ssdfs_extents_tree_init(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to init the extents tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto unlock_mutable_fields;
 			}
@@ -385,7 +385,7 @@ static int ssdfs_read_inode(struct inode *inode)
 			err = ssdfs_xattrs_tree_create(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to create the xattrs tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto unlock_mutable_fields;
 			}
@@ -393,7 +393,7 @@ static int ssdfs_read_inode(struct inode *inode)
 			err = ssdfs_xattrs_tree_init(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to init the xattrs tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto unlock_mutable_fields;
 			}
@@ -411,7 +411,7 @@ static int ssdfs_read_inode(struct inode *inode)
 			err = ssdfs_dentries_tree_create(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to create the dentries tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto unlock_mutable_fields;
 			}
@@ -419,7 +419,7 @@ static int ssdfs_read_inode(struct inode *inode)
 			err = ssdfs_dentries_tree_init(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to init the dentries tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto unlock_mutable_fields;
 			}
@@ -430,7 +430,7 @@ static int ssdfs_read_inode(struct inode *inode)
 			err = ssdfs_xattrs_tree_create(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to create the xattrs tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto unlock_mutable_fields;
 			}
@@ -438,7 +438,7 @@ static int ssdfs_read_inode(struct inode *inode)
 			err = ssdfs_xattrs_tree_init(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to init the xattrs tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				goto unlock_mutable_fields;
 			}
@@ -451,8 +451,8 @@ static int ssdfs_read_inode(struct inode *inode)
 		/* do nothing */
 	} else {
 		err = -EINVAL;
-		SSDFS_ERR("bogus i_mode %o for ino %lu\n",
-			  inode->i_mode, (unsigned long)inode->i_ino);
+		SSDFS_ERR("bogus i_mode %o for ino %llu\n",
+			  inode->i_mode, inode->i_ino);
 		goto unlock_mutable_fields;
 	}
 
@@ -464,20 +464,20 @@ finish_read_inode:
 	return err;
 }
 
-struct inode *ssdfs_iget(struct super_block *sb, ino_t ino)
+struct inode *ssdfs_iget(struct super_block *sb, u64 ino)
 {
 	struct inode *inode;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", (unsigned long)ino);
+	SSDFS_DBG("ino %llu\n", ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	inode = iget_locked(sb, ino);
 	if (unlikely(!inode)) {
 		err = -ENOMEM;
-		SSDFS_ERR("unable to obtain or to allocate inode %lu, err %d\n",
-			  (unsigned long)ino, err);
+		SSDFS_ERR("unable to obtain or to allocate inode %llu, err %d\n",
+			  ino, err);
 		return ERR_PTR(err);
 	}
 
@@ -488,8 +488,8 @@ struct inode *ssdfs_iget(struct super_block *sb, ino_t ino)
 
 	err = ssdfs_read_inode(inode);
 	if (unlikely(err)) {
-		SSDFS_ERR("unable to read inode %lu, err %d\n",
-			  (unsigned long)ino, err);
+		SSDFS_ERR("unable to read inode %llu, err %d\n",
+			  ino, err);
 		goto bad_inode;
 	}
 
@@ -535,7 +535,7 @@ static void ssdfs_init_inode(struct mnt_idmap *idmap,
 			     struct inode *dir,
 			     struct inode *inode,
 			     umode_t mode,
-			     ino_t ino,
+			     u64 ino,
 			     const struct qstr *qstr)
 {
 	struct super_block *sb = dir->i_sb;
@@ -583,15 +583,15 @@ struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
 	struct inode *inode;
 	struct ssdfs_btree_search *search;
 	struct ssdfs_inodes_btree_info *itree;
-	ino_t ino;
+	u64 ino;
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
 	bool encrypt = false;
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("dir_ino %lu, mode %o\n",
-		  (unsigned long)dir->i_ino, mode);
+	SSDFS_DBG("dir_ino %llu, mode %o\n",
+		  dir->i_ino, mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	itree = fsi->inodes_tree;
@@ -610,14 +610,14 @@ struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
 	if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to allocate an inode: "
-			  "dir_ino %lu, err %d\n",
-			  (unsigned long)dir->i_ino, err);
+			  "dir_ino %llu, err %d\n",
+			  dir->i_ino, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto failed_new_inode;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to allocate an inode: "
-			  "dir_ino %lu, err %d\n",
-			  (unsigned long)dir->i_ino, err);
+			  "dir_ino %llu, err %d\n",
+			  dir->i_ino, err);
 		goto failed_new_inode;
 	}
 
@@ -640,8 +640,7 @@ struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
 	if (insert_inode_locked(inode) < 0) {
 		err = -EIO;
 		SSDFS_ERR("inode number already in use: "
-			  "ino %lu\n",
-			  (unsigned long) ino);
+			  "ino %llu\n", ino);
 		goto bad_inode;
 	}
 
@@ -696,7 +695,7 @@ struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
 	mark_inode_dirty(inode);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("new inode %lu is created\n",
+	SSDFS_DBG("new inode %llu is created\n",
 		  ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -728,7 +727,7 @@ int ssdfs_getattr(struct mnt_idmap *idmap,
 	unsigned int flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	flags = ii->flags & SSDFS_FL_USER_VISIBLE;
@@ -760,7 +759,7 @@ static int ssdfs_truncate(struct inode *inode)
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
@@ -794,7 +793,7 @@ static int ssdfs_truncate(struct inode *inode)
 		tree = SSDFS_EXTREE(ii);
 		if (!tree) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("extents tree is absent: ino %lu\n",
+			SSDFS_DBG("extents tree is absent: ino %llu\n",
 				  ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOENT;
@@ -808,7 +807,7 @@ static int ssdfs_truncate(struct inode *inode)
 
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to flush extents tree: "
-					  "ino %lu, err %d\n",
+					  "ino %llu, err %d\n",
 					  inode->i_ino, err);
 				return err;
 			}
@@ -845,7 +844,7 @@ static int ssdfs_setsize(struct inode *inode, struct iattr *attr)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(S_ISREG(inode->i_mode) || S_ISDIR(inode->i_mode) ||
@@ -883,7 +882,7 @@ int ssdfs_setattr(struct mnt_idmap *idmap,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(ssdfs_forced_shutdown(inode->i_sb)))
@@ -935,12 +934,12 @@ void ssdfs_evict_inode(struct inode *inode)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_xattrs_btree_info *xattrs_tree;
-	ino_t ino = inode->i_ino;
+	u64 ino = inode->i_ino;
 	bool want_delete = false;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu mode %o count %d nlink %u\n",
+	SSDFS_DBG("ino %llu mode %o count %d nlink %u\n",
 		  ino, inode->i_mode,
 		  atomic_read(&inode->i_count),
 		  inode->i_nlink);
@@ -951,14 +950,14 @@ void ssdfs_evict_inode(struct inode *inode)
 	if (!inode->i_nlink) {
 		err = filemap_flush(inode->i_mapping);
 		if (err) {
-			SSDFS_WARN("inode %lu flush error: %d\n",
+			SSDFS_WARN("inode %llu flush error: %d\n",
 				   ino, err);
 		}
 	}
 
 	err = filemap_fdatawait(inode->i_mapping);
 	if (err) {
-		SSDFS_WARN("inode %lu fdatawait error: %d\n",
+		SSDFS_WARN("inode %llu fdatawait error: %d\n",
 			   ino, err);
 		ssdfs_clear_dirty_folios(inode->i_mapping);
 	}
@@ -969,7 +968,7 @@ void ssdfs_evict_inode(struct inode *inode)
 		want_delete = false;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu mode %o count %d nlink %u, "
+	SSDFS_DBG("ino %llu mode %o count %d nlink %u, "
 		  "is_bad_inode %#x, want_delete %#x\n",
 		  ino, inode->i_mode,
 		  atomic_read(&inode->i_count),
@@ -991,12 +990,12 @@ void ssdfs_evict_inode(struct inode *inode)
 		if (err == -ENOENT) {
 			err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("extents tree is absent: ino %lu\n",
+			SSDFS_DBG("extents tree is absent: ino %llu\n",
 				  ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 		} else if (err) {
 			SSDFS_WARN("fail to truncate inode: "
-				   "ino %lu, err %d\n",
+				   "ino %llu, err %d\n",
 				   ino, err);
 		}
 
@@ -1004,7 +1003,7 @@ void ssdfs_evict_inode(struct inode *inode)
 			err = ssdfs_xattrs_tree_delete_all(xattrs_tree);
 			if (err) {
 				SSDFS_WARN("fail to truncate xattrs tree: "
-					   "ino %lu, err %d\n",
+					   "ino %llu, err %d\n",
 					   ino, err);
 			}
 		}
@@ -1022,7 +1021,7 @@ void ssdfs_evict_inode(struct inode *inode)
 		err = ssdfs_inodes_btree_delete(fsi->inodes_tree, ino);
 		if (err) {
 			SSDFS_WARN("fail to deallocate raw inode: "
-				   "ino %lu, err %d\n",
+				   "ino %llu, err %d\n",
 				   ino, err);
 		}
 
@@ -1055,11 +1054,11 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 		sizeof(struct ssdfs_xattr_btree_descriptor);
 	int private_flags;
 	size_t raw_inode_size;
-	ino_t ino;
+	u64 ino;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (ssdfs_forced_shutdown(inode->i_sb))
@@ -1101,11 +1100,11 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 #ifdef CONFIG_SSDFS_TESTING
 		err = 0;
 		SSDFS_DBG("fail to find inode: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  ino, err);
 #else
 		SSDFS_ERR("fail to find inode: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  ino, err);
 #endif /* CONFIG_SSDFS_TESTING */
 		goto free_search_object;
@@ -1119,7 +1118,7 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 		err = ssdfs_extents_tree_flush(fsi, ii);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to flush extents tree: "
-				  "ino %lu, err %d\n",
+				  "ino %llu, err %d\n",
 				  inode->i_ino, err);
 			goto finish_write_inode;
 		}
@@ -1138,7 +1137,7 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 		err = ssdfs_dentries_tree_flush(fsi, ii);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to flush dentries tree: "
-				  "ino %lu, err %d\n",
+				  "ino %llu, err %d\n",
 				  inode->i_ino, err);
 			goto finish_write_inode;
 		}
@@ -1159,7 +1158,7 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 		err = ssdfs_xattrs_tree_flush(fsi, ii);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to flush xattrs tree: "
-				  "ino %lu, err %d\n",
+				  "ino %llu, err %d\n",
 				  inode->i_ino, err);
 			goto finish_write_inode;
 		}
@@ -1257,7 +1256,7 @@ finish_write_inode:
 	err = ssdfs_inodes_btree_change(itree, ino, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to change inode: "
-			  "ino %lu, err %d\n",
+			  "ino %llu, err %d\n",
 			  ino, err);
 		goto free_search_object;
 	}
@@ -1266,8 +1265,8 @@ free_search_object:
 	ssdfs_btree_search_free(search);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished: ino %lu, err %d\n",
-		  (unsigned long)inode->i_ino, err);
+	SSDFS_DBG("finished: ino %llu, err %d\n",
+		  inode->i_ino, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -1288,7 +1287,7 @@ int ssdfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	u32 pages_per_seg;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu\n", (unsigned long)dentry->d_inode->i_ino);
+	SSDFS_DBG("ino %llu\n", dentry->d_inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	buf->f_type = SSDFS_SUPER_MAGIC;

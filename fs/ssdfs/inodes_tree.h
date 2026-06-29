@@ -155,18 +155,18 @@ void ssdfs_inodes_btree_destroy(struct ssdfs_fs_info *fsi);
 int ssdfs_inodes_btree_flush(struct ssdfs_inodes_btree_info *tree);
 
 int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
-				ino_t *ino,
+				u64 *ino,
 				struct ssdfs_btree_search *search);
 int ssdfs_inodes_btree_find(struct ssdfs_inodes_btree_info *tree,
-			    ino_t ino,
+			    u64 ino,
 			    struct ssdfs_btree_search *search);
 int ssdfs_inodes_btree_change(struct ssdfs_inodes_btree_info *tree,
-				ino_t ino,
+				u64 ino,
 				struct ssdfs_btree_search *search);
 int ssdfs_inodes_btree_delete(struct ssdfs_inodes_btree_info *tree,
-				ino_t ino);
+				u64 ino);
 int ssdfs_inodes_btree_delete_range(struct ssdfs_inodes_btree_info *tree,
-				    ino_t ino, u16 count);
+				    u64 ino, u16 count);
 
 void ssdfs_debug_inodes_btree_object(struct ssdfs_inodes_btree_info *tree);
 

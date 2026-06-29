@@ -23,7 +23,7 @@
 #ifndef _SSDFS_REQUEST_QUEUE_H
 #define _SSDFS_REQUEST_QUEUE_H
 
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include "ssdfs_fs_info.h"
 

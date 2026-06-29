@@ -22,7 +22,7 @@
 
 #include <linux/kernel.h>
 #include <linux/rwsem.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -43,9 +43,8 @@ int ssdfs_user_getxattr(const struct xattr_handler *handler,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, name %s, buffer %p, size %zu\n",
-		  (unsigned long)inode->i_ino,
-		  name, buffer, size);
+	SSDFS_DBG("ino %llu, name %s, buffer %p, size %zu\n",
+		  inode->i_ino, name, buffer, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	len = strlen(name);
@@ -72,9 +71,8 @@ int ssdfs_user_setxattr(const struct xattr_handler *handler,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, name %s, value %p, size %zu, flags %#x\n",
-		  (unsigned long)inode->i_ino,
-		  name, value, size, flags);
+	SSDFS_DBG("ino %llu, name %s, value %p, size %zu, flags %#x\n",
+		  inode->i_ino, name, value, size, flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	len = strlen(name);

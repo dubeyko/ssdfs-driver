@@ -14,7 +14,7 @@
 
 #include <linux/pagemap.h>
 #include <linux/slab.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <crypto/hash.h>
 
 #include "peb_mapping_queue.h"

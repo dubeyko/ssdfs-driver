@@ -138,7 +138,7 @@ u64 ssdfs_zns_zone_write_pointer(struct super_block *sb, loff_t offset);
 bool ssdfs_empty_dir(struct inode *dir);
 int ssdfs_inode_by_name(struct inode *dir,
 			const struct qstr *child,
-			ino_t *ino);
+			u64 *ino);
 int ssdfs_create(struct mnt_idmap *idmap,
 		 struct inode *dir, struct dentry *dentry,
 		 umode_t mode, bool excl);
@@ -165,7 +165,7 @@ int ssdfs_stop_global_fsck_thread(struct ssdfs_fs_info *fsi);
 /* inode.c */
 bool is_raw_inode_checksum_correct(struct ssdfs_fs_info *fsi,
 				   void *buf, size_t size);
-struct inode *ssdfs_iget(struct super_block *sb, ino_t ino);
+struct inode *ssdfs_iget(struct super_block *sb, u64 ino);
 struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
 			      struct inode *dir, umode_t mode,
 			      const struct qstr *qstr);

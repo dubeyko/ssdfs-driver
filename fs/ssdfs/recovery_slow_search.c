@@ -14,7 +14,7 @@
 
 #include <linux/slab.h>
 #include <linux/kthread.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/blkdev.h>
 
 #include "peb_mapping_queue.h"

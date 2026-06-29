@@ -1228,8 +1228,8 @@ static inline
 bool can_be_merged_into_extent(struct folio *folio1, struct folio *folio2)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(folio1->mapping->host->i_sb);
-	ino_t ino1 = folio1->mapping->host->i_ino;
-	ino_t ino2 = folio2->mapping->host->i_ino;
+	u64 ino1 = folio1->mapping->host->i_ino;
+	u64 ino2 = folio2->mapping->host->i_ino;
 	int pages_per_folio = fsi->pagesize >> PAGE_SHIFT;
 	pgoff_t index1 = folio1->index;
 	pgoff_t index2 = folio2->index;

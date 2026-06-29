@@ -15,7 +15,7 @@
 
 #include <linux/pagemap.h>
 #include <linux/slab.h>
-#include <linux/pagevec.h>
+#include <linux/folio_batch.h>
 #include <linux/xarray.h>
 
 #include <kunit/visibility.h>
