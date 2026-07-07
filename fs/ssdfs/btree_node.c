@@ -12851,6 +12851,7 @@ int ssdfs_btree_node_delete_item(struct ssdfs_btree_search *search)
 	struct ssdfs_btree_node *node;
 	u16 items_count, index_count;
 	bool is_node_empty = false;
+	bool dont_delete_node = false;
 	u16 flags;
 	int err = 0;
 
@@ -13003,13 +13004,16 @@ int ssdfs_btree_node_delete_item(struct ssdfs_btree_search *search)
 		  search->result.search_cno);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	dont_delete_node = search->request.flags &
+				SSDFS_BTREE_SEARCH_DONT_DELETE_BTREE_NODE;
+
 	switch (node->tree->type) {
 	case SSDFS_INODES_BTREE:
 		set_ssdfs_btree_node_dirty(node);
 		break;
 
 	default:
-		if (is_node_empty)
+		if (is_node_empty && !dont_delete_node)
 			set_ssdfs_btree_node_pre_deleted(node);
 		else
 			set_ssdfs_btree_node_dirty(node);
@@ -13046,6 +13050,7 @@ int ssdfs_btree_node_delete_range(struct ssdfs_btree_search *search)
 	struct ssdfs_btree_node *node;
 	u16 items_count, index_count;
 	bool is_node_empty = false;
+	bool dont_delete_node = false;
 	u16 flags;
 	int err = 0;
 
@@ -13198,13 +13203,16 @@ int ssdfs_btree_node_delete_range(struct ssdfs_btree_search *search)
 		  search->result.search_cno);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	dont_delete_node = search->request.flags &
+				SSDFS_BTREE_SEARCH_DONT_DELETE_BTREE_NODE;
+
 	switch (node->tree->type) {
 	case SSDFS_INODES_BTREE:
 		set_ssdfs_btree_node_dirty(node);
 		break;
 
 	default:
-		if (is_node_empty)
+		if (is_node_empty && !dont_delete_node)
 			set_ssdfs_btree_node_pre_deleted(node);
 		else
 			set_ssdfs_btree_node_dirty(node);
