@@ -436,6 +436,19 @@ config SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	  If you are going to check btree consistency in SSDFS driver then
 	  choose Y here. If unsure, say N.
 
+config SSDFS_MAPTBL_CACHE_STRICT_CHECK
+	bool "SSDFS PEB mapping table's cache strict check"
+	depends on SSDFS
+	help
+	  This option enables checking the PEB mapping table's
+	  cache consistency after every cache's operation.
+	  This option could seriously degrades the file system
+	  performance.
+
+	  If you are going to check PEB mapping table's cache
+	  consistency in SSDFS driver then choose Y here.
+	  If unsure, say N.
+
 config SSDFS_TESTING
 	bool "SSDFS testing"
 	depends on SSDFS

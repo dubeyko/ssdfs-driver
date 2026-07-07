@@ -92,6 +92,11 @@ void ssdfs_map_cache_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
+#ifdef CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK
+static
+void ssdfs_maptbl_cache_check_consistency(struct ssdfs_maptbl_cache *cache);
+#endif /* CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK */
+
 /*
  * ssdfs_maptbl_cache_init() - init mapping table cache
  */
@@ -1809,6 +1814,7 @@ int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
 	size_t pair_size = sizeof(struct ssdfs_leb2peb_pair);
 	struct ssdfs_maptbl_cache_peb_state *dest_state;
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
+	u64 leb_id1, leb_id2;
 	u16 items_count;
 	u32 area_offset = U32_MAX;
 	int err;
@@ -1841,6 +1847,23 @@ int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
 	}
 
 	dest_pair = LEB2PEB_PAIR_AREA(kaddr);
+
+	if (item_index > 0) {
+		struct ssdfs_leb2peb_pair *prev_pair;
+
+		prev_pair = dest_pair + (item_index - 1);
+		leb_id1 = le64_to_cpu(prev_pair->leb_id);
+		leb_id2 = le64_to_cpu(src_pair->leb_id);
+
+		if (leb_id1 > leb_id2) {
+			SSDFS_ERR("invalid position for insert: "
+				  "item_index %u, prev_leb_id %llu, "
+				  "leb_id %llu\n",
+				  item_index, leb_id1, leb_id2);
+			return -ERANGE;
+		}
+	}
+
 	dest_pair += item_index;
 
 	ssdfs_memcpy(dest_pair, 0, pair_size,
@@ -2243,6 +2266,7 @@ int __ssdfs_maptbl_cache_insert_leb(void *kaddr, u16 item_index,
 	struct ssdfs_maptbl_cache_peb_state *dst_state = NULL;
 	size_t pair_size = sizeof(struct ssdfs_leb2peb_pair);
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
+	u64 leb_id1, leb_id2;
 	u16 items_count;
 	u32 area_offset = U32_MAX;
 	int err;
@@ -2270,6 +2294,39 @@ int __ssdfs_maptbl_cache_insert_leb(void *kaddr, u16 item_index,
 	}
 
 	dst_pair = LEB2PEB_PAIR_AREA(kaddr);
+
+	if (item_index > 0) {
+		struct ssdfs_leb2peb_pair *prev_pair;
+
+		prev_pair = dst_pair + (item_index - 1);
+		leb_id1 = le64_to_cpu(prev_pair->leb_id);
+		leb_id2 = le64_to_cpu(pair->leb_id);
+
+		if (leb_id1 > leb_id2) {
+			SSDFS_ERR("invalid position for insert: "
+				  "item_index %u, prev_leb_id %llu, "
+				  "leb_id %llu\n",
+				  item_index, leb_id1, leb_id2);
+			return -ERANGE;
+		}
+	}
+
+	if ((item_index + 1) < items_count) {
+		struct ssdfs_leb2peb_pair *next_pair;
+
+		next_pair = dst_pair + (item_index + 1);
+		leb_id1 = le64_to_cpu(pair->leb_id);
+		leb_id2 = le64_to_cpu(next_pair->leb_id);
+
+		if (leb_id1 > leb_id2) {
+			SSDFS_ERR("invalid position for insert: "
+				  "item_index %u, leb_id %llu, "
+				  "next_leb_id %llu\n",
+				  item_index, leb_id1, leb_id2);
+			return -ERANGE;
+		}
+	}
+
 	dst_pair += item_index;
 
 	ssdfs_memcpy(dst_pair, 0, pair_size,
@@ -2894,6 +2951,10 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 
 finish_leb_caching:
 	up_write(&cache->lock);
+
+#ifdef CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK
+	ssdfs_maptbl_cache_check_consistency(cache);
+#endif /* CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK */
 
 	return err;
 }
@@ -4034,6 +4095,10 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 							 consistency);
 	up_write(&cache->lock);
 
+#ifdef CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK
+	ssdfs_maptbl_cache_check_consistency(cache);
+#endif /* CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK */
+
 	return err;
 }
 
@@ -4219,6 +4284,10 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 
 finish_add_migration_peb:
 	up_write(&cache->lock);
+
+#ifdef CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK
+	ssdfs_maptbl_cache_check_consistency(cache);
+#endif /* CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK */
 
 	return err;
 }
@@ -4900,6 +4969,10 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 	}
 	up_write(&cache->lock);
 
+#ifdef CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK
+	ssdfs_maptbl_cache_check_consistency(cache);
+#endif /* CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK */
+
 	return err;
 }
 
@@ -4948,5 +5021,57 @@ int ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 	}
 	up_write(&cache->lock);
 
+#ifdef CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK
+	ssdfs_maptbl_cache_check_consistency(cache);
+#endif /* CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK */
+
 	return err;
 }
+
+#ifdef CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK
+static
+void ssdfs_maptbl_cache_check_consistency(struct ssdfs_maptbl_cache *cache)
+{
+	struct ssdfs_maptbl_cache_header *hdr;
+	struct ssdfs_leb2peb_pair *start_pair, *cur_pair;
+	struct folio *folio;
+	void *kaddr;
+	u16 items_count;
+	u64 prev_leb_id = U64_MAX;
+	u64 cur_leb_id;
+	int i, j;
+
+	down_read(&cache->lock);
+	for (i = 0; i < folio_batch_count(&cache->batch); i++) {
+		folio = cache->batch.folios[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_folio_lock(folio);
+		kaddr = kmap_local_folio(folio, 0);
+		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
+		items_count = le16_to_cpu(hdr->items_count);
+		start_pair = LEB2PEB_PAIR_AREA(kaddr);
+		for (j = 0; j < items_count; j++) {
+			cur_pair = start_pair + j;
+
+			cur_leb_id = le64_to_cpu(cur_pair->leb_id);
+
+			if (prev_leb_id >= U64_MAX)
+				prev_leb_id = cur_leb_id;
+			else if (prev_leb_id > cur_leb_id) {
+				SSDFS_ERR_DBG("cache is corrupted: "
+					      "folio_index %d\n", i);
+				ssdfs_maptbl_cache_show_items(kaddr);
+				BUG();
+			} else
+				prev_leb_id = cur_leb_id;
+		}
+		kunmap_local(kaddr);
+		ssdfs_folio_unlock(folio);
+	}
+	up_read(&cache->lock);
+}
+#endif /* CONFIG_SSDFS_MAPTBL_CACHE_STRICT_CHECK */
