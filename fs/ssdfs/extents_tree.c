@@ -1896,6 +1896,8 @@ finish_extents_tree_flush:
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2633,6 +2635,8 @@ int ssdfs_extents_tree_truncate(struct inode *inode)
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;

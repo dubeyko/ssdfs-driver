@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.78 [July 07, 2026]
+    (*) Fix generic/001 xfstests related issues.
+
 v.5.77 [June 06, 2026]
     (*) Fix logic of resolving PEB's pre-deleted state.
 

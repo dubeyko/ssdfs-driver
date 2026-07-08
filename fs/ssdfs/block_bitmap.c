@@ -6202,10 +6202,11 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("allocation_pool %zu, used_blks %u, "
-		  "metadata_items %u\n",
+		  "metadata_items %u, invalid_blks %u\n",
 		  blk_bmap->allocation_pool,
 		  blk_bmap->used_blks,
-		  blk_bmap->metadata_items);
+		  blk_bmap->metadata_items,
+		  blk_bmap->invalid_blks);
 
 	calculated = ssdfs_calculate_used_blocks(blk_bmap, 0);
 	if (calculated < 0) {
@@ -6342,6 +6343,13 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("allocation_pool %zu, used_blks %u, "
+		  "metadata_items %u, invalid_blks %u\n",
+		  blk_bmap->allocation_pool,
+		  blk_bmap->used_blks,
+		  blk_bmap->metadata_items,
+		  blk_bmap->invalid_blks);
+
 	SSDFS_DBG("set dirty state\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
