@@ -87,11 +87,15 @@ enum {
  * struct ssdfs_phys_offset_table_array - array of log's fragments in PEB
  * @state: PEB's translation table state
  * @fragment_count: fragments count
+ * @total_blks_in_extents: total number of blocks in translation extents
+ * @initialized_blks: total number of initialized blocks
  * @array: array of fragments
  */
 struct ssdfs_phys_offset_table_array {
 	atomic_t state;
 	atomic_t fragment_count;
+	atomic_t total_blks_in_extents;
+	atomic_t initialized_blks;
 	struct ssdfs_sequence_array *sequence;
 };
 

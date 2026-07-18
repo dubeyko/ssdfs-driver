@@ -224,7 +224,6 @@ void ssdfs_blk2off_frag_free(void *ptr)
  * @capacity: maximum amount of items
  * @total_blks_in_extents: total number of blocks in extents
  * @initialized_blks: number of initialized blocks
- * @ignored_blks: number of ignored blocks in processed extents
  * @pot_hdr: fragment header
  * @pot_hdr_off: fragment header's offset
  * @bmap: temporary bitmap
@@ -242,7 +241,6 @@ struct ssdfs_blk2off_init {
 	u16 capacity;
 	u32 total_blks_in_extents;
 	u32 initialized_blks;
-	u32 ignored_blks;
 
 	struct ssdfs_phys_offset_table_header pot_hdr;
 	u32 pot_hdr_off;
@@ -650,6 +648,8 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 			int fragment_state = SSDFS_BLK2OFF_FRAG_INITIALIZED;
 
 			atomic_set(&table->fragment_count, 1);
+			atomic_set(&table->total_blks_in_extents, 0);
+			atomic_set(&table->initialized_blks, 0);
 
 			fragment = ssdfs_blk2off_frag_alloc();
 			if (IS_ERR_OR_NULL(fragment)) {
@@ -686,6 +686,8 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 				   SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
 		} else if (state == SSDFS_BLK2OFF_OBJECT_CREATED) {
 			atomic_set(&table->fragment_count, 0);
+			atomic_set(&table->total_blks_in_extents, 0);
+			atomic_set(&table->initialized_blks, 0);
 			atomic_set(&table->state,
 				   SSDFS_BLK2OFF_TABLE_CREATED);
 		} else
@@ -2302,7 +2304,6 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 			  len, already_initialized_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		portion->ignored_blks += len - already_initialized_blks;
 		return -ENOENT;
 	}
 
@@ -2497,7 +2498,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		}
 
 		peb_index = portion->peb_index;
-
+		atomic_inc(&portion->table->peb[peb_index].initialized_blks);
 		bitmap_set(portion->bmap, cur_blk, 1);
 
 		pos->cno = portion->cno;
@@ -2759,6 +2760,7 @@ int __ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 					int extent_index,
 					struct ssdfs_translation_extent *extent)
 {
+	struct ssdfs_phys_offset_table_array *array;
 	struct ssdfs_dynamic_array *lblk2off;
 	size_t pos_size = sizeof(struct ssdfs_offset_position);
 	u32 logical_blk;
@@ -2776,6 +2778,7 @@ int __ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 	BUG_ON(extent_index >= portion->env->log.blk2off_tbl.extents.count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	array = &portion->table->peb[portion->peb_index];
 	lblk2off = &portion->table->lblk2off;
 
 	logical_blk = le16_to_cpu(extent->logical_blk);
@@ -2837,6 +2840,8 @@ int __ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 			} else
 				continue;
 		}
+
+		atomic_inc(&array->initialized_blks);
 
 		err = ssdfs_blk2off_table_bmap_clear(&portion->table->lbmap,
 						     SSDFS_LBMAP_STATE_INDEX,
@@ -3210,6 +3215,8 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 	int state;
 	int count;
 	unsigned long processed_blks;
+	int initialized_blks;
+	int total_blks_in_extents;
 	bool is_initialized_completely = false;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3239,14 +3246,20 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 
 	processed_blks = bitmap_weight(portion->processed_blks_bmap,
 					portion->capacity);
+	initialized_blks = atomic_read(&table->peb[peb_index].initialized_blks);
+	total_blks_in_extents =
+		atomic_read(&table->peb[peb_index].total_blks_in_extents);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("processed_blks %lu, initialized_blks %u, "
-		  "total_blks_in_extents %u, ignored_blks %u\n",
+	SSDFS_DBG("processed_blks %lu, portion (initialized_blks %u, "
+		  "total_blks_in_extents %u), "
+		  "peb_table (initialized_blks %d, "
+		  "total_blks_in_extents %d)\n",
 		  processed_blks,
 		  portion->initialized_blks,
 		  portion->total_blks_in_extents,
-		  portion->ignored_blks);
+		  initialized_blks,
+		  total_blks_in_extents);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (processed_blks != portion->initialized_blks) {
@@ -3268,18 +3281,16 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 		return -ERANGE;
 	}
 
-	is_initialized_completely =
-		portion->initialized_blks >= portion->total_blks_in_extents;
+	is_initialized_completely = initialized_blks == total_blks_in_extents;
 
 	if (!is_initialized_completely) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("table initialized partially: peb_index %u, "
-			  "initialized_blks %u, ignored_blks %u, "
-			  "total_blks_in_extents %u\n",
+			  "initialized_blks %d, "
+			  "total_blks_in_extents %d\n",
 			  peb_index,
-			  portion->initialized_blks,
-			  portion->ignored_blks,
-			  portion->total_blks_in_extents);
+			  initialized_blks,
+			  total_blks_in_extents);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_define_peb_table_state;
 	}
@@ -3315,13 +3326,11 @@ finish_define_peb_table_state:
 	case SSDFS_BLK2OFF_TABLE_PARTIAL_INIT:
 	case SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT:
 		SSDFS_DBG("peb_index %u, processed_blks %lu, "
-			  "initialized_blks %u, total_blks_in_extents %u, "
-			  "ignored_blks %u\n",
+			  "initialized_blks %u, total_blks_in_extents %u\n",
 			  peb_index,
 			  processed_blks,
 			  portion->initialized_blks,
-			  portion->total_blks_in_extents,
-			  portion->ignored_blks);
+			  portion->total_blks_in_extents);
 		break;
 
 	default:
@@ -3532,11 +3541,13 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("table %p, peb_index %u, peb_id %llu\n",
-		  table, pebi->peb_index, pebi->peb_id);
+	SSDFS_ERR("table %p, seg %llu, peb_index %u, peb_id %llu\n",
+		  table, pebi->pebc->parent_si->seg_id,
+		  pebi->peb_index, pebi->peb_id);
 #else
-	SSDFS_DBG("table %p, peb_index %u, peb_id %llu\n",
-		  table, pebi->peb_index, pebi->peb_id);
+	SSDFS_DBG("table %p, seg %llu, peb_index %u, peb_id %llu\n",
+		  table, pebi->pebc->parent_si->seg_id,
+		  pebi->peb_index, pebi->peb_id);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	memset(&portion, 0, sizeof(struct ssdfs_blk2off_init));
@@ -3558,7 +3569,6 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 	portion.cno = cno;
 	portion.total_blks_in_extents = 0;
 	portion.initialized_blks = 0;
-	portion.ignored_blks = 0;
 
 	down_write(&table->translation_lock);
 
@@ -3599,6 +3609,17 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 			  extent_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 	};
+
+	switch (atomic_read(&table->peb[pebi->peb_index].state)) {
+	case SSDFS_BLK2OFF_TABLE_CREATED:
+		atomic_set(&table->peb[pebi->peb_index].total_blks_in_extents,
+			   portion.total_blks_in_extents);
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
 
 	stream = &env->log.blk2off_tbl.portion.fragments.stream;
 
@@ -8146,6 +8167,17 @@ bool should_fragment_been_commited(struct ssdfs_blk2off_table *table,
 						  frag_upper_bound - 1,
 						  start_offset_id,
 						  end_offset_id)) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("ignore fragment: "
+				  "frag_peb_id %llu, peb_id %llu, "
+				  "sequence_id %u, extent_index %u, "
+				  "fragment (start_id %u, id_count %d), "
+				  "extent (start_id %u, end_id %u)\n",
+				  frag_peb_id, peb_id,
+				  sequence_id, extent_index,
+				  frag_start_id, frag_id_count,
+				  start_offset_id, end_offset_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			/* continue check */
 			has_offset_id_found = false;
 		} else {

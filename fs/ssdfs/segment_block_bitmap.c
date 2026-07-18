@@ -845,6 +845,10 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	WARN_ON(!is_pages_balance_correct(ptr));
+
+	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -923,6 +927,10 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	WARN_ON(!is_pages_balance_correct(ptr));
+
+	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -1132,6 +1140,10 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 finish_reserve_extent:
 #ifdef CONFIG_SSDFS_DEBUG
 	WARN_ON(!is_pages_balance_correct(ptr));
+
+	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
@@ -1255,6 +1267,10 @@ int ssdfs_segment_blk_bmap_release_extent(struct ssdfs_segment_blk_bmap *ptr,
 		  ptr->pages_per_seg);
 
 	WARN_ON(!is_pages_balance_correct(ptr));
+
+	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_release_extent:
@@ -1332,6 +1348,10 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	WARN_ON(!is_pages_balance_correct(ptr));
+
+	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -1408,6 +1428,10 @@ int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	WARN_ON(!is_pages_balance_correct(ptr));
+
+	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -1919,6 +1943,10 @@ finish_define_bmap_index:
 
 #ifdef CONFIG_SSDFS_DEBUG
 	WARN_ON(!is_pages_balance_correct(bmap));
+
+	BUG_ON(atomic_read(&bmap->seg_free_blks) < 0);
+	BUG_ON(atomic_read(&bmap->seg_valid_blks) < 0);
+	BUG_ON(atomic_read(&bmap->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
