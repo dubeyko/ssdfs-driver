@@ -2957,6 +2957,7 @@ int ssdfs_maptbl_start_thread(struct ssdfs_peb_mapping_table *tbl)
 	tbl->thread.task = kthread_create(threadfn, tbl, fmt);
 	if (IS_ERR_OR_NULL(tbl->thread.task)) {
 		err = PTR_ERR(tbl->thread.task);
+		tbl->thread.task = NULL;
 		if (err == -EINTR) {
 			/*
 			 * Ignore this error.

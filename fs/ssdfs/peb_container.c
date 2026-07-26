@@ -321,6 +321,8 @@ int ssdfs_peb_start_thread(struct ssdfs_peb_container *pebc, int type)
 						 pebc->peb_index);
 	if (IS_ERR_OR_NULL(pebc->thread[type].task)) {
 		err = PTR_ERR(pebc->thread[type].task);
+		pebc->thread[type].task = NULL;
+
 		if (err == -EINTR) {
 			/*
 			 * Ignore this error.

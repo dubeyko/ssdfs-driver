@@ -77,6 +77,7 @@ struct ssdfs_maptbl_peb_relation;
  */
 void ssdfs_maptbl_cache_init(struct ssdfs_maptbl_cache *cache);
 void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache);
+void ssdfs_maptbl_cache_forget_batch(struct ssdfs_maptbl_cache *cache);
 
 int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 					u64 leb_id,

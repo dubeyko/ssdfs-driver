@@ -1148,6 +1148,7 @@ int ssdfs_recovery_start_thread(struct ssdfs_recovery_env *env,
 	if (IS_ERR_OR_NULL(env->thread.task)) {
 		err = (env->thread.task == NULL ? -ENOMEM :
 						PTR_ERR(env->thread.task));
+		env->thread.task = NULL;
 		if (err == -EINTR) {
 			/*
 			 * Ignore this error.

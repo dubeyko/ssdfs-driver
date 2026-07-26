@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.80 [July 25, 2026]
+    (*) Fix multiple issues in PEB mapping table's cache logic.
+
 v.5.79 [July 18, 2026]
     (*) Fix offsets translation table initialization issue.
 

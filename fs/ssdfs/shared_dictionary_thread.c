@@ -403,6 +403,7 @@ int ssdfs_shared_dict_start_thread(struct ssdfs_shared_dict_btree_info *tree)
 	if (IS_ERR_OR_NULL(ptr->thread.task)) {
 		err = (ptr->thread.task == NULL ? -ENOMEM :
 						PTR_ERR(ptr->thread.task));
+		ptr->thread.task = NULL;
 		if (err == -EINTR) {
 			/*
 			 * Ignore this error.

@@ -2322,6 +2322,12 @@ ssdfs_prepare_maptbl_cache_descriptor(struct ssdfs_metadata_descriptor *desc,
 	}
 
 	desc->check.csum = cpu_to_le32(csum);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("payload_size %u, csum %#x\n",
+		  payload_size,
+		  csum);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static
@@ -2485,6 +2491,9 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	sb_offset += payload->maptbl_cache.bytes_count;
 
+	sb_offset += PAGE_SIZE - 1;
+	sb_offset = (sb_offset >> PAGE_SHIFT) << PAGE_SHIFT;
+
 	cur_hdr_desc = &hdr_desc[SSDFS_LOG_FOOTER_INDEX];
 	cur_hdr_desc->offset = cpu_to_le32(sb_offset);
 	cur_hdr_desc->size = cpu_to_le32(footer_size);
@@ -2502,6 +2511,8 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	log_pages_count = PAGE_SIZE; /* header size */
 	log_pages_count += payload->maptbl_cache.bytes_count;
+	log_pages_count += PAGE_SIZE - 1;
+	log_pages_count = (log_pages_count >> PAGE_SHIFT) << PAGE_SHIFT;
 	log_pages_count += PAGE_SIZE; /* footer size */
 	log_pages_count >>= PAGE_SHIFT;
 
@@ -2523,6 +2534,17 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	sb_offset += offsetof(struct ssdfs_log_footer, payload);
 	cur_hdr_desc = &footer_desc[SSDFS_SNAPSHOT_RULES_AREA_INDEX];
+
+	if (sb_offset >= (peb_offset + fsi->erasesize)) {
+		SSDFS_ERR("invalid offset: "
+			  "offset %llu, peb_offset %llu, erasesize %u\n",
+			  sb_offset, peb_offset, fsi->erasesize);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#else
+		return -ERANGE;
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
 
 	err = ssdfs_prepare_snapshot_rules_for_commit(fsi, cur_hdr_desc,
 						      (u32)sb_offset);
@@ -2583,12 +2605,16 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	sb_offset += peb_offset;
 
+	if (sb_offset >= (peb_offset + fsi->erasesize)) {
+		SSDFS_ERR("invalid offset: "
+			  "offset %llu, peb_offset %llu, erasesize %u\n",
+			  sb_offset, peb_offset, fsi->erasesize);
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu, peb_offset %llu, erasesize %u\n",
-		  sb_offset, peb_offset, fsi->erasesize);
-
-	BUG_ON(sb_offset >= (peb_offset + fsi->erasesize));
+		BUG();
+#else
+		return -ERANGE;
 #endif /* CONFIG_SSDFS_DEBUG */
+	}
 
 	if (fsi->devops->can_write_block) {
 		err = fsi->devops->can_write_block(sb, PAGE_SIZE,
@@ -2661,12 +2687,16 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		if (err)
 			goto cleanup_after_failure;
 
+		if (sb_snap_offset >= (peb_offset + fsi->erasesize)) {
+			SSDFS_ERR("invalid offset: "
+				  "offset %llu, peb_offset %llu, erasesize %u\n",
+				  sb_snap_offset, peb_offset, fsi->erasesize);
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("sb_snap_offset %llu, peb_offset %llu, erasesize %u\n",
-			  sb_snap_offset, peb_offset, fsi->erasesize);
-
-		BUG_ON(sb_snap_offset >= (peb_offset + fsi->erasesize));
+			BUG();
+#else
+			return -ERANGE;
 #endif /* CONFIG_SSDFS_DEBUG */
+		}
 
 		if (fsi->devops->can_write_block) {
 			err = fsi->devops->can_write_block(sb, PAGE_SIZE,
@@ -2731,12 +2761,16 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		folio_set_dirty(payload_folio);
 		ssdfs_folio_unlock(payload_folio);
 
+		if (sb_offset >= (peb_offset + fsi->erasesize)) {
+			SSDFS_ERR("invalid offset: "
+				  "offset %llu, peb_offset %llu, erasesize %u\n",
+				  sb_offset, peb_offset, fsi->erasesize);
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu, peb_offset %llu, erasesize %u\n",
-		  sb_offset, peb_offset, fsi->erasesize);
-
-		BUG_ON(sb_offset >= (peb_offset + fsi->erasesize));
+			BUG();
+#else
+			return -ERANGE;
 #endif /* CONFIG_SSDFS_DEBUG */
+		}
 
 		if (fsi->devops->can_write_block) {
 			err = fsi->devops->can_write_block(sb, PAGE_SIZE,
@@ -2788,12 +2822,16 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	folio_set_dirty(folio);
 	ssdfs_folio_unlock(folio);
 
+	if (sb_offset >= (peb_offset + fsi->erasesize)) {
+		SSDFS_ERR("invalid offset: "
+			  "offset %llu, peb_offset %llu, erasesize %u\n",
+			  sb_offset, peb_offset, fsi->erasesize);
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu, peb_offset %llu, erasesize %u\n",
-		  sb_offset, peb_offset, fsi->erasesize);
-
-	BUG_ON(sb_offset >= (peb_offset + fsi->erasesize));
+		BUG();
+#else
+		return -ERANGE;
 #endif /* CONFIG_SSDFS_DEBUG */
+	}
 
 	if (fsi->devops->can_write_block) {
 		err = fsi->devops->can_write_block(sb, PAGE_SIZE,
@@ -2855,12 +2893,16 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		if (err)
 			goto cleanup_after_failure;
 
+		if (sb_snap_offset >= (peb_offset + fsi->erasesize)) {
+			SSDFS_ERR("invalid offset: "
+				  "offset %llu, peb_offset %llu, erasesize %u\n",
+				  sb_snap_offset, peb_offset, fsi->erasesize);
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("sb_snap_offset %llu, peb_offset %llu, erasesize %u\n",
-			  sb_snap_offset, peb_offset, fsi->erasesize);
-
-		BUG_ON(sb_snap_offset >= (peb_offset + fsi->erasesize));
+			BUG();
+#else
+			return -ERANGE;
 #endif /* CONFIG_SSDFS_DEBUG */
+		}
 
 		if (fsi->devops->can_write_block) {
 			err = fsi->devops->can_write_block(sb, PAGE_SIZE,

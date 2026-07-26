@@ -2560,13 +2560,13 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 	struct ssdfs_segment_header *seg_hdr;
 	struct ssdfs_metadata_descriptor *meta_desc;
 	struct ssdfs_maptbl_cache_header *maptbl_cache_hdr;
+	struct folio *folio;
+	void *kaddr;
 	u32 read_off;
 	u32 read_bytes = 0;
 	u32 bytes_count;
 	u32 folios_count;
 	u64 peb_id;
-	struct folio *folio;
-	void *kaddr;
 	u64 prev_end_leb;
 	u32 csum = ~0;
 	int i;
@@ -2674,7 +2674,6 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 		}
 
 		prev_end_leb = le64_to_cpu(maptbl_cache_hdr->end_leb);
-
 		csum = crc32(csum, kaddr,
 			     le16_to_cpu(maptbl_cache_hdr->bytes_count));
 
@@ -2688,16 +2687,20 @@ unlock_cur_folio:
 
 	if (csum != le32_to_cpu(meta_desc->check.csum)) {
 		err = -EIO;
-		SSDFS_ERR("invalid checksum\n");
+		SSDFS_ERR("invalid checksum: "
+			  "csum1 %#x, csum2 %#x\n",
+			  csum,
+			  le32_to_cpu(meta_desc->check.csum));
 		goto finish_read_maptbl_cache;
 	}
 
-	if (bytes_count < PAGE_SIZE)
-		bytes_count = PAGE_SIZE;
-
-	atomic_set(&fsi->maptbl_cache.bytes_count, (int)bytes_count);
+	bytes_count = folios_count * PAGE_SIZE;
+	atomic_set(&fsi->maptbl_cache.bytes_count, bytes_count);
 
 finish_read_maptbl_cache:
+	if (unlikely(err))
+		ssdfs_maptbl_cache_forget_batch(&fsi->maptbl_cache);
+
 	up_write(&fsi->maptbl_cache.lock);
 
 	return err;

@@ -130,6 +130,25 @@ void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache)
 }
 
 /*
+ * ssdfs_maptbl_cache_forget_batch() - release cache's folio batch only
+ * @cache: maptbl cache object
+ *
+ * This method releases the folios accumulated in the cache's batch
+ * without touching the PEB mappings queue. It is intended for use on
+ * error paths.
+ */
+void ssdfs_maptbl_cache_forget_batch(struct ssdfs_maptbl_cache *cache)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cache);
+
+	SSDFS_DBG("cache %p\n", cache);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_map_cache_folio_batch_release(&cache->batch);
+}
+
+/*
  * __ssdfs_maptbl_cache_area_size() - calculate areas' size in fragment
  * @hdr: fragment's header
  * @leb2peb_area_size: LEB2PEB area size [out]
@@ -1512,6 +1531,7 @@ finish_leb2peb_conversion:
 
 /*
  * ssdfs_maptbl_cache_init_folio() - init folio of maptbl cache
+ * @cache: maptbl cache object
  * @kaddr: pointer on maptbl cache's fragment
  * @sequence_id: fragment's sequence ID number
  *
@@ -1524,17 +1544,19 @@ finish_leb2peb_conversion:
  * %-EINVAL     - invalid input.
  */
 static
-int ssdfs_maptbl_cache_init_folio(void *kaddr, unsigned sequence_id)
+int ssdfs_maptbl_cache_init_folio(struct ssdfs_maptbl_cache *cache,
+				  void *kaddr, unsigned sequence_id)
 {
 	struct ssdfs_maptbl_cache_header *hdr;
 	size_t hdr_size = sizeof(struct ssdfs_maptbl_cache_header);
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	size_t magic_size = peb_state_size;
 	size_t threshold_size = hdr_size + magic_size;
+	int total_size;
 	__le32 *magic;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!kaddr);
+	BUG_ON(!cache || !kaddr);
 
 	SSDFS_DBG("kaddr %p, sequence_id %u\n",
 		  kaddr, sequence_id);
@@ -1565,11 +1587,28 @@ int ssdfs_maptbl_cache_init_folio(void *kaddr, unsigned sequence_id)
 	magic = (__le32 *)((u8 *)kaddr + hdr_size);
 	*magic = cpu_to_le32(SSDFS_MAPTBL_CACHE_PEB_STATE_MAGIC);
 
+	total_size = folio_batch_count(&cache->batch);
+	total_size *= PAGE_SIZE;
+
+	if (total_size != atomic_read(&cache->bytes_count)) {
+		SSDFS_ERR("corrupted mapping table cache: "
+			  "cache->bytes_count %d\n",
+			  atomic_read(&cache->bytes_count));
+		return -ERANGE;
+	}
+
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("cache->bytes_count %d\n",
+		  atomic_read(&cache->bytes_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
 /*
  * ssdfs_shift_right_peb_state_area() - shift the whole PEB state area
+ * @cache: maptbl cache object
  * @kaddr: pointer on maptbl cache's fragment
  * @shift: size of shift in bytes
  *
@@ -1583,7 +1622,8 @@ int ssdfs_maptbl_cache_init_folio(void *kaddr, unsigned sequence_id)
  * %-ERANGE     - internal error.
  */
 static inline
-int ssdfs_shift_right_peb_state_area(void *kaddr, size_t shift)
+int ssdfs_shift_right_peb_state_area(struct ssdfs_maptbl_cache *cache,
+				     void *kaddr, size_t shift)
 {
 	struct ssdfs_maptbl_cache_header *hdr;
 	void *area = NULL;
@@ -1596,7 +1636,7 @@ int ssdfs_shift_right_peb_state_area(void *kaddr, size_t shift)
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!kaddr);
+	BUG_ON(!cache || !kaddr);
 
 	SSDFS_DBG("kaddr %p, shift %zu\n", kaddr, shift);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1664,6 +1704,7 @@ int ssdfs_shift_right_peb_state_area(void *kaddr, size_t shift)
 
 /*
  * ssdfs_shift_left_peb_state_area() - shift the whole PEB state area
+ * @cache: maptbl cache object
  * @kaddr: pointer on maptbl cache's fragment
  * @shift: size of shift in bytes
  *
@@ -1677,7 +1718,8 @@ int ssdfs_shift_right_peb_state_area(void *kaddr, size_t shift)
  * %-ERANGE     - internal error.
  */
 static inline
-int ssdfs_shift_left_peb_state_area(void *kaddr, size_t shift)
+int ssdfs_shift_left_peb_state_area(struct ssdfs_maptbl_cache *cache,
+				    void *kaddr, size_t shift)
 {
 	struct ssdfs_maptbl_cache_header *hdr;
 	void *area = NULL;
@@ -1695,7 +1737,7 @@ int ssdfs_shift_left_peb_state_area(void *kaddr, size_t shift)
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!kaddr);
+	BUG_ON(!cache || !kaddr);
 
 	SSDFS_DBG("kaddr %p, shift %zu\n", kaddr, shift);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1789,6 +1831,7 @@ int ssdfs_shift_left_peb_state_area(void *kaddr, size_t shift)
 
 /*
  * ssdfs_maptbl_cache_add_leb() - add LEB/PEB pair into maptbl cache
+ * @cache: maptbl cache object
  * @kaddr: pointer on maptbl cache's fragment
  * @item_index: index of item in the fragment
  * @src_pair: inserting LEB/PEB pair
@@ -1805,7 +1848,8 @@ int ssdfs_shift_left_peb_state_area(void *kaddr, size_t shift)
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
+int ssdfs_maptbl_cache_add_leb(struct ssdfs_maptbl_cache *cache,
+				void *kaddr, u16 item_index,
 				struct ssdfs_leb2peb_pair *src_pair,
 				struct ssdfs_maptbl_cache_peb_state *src_state)
 {
@@ -1820,7 +1864,7 @@ int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!kaddr || !src_pair || !src_state);
+	BUG_ON(!cache || !kaddr || !src_pair || !src_state);
 
 	SSDFS_DBG("kaddr %p, item_index %u, "
 		  "leb_id %llu, peb_id %llu\n",
@@ -1839,7 +1883,7 @@ int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
 		return -EINVAL;
 	}
 
-	err = ssdfs_shift_right_peb_state_area(kaddr, pair_size);
+	err = ssdfs_shift_right_peb_state_area(cache, kaddr, pair_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to shift the PEB state area: "
 			  "err %d\n", err);
@@ -1858,8 +1902,13 @@ int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
 		if (leb_id1 > leb_id2) {
 			SSDFS_ERR("invalid position for insert: "
 				  "item_index %u, prev_leb_id %llu, "
-				  "leb_id %llu\n",
-				  item_index, leb_id1, leb_id2);
+				  "leb_id %llu, items_count %u, "
+				  "start_leb %llu, end_leb %llu\n",
+				  item_index, leb_id1, leb_id2,
+				  le16_to_cpu(hdr->items_count),
+				  le64_to_cpu(hdr->start_leb),
+				  le64_to_cpu(hdr->end_leb));
+			ssdfs_maptbl_cache_show_items(kaddr);
 			return -ERANGE;
 		}
 	}
@@ -1970,7 +2019,9 @@ int ssdfs_maptbl_cache_add_folio(struct ssdfs_maptbl_cache *cache,
 	ssdfs_folio_lock(folio);
 	kaddr = kmap_local_folio(folio, 0);
 
-	err = ssdfs_maptbl_cache_init_folio(kaddr, folio_index);
+	atomic_add(PAGE_SIZE, &cache->bytes_count);
+
+	err = ssdfs_maptbl_cache_init_folio(cache, kaddr, folio_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init maptbl cache's folio: "
 			  "folio_index %u, err %d\n",
@@ -1978,9 +2029,7 @@ int ssdfs_maptbl_cache_add_folio(struct ssdfs_maptbl_cache *cache,
 		goto finish_add_folio;
 	}
 
-	atomic_add(PAGE_SIZE, &cache->bytes_count);
-
-	err = ssdfs_maptbl_cache_add_leb(kaddr, item_index, pair, state);
+	err = ssdfs_maptbl_cache_add_leb(cache, kaddr, item_index, pair, state);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add leb_id: "
 			  "folio_index %u, item_index %u, err %d\n",
@@ -2461,7 +2510,7 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 	items_count--;
 	hdr->items_count = cpu_to_le16(items_count);
 
-	err = ssdfs_shift_left_peb_state_area(kaddr, pair_size);
+	err = ssdfs_shift_left_peb_state_area(cache, kaddr, pair_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to shift PEB state area: "
 			  "err %d\n", err);
@@ -2710,7 +2759,9 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 			items_count = le16_to_cpu(hdr->items_count);
 			hdr->items_count = cpu_to_le16(items_count - 1);
 		} else {
-			err = ssdfs_shift_right_peb_state_area(kaddr, pair_size);
+			err = ssdfs_shift_right_peb_state_area(cache,
+								kaddr,
+								pair_size);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to shift the PEB state area: "
 					  "err %d\n", err);
@@ -2922,7 +2973,7 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 		kaddr = kmap_local_folio(folio, 0);
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		item_index = le16_to_cpu(hdr->items_count);
-		err = ssdfs_maptbl_cache_add_leb(kaddr, item_index,
+		err = ssdfs_maptbl_cache_add_leb(cache, kaddr, item_index,
 						 &cur_pair, &cur_state);
 		flush_dcache_folio(folio);
 		kunmap_local(kaddr);
@@ -4200,6 +4251,14 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 		kunmap_local(kaddr);
 		ssdfs_folio_unlock(folio);
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("folio_index %u, leb_id %llu, "
+			  "start_leb %llu, end_leb %llu, "
+			  "items_count %u, item_index %u\n",
+			  i, leb_id, start_leb, end_leb,
+			  items_count, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (err == -EAGAIN || err == -E2BIG) {
 			if ((i + 1) == folio_batch_count(&cache->batch)) {
 				err = -E2BIG;
@@ -4220,7 +4279,15 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 	else if (leb_id >= end_leb)
 		item_index = items_count;
 
-	if ((item_index + 1) >= capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio_index %u, leb_id %llu, "
+		  "start_leb %llu, end_leb %llu, "
+		  "items_count %u, item_index %u\n",
+		  i, leb_id, start_leb, end_leb,
+		  items_count, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (item_index >= capacity) {
 		if ((i + 1) < folio_batch_count(&cache->batch)) {
 			err = ssdfs_maptbl_cache_insert_leb(cache,
 							    i + 1, 0,
@@ -4244,7 +4311,7 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 				goto finish_add_migration_peb;
 			}
 		}
-	} else if ((item_index + 1) < items_count) {
+	} else if (item_index < items_count) {
 		err = ssdfs_maptbl_cache_insert_leb(cache, i, item_index,
 						    &cur_pair, &cur_state);
 		if (unlikely(err)) {
@@ -4268,7 +4335,7 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 		kaddr = kmap_local_folio(folio, 0);
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		item_index = le16_to_cpu(hdr->items_count);
-		err = ssdfs_maptbl_cache_add_leb(kaddr, item_index,
+		err = ssdfs_maptbl_cache_add_leb(cache, kaddr, item_index,
 						 &cur_pair, &cur_state);
 		flush_dcache_folio(folio);
 		kunmap_local(kaddr);
@@ -4725,7 +4792,9 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 			else
 				item_index = items_count;
 
-			err = ssdfs_maptbl_cache_add_leb(kaddr, item_index,
+			err = ssdfs_maptbl_cache_add_leb(cache,
+							 kaddr,
+							 item_index,
 							 &saved_pair,
 							 &saved_state);
 
@@ -4792,7 +4861,14 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_map_cache_free_folio(folio);
-			atomic_sub(PAGE_SIZE, &cache->bytes_count);
+
+			if (atomic_sub_return(PAGE_SIZE,
+						&cache->bytes_count) < 0) {
+				err = -ERANGE;
+				SSDFS_ERR("negative bytes_count %d\n",
+					  atomic_read(&cache->bytes_count));
+				goto finish_exclude_migration_peb;
+			}
 
 			if (i == folio_index) {
 #ifdef CONFIG_SSDFS_DEBUG

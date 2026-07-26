@@ -3674,6 +3674,7 @@ int ssdfs_start_gc_thread(struct ssdfs_fs_info *fsi, int type)
 	fsi->gc_thread[type].task = kthread_create(threadfn, fsi, fmt);
 	if (IS_ERR_OR_NULL(fsi->gc_thread[type].task)) {
 		err = PTR_ERR(fsi->gc_thread[type].task);
+		fsi->gc_thread[type].task = NULL;
 		if (err == -EINTR) {
 			/*
 			 * Ignore this error.

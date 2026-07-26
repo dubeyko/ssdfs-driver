@@ -518,6 +518,7 @@ int ssdfs_start_global_fsck_thread(struct ssdfs_fs_info *fsi)
 	thread->task = kthread_create(threadfn, fsi, fmt);
 	if (IS_ERR_OR_NULL(thread->task)) {
 		err = PTR_ERR(thread->task);
+		thread->task = NULL;
 		if (err == -EINTR) {
 			/*
 			 * Ignore this error.
