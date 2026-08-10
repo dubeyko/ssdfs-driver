@@ -67,3 +67,6 @@ obj-$(CONFIG_SSDFS_KUNIT_TEST)			+= folio_vector_test.o \
 							compr_lz4_test.o \
 							compr_zstd_test.o \
 							block_bitmap_test.o
+ifeq ($(CONFIG_SSDFS_BLOCK_DEVICE),y)
+obj-$(CONFIG_SSDFS_KUNIT_TEST)			+= dev_bdev_test.o
+endif

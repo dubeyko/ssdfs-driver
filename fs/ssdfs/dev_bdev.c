@@ -29,6 +29,9 @@
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
 
+#include <kunit/visibility.h>
+#include <kunit/static_stub.h>
+
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
@@ -190,6 +193,42 @@ int ssdfs_bdev_bio_add_folio(struct bio *bio, struct folio *folio,
 }
 
 /*
+ * ssdfs_bdev_submit_bio_wait() - submit bio and wait for completion
+ * @bio: bio object
+ *
+ * This function submits @bio for processing and waits until the
+ * operation completes. It is a thin wrapper around submit_bio_wait()
+ * so that a KUnit test can redirect I/O away from a real block
+ * device via kunit_activate_static_stub(), instead of blocking on
+ * (or crashing against) actual hardware.
+ */
+VISIBLE_IF_KUNIT
+int ssdfs_bdev_submit_bio_wait(struct bio *bio)
+{
+	KUNIT_STATIC_STUB_REDIRECT(ssdfs_bdev_submit_bio_wait, bio);
+	return submit_bio_wait(bio);
+}
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_submit_bio_wait);
+
+/*
+ * ssdfs_bdev_calc_sector() - calculate start sector of I/O request
+ * @offset: offset in bytes from partition's begin
+ * @block_size: logical block size in bytes
+ *
+ * This function converts a byte @offset (aligned down to the
+ * block boundary) into device's start sector value.
+ */
+VISIBLE_IF_KUNIT
+sector_t ssdfs_bdev_calc_sector(loff_t offset, u32 block_size)
+{
+	loff_t folio_index;
+
+	folio_index = div_u64(offset, block_size);
+	return (sector_t)(((u64)folio_index * block_size) >> SECTOR_SHIFT);
+}
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_calc_sector);
+
+/*
  * ssdfs_bdev_sync_folio_request() - submit folio request
  * @sb: superblock object
  * @folio: memory folio
@@ -197,26 +236,36 @@ int ssdfs_bdev_bio_add_folio(struct bio *bio, struct folio *folio,
  * @op: direction of I/O
  * @op_flags: request op flags
  * @write_stream: FDP write-stream ID (SSDFS_FDP_STREAM_NONE for no hint)
+ *
+ * This is the entry point that actually builds and submits a bio
+ * against @sb->s_bdev. A KUnit test can redirect the whole function
+ * via kunit_activate_static_stub(), which lets ssdfs_bdev_read_block(),
+ * ssdfs_bdev_read_blocks(), ssdfs_bdev_write_block(), and
+ * ssdfs_bdev_write_blocks() be exercised end-to-end without ever
+ * touching bio_alloc()/bio_set_dev() (and therefore without needing
+ * a real struct block_device behind @sb->s_bdev).
  */
-static int ssdfs_bdev_sync_folio_request(struct super_block *sb,
-					 struct folio *folio,
-					 loff_t offset,
-					 unsigned int op,
-					 int op_flags,
-					 u8 write_stream)
+VISIBLE_IF_KUNIT
+int ssdfs_bdev_sync_folio_request(struct super_block *sb,
+				  struct folio *folio,
+				  loff_t offset,
+				  unsigned int op,
+				  int op_flags,
+				  u8 write_stream)
 {
 	struct bio *bio;
-	loff_t folio_index;
 	sector_t sector;
 	int err = 0;
+
+	KUNIT_STATIC_STUB_REDIRECT(ssdfs_bdev_sync_folio_request,
+				   sb, folio, offset, op, op_flags,
+				   write_stream);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio_index = div_u64(offset, folio_size(folio));
-	sector = (pgoff_t)(((u64)folio_index * folio_size(folio)) >>
-								SECTOR_SHIFT);
+	sector = ssdfs_bdev_calc_sector(offset, folio_size(folio));
 
 	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, 1, op, GFP_NOIO);
 	if (IS_ERR_OR_NULL(bio)) {
@@ -245,7 +294,7 @@ static int ssdfs_bdev_sync_folio_request(struct super_block *sb,
 		goto finish_sync_folio_request;
 	}
 
-	err = submit_bio_wait(bio);
+	err = ssdfs_bdev_submit_bio_wait(bio);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to process request: "
 			  "err %d\n",
@@ -258,6 +307,7 @@ finish_sync_folio_request:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_sync_folio_request);
 
 /*
  * ssdfs_bdev_sync_batch_request() - submit folio batch request
@@ -267,20 +317,26 @@ finish_sync_folio_request:
  * @op: direction of I/O
  * @op_flags: request op flags
  * @write_stream: FDP write-stream ID (SSDFS_FDP_STREAM_NONE for no hint)
+ *
+ * See ssdfs_bdev_sync_folio_request() for why this is redirectable.
  */
-static int ssdfs_bdev_sync_batch_request(struct super_block *sb,
-					 struct folio_batch *batch,
-					 loff_t offset,
-					 unsigned int op,
-					 int op_flags,
-					 u8 write_stream)
+VISIBLE_IF_KUNIT
+int ssdfs_bdev_sync_batch_request(struct super_block *sb,
+				  struct folio_batch *batch,
+				  loff_t offset,
+				  unsigned int op,
+				  int op_flags,
+				  u8 write_stream)
 {
 	struct bio *bio;
-	loff_t folio_index;
 	sector_t sector;
 	u32 block_size;
 	int i;
 	int err = 0;
+
+	KUNIT_STATIC_STUB_REDIRECT(ssdfs_bdev_sync_batch_request,
+				   sb, batch, offset, op, op_flags,
+				   write_stream);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!batch);
@@ -299,9 +355,7 @@ static int ssdfs_bdev_sync_batch_request(struct super_block *sb,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	block_size = folio_size(batch->folios[0]);
-
-	folio_index = div_u64(offset, block_size);
-	sector = (pgoff_t)(((u64)folio_index * block_size) >> SECTOR_SHIFT);
+	sector = ssdfs_bdev_calc_sector(offset, block_size);
 
 	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, folio_batch_count(batch),
 				   op, GFP_NOIO);
@@ -337,7 +391,7 @@ static int ssdfs_bdev_sync_batch_request(struct super_block *sb,
 		}
 	}
 
-	err = submit_bio_wait(bio);
+	err = ssdfs_bdev_submit_bio_wait(bio);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to process request: "
 			  "err %d\n",
@@ -350,6 +404,7 @@ finish_sync_batch_request:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_sync_batch_request);
 
 /*
  * ssdfs_bdev_read_block() - read logical block from the volume
@@ -385,6 +440,7 @@ int ssdfs_bdev_read_block(struct super_block *sb, struct folio *folio,
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_read_block);
 
 /*
  * ssdfs_bdev_read_blocks() - read logical blocks from the volume
@@ -430,6 +486,60 @@ int ssdfs_bdev_read_blocks(struct super_block *sb, struct folio_batch *batch,
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_read_blocks);
+
+/*
+ * ssdfs_bdev_calc_read_batch_range() - calculate folio range for read batch
+ * @offset: offset in bytes from partition's begin
+ * @len: size of the requested read region in bytes
+ * @block_size: logical block size in bytes
+ * @folio_start: first folio index covering @offset [out]
+ * @folio_end: folio index just after the end of requested region [out]
+ * @folios_count: number of folios covering [@offset, @offset + @len) [out]
+ *
+ * This function calculates how many folios are necessary for
+ * covering the requested read region and checks that this
+ * number doesn't exceed the maximal supported extent length.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE      - folios_count is bigger than SSDFS_EXTENT_LEN_MAX.
+ */
+VISIBLE_IF_KUNIT
+int ssdfs_bdev_calc_read_batch_range(loff_t offset, size_t len,
+				     u32 block_size,
+				     loff_t *folio_start,
+				     loff_t *folio_end,
+				     u32 *folios_count)
+{
+	*folio_start = div_u64(offset, block_size);
+	*folio_end = div_u64(offset + len + block_size - 1, block_size);
+	*folios_count = (u32)(*folio_end - *folio_start);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("offset %llu, len %zu, block_size %u, "
+		  "folio_start %llu, folio_end %llu, folios_count %u\n",
+		  (unsigned long long)offset, len, block_size,
+		  (unsigned long long)*folio_start,
+		  (unsigned long long)*folio_end,
+		  *folios_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (*folios_count > SSDFS_EXTENT_LEN_MAX) {
+		SSDFS_WARN("folios_count %u > batch_capacity %u, "
+			   "offset %llu, len %zu, block_size %u, "
+			   "folio_start %llu, folio_end %llu\n",
+			   *folios_count, SSDFS_EXTENT_LEN_MAX,
+			   (unsigned long long)offset, len,
+			   block_size, *folio_start, *folio_end);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_calc_read_batch_range);
 
 /*
  * ssdfs_bdev_read_batch() - read from volume into buffer
@@ -472,28 +582,11 @@ static int ssdfs_bdev_read_batch(struct super_block *sb,
 
 	*read_bytes = 0;
 
-	folio_start = div_u64(offset, block_size);
-	folio_end = div_u64(offset + len + block_size - 1, block_size);
-	folios_count = (u32)(folio_end - folio_start);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu, len %zu, block_size %u, "
-		  "folio_start %llu, folio_end %llu, folios_count %u\n",
-		  (unsigned long long)offset, len, block_size,
-		  (unsigned long long)folio_start,
-		  (unsigned long long)folio_end,
-		  folios_count);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (folios_count > SSDFS_EXTENT_LEN_MAX) {
-		SSDFS_WARN("folios_count %u > batch_capacity %u, "
-			   "offset %llu, len %zu, block_size %u, "
-			   "folio_start %llu, folio_end %llu\n",
-			   folios_count, SSDFS_EXTENT_LEN_MAX,
-			   (unsigned long long)offset, len,
-			   block_size, folio_start, folio_end);
-		return -ERANGE;
-	}
+	err = ssdfs_bdev_calc_read_batch_range(offset, len, block_size,
+						&folio_start, &folio_end,
+						&folios_count);
+	if (unlikely(err))
+		return err;
 
 	folio_batch_init(&batch);
 
@@ -647,6 +740,7 @@ int ssdfs_bdev_read(struct super_block *sb, u32 block_size,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_read);
 
 /*
  * ssdfs_bdev_can_write_block() - check that logical block can be written
@@ -803,6 +897,7 @@ int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_write_block);
 
 /*
  * ssdfs_bdev_write_blocks() - write batch on volume
@@ -908,6 +1003,7 @@ int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_write_blocks);
 
 /*
  * ssdfs_bdev_support_discard() - check that block device supports discard
@@ -917,6 +1013,59 @@ static inline bool ssdfs_bdev_support_discard(struct block_device *bdev)
 	return bdev_max_discard_sectors(bdev) ||
 		bdev_is_zoned(bdev);
 }
+
+/*
+ * ssdfs_bdev_calc_trim_range() - calculate sector range for trim operation
+ * @offset: offset in bytes from partition's begin
+ * @len: size in bytes
+ * @erase_size: erase block size in bytes
+ * @start_sector: start sector of the range [out]
+ * @sectors_count: number of sectors in the range [out]
+ *
+ * This function validates that @len is aligned on @erase_size
+ * and converts the requested [@offset, @offset + @len) byte
+ * range into the [@start_sector, @start_sector + @sectors_count)
+ * sector range.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE      - @len isn't aligned on @erase_size, or resulting
+ *                 range of pages is empty.
+ */
+VISIBLE_IF_KUNIT
+int ssdfs_bdev_calc_trim_range(loff_t offset, size_t len, u32 erase_size,
+			       sector_t *start_sector,
+			       sector_t *sectors_count)
+{
+	loff_t page_start, page_end;
+	u32 pages_count;
+	u32 remainder;
+
+	div_u64_rem((u64)len, (u64)erase_size, &remainder);
+	if (remainder) {
+		SSDFS_WARN("len %llu, erase_size %u, remainder %u\n",
+			   (unsigned long long)len,
+			   erase_size, remainder);
+		return -ERANGE;
+	}
+
+	page_start = offset >> PAGE_SHIFT;
+	page_end = (offset + len + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	pages_count = (u32)(page_end - page_start);
+
+	if (pages_count == 0) {
+		SSDFS_WARN("pages_count equals to zero\n");
+		return -ERANGE;
+	}
+
+	*start_sector = page_start << (PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
+	*sectors_count = pages_count << (PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
+
+	return 0;
+}
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_calc_trim_range);
 
 /*
  * ssdfs_bdev_trim() - initiate background erase operation
@@ -937,11 +1086,11 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	u32 erase_size = fsi->erasesize;
-	loff_t page_start, page_end;
-	u32 pages_count;
-	u32 remainder;
 	sector_t start_sector;
 	sector_t sectors_count;
+#ifdef CONFIG_SSDFS_DEBUG
+	u32 remainder;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -957,25 +1106,10 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 	if (sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
-	div_u64_rem((u64)len, (u64)erase_size, &remainder);
-	if (remainder) {
-		SSDFS_WARN("len %llu, erase_size %u, remainder %u\n",
-			   (unsigned long long)len,
-			   erase_size, remainder);
-		return -ERANGE;
-	}
-
-	page_start = offset >> PAGE_SHIFT;
-	page_end = (offset + len + PAGE_SIZE - 1) >> PAGE_SHIFT;
-	pages_count = (u32)(page_end - page_start);
-
-	if (pages_count == 0) {
-		SSDFS_WARN("pages_count equals to zero\n");
-		return -ERANGE;
-	}
-
-	start_sector = page_start << (PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
-	sectors_count = pages_count << (PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
+	err = ssdfs_bdev_calc_trim_range(offset, len, erase_size,
+					 &start_sector, &sectors_count);
+	if (unlikely(err))
+		return err;
 
 	if (ssdfs_bdev_support_discard(sb->s_bdev)) {
 		err = blkdev_issue_secure_erase(sb->s_bdev,
@@ -1080,3 +1214,4 @@ const struct ssdfs_device_ops ssdfs_bdev_devops = {
 	.mark_peb_bad		= ssdfs_bdev_mark_peb_bad,
 	.sync			= ssdfs_bdev_sync,
 };
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_devops);

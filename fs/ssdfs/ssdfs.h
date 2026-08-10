@@ -129,6 +129,31 @@ int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
 int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 			    struct folio_batch *batch, u8 write_stream);
 
+#if IS_ENABLED(CONFIG_KUNIT)
+int ssdfs_bdev_submit_bio_wait(struct bio *bio);
+int ssdfs_bdev_sync_folio_request(struct super_block *sb,
+				  struct folio *folio,
+				  loff_t offset,
+				  unsigned int op,
+				  int op_flags,
+				  u8 write_stream);
+int ssdfs_bdev_sync_batch_request(struct super_block *sb,
+				  struct folio_batch *batch,
+				  loff_t offset,
+				  unsigned int op,
+				  int op_flags,
+				  u8 write_stream);
+sector_t ssdfs_bdev_calc_sector(loff_t offset, u32 block_size);
+int ssdfs_bdev_calc_read_batch_range(loff_t offset, size_t len,
+				     u32 block_size,
+				     loff_t *folio_start,
+				     loff_t *folio_end,
+				     u32 *folios_count);
+int ssdfs_bdev_calc_trim_range(loff_t offset, size_t len, u32 erase_size,
+			       sector_t *start_sector,
+			       sector_t *sectors_count);
+#endif /* IS_ENABLED(CONFIG_KUNIT) */
+
 /* dev_zns.c */
 u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset);
 u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset);

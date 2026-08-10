@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.81 [August 09, 2026]
+    (*) Introduce Kunit-based block device interface's unit-tests.
+
 v.5.80 [July 25, 2026]
     (*) Fix multiple issues in PEB mapping table's cache logic.
 
