@@ -20740,11 +20740,6 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 
 	thread_state->state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
 
-	/*
-	 * Forget accounted in ssdfs_execute_create_request_state()
-	 */
-	ssdfs_forget_commit_log_request(si);
-
 	if (need_commit_log)
 		err = -EAGAIN;
 	else if (have_flush_requests(pebc))
@@ -20753,6 +20748,11 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 		err = -EBUSY;
 
 finish_method:
+	/*
+	 * Forget accounted in ssdfs_execute_create_request_state()
+	 */
+	ssdfs_forget_commit_log_request(si);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	FORGET_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -20827,7 +20827,10 @@ int ssdfs_process_wait_next_create_state(struct ssdfs_peb_container *pebc)
 	    is_regular_fs_operations(pebc->parent_si)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("wait next data request: "
+			  "seg_id %llu, peb_index %u, "
 			  "reserved_pages %llu, is_current_seg %#x\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index,
 			  reserved_pages, is_current_seg);
 #endif /* CONFIG_SSDFS_DEBUG */
 		thread_state->state =
@@ -21451,11 +21454,6 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 
 	thread_state->state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
 
-	/*
-	 * Forget accounted in ssdfs_execute_update_request_state()
-	 */
-	ssdfs_forget_commit_log_request(si);
-
 	if (need_commit_log)
 		err = -EAGAIN;
 	else if (have_flush_requests(pebc))
@@ -21464,6 +21462,11 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 		err = -EBUSY;
 
 finish_method:
+	/*
+	 * Forget accounted in ssdfs_execute_update_request_state()
+	 */
+	ssdfs_forget_commit_log_request(si);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	FORGET_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -21529,7 +21532,10 @@ int ssdfs_process_wait_next_update_state(struct ssdfs_peb_container *pebc)
 
 	if (has_updated_pages) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("wait next update request: updated_pages %llu\n",
+		SSDFS_DBG("wait next update request: "
+			  "seg_id %llu, peb_index %u, updated_pages %llu\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index,
 			  updated_pages);
 #endif /* CONFIG_SSDFS_DEBUG */
 		thread_state->state =
@@ -21701,17 +21707,17 @@ request_commit_log_now:
 
 	thread_state->state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
 
-	/*
-	 * Forget accounted in ssdfs_execute_update_request_state()
-	 */
-	ssdfs_forget_commit_log_request(si);
-
 	if (have_flush_requests(pebc))
 		err = -EAGAIN;
 	else
 		err = -EBUSY;
 
 finish_method:
+	/*
+	 * Forget accounted in ssdfs_execute_update_request_state()
+	 */
+	ssdfs_forget_commit_log_request(si);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	FORGET_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -21782,7 +21788,10 @@ int ssdfs_process_wait_next_invalidate_state(struct ssdfs_peb_container *pebc)
 		if (have_flush_requests(pebc)) {
 			SSDFS_DBG("get next create request\n");
 		} else {
-			SSDFS_DBG("wait next invalidate request\n");
+			SSDFS_DBG("wait next invalidate request: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_RESTART_INVALIDATE_PROCESSING;
 			return -EBUSY;

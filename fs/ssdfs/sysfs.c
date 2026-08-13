@@ -2773,50 +2773,6 @@ ssize_t ssdfs_segbmap_segs_count_show(struct ssdfs_segbmap_attr *attr,
 	return snprintf(buf, PAGE_SIZE, "%u\n", segs_count);
 }
 
-static
-ssize_t ssdfs_segbmap_seg_numbers_show(struct ssdfs_segbmap_attr *attr,
-					struct ssdfs_fs_info *fsi,
-					char *buf)
-{
-	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
-	u64 seg_numbers[SSDFS_SEGBMAP_SEGS][SSDFS_SEGBMAP_SEG_COPY_MAX];
-	size_t array_size;
-	int count = 0;
-	int i, j;
-
-	if (!bmap) {
-		SSDFS_WARN("segbmap is absent\n");
-		return 0;
-	}
-
-	array_size = sizeof(u64);
-	array_size *= SSDFS_SEGBMAP_SEGS;
-	array_size *= SSDFS_SEGBMAP_SEG_COPY_MAX;
-
-	down_read(&bmap->resize_lock);
-	memcpy(seg_numbers, bmap->seg_numbers, array_size);
-	up_read(&bmap->resize_lock);
-
-	for (i = 0; i < SSDFS_SEGBMAP_SEGS; i++) {
-		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
-			if (seg_numbers[i][j] == U64_MAX) {
-				count += snprintf(buf + count,
-						  PAGE_SIZE - count,
-						  "seg[%d][%d] = U64_MAX\n",
-						  i, j);
-			} else {
-				count += snprintf(buf + count,
-						  PAGE_SIZE - count,
-						  "seg[%d][%d] = %llu\n",
-						  i, j,
-						  seg_numbers[i][j]);
-			}
-		}
-	}
-
-	return count;
-}
-
 SSDFS_SEGBMAP_RO_ATTR(flags);
 SSDFS_SEGBMAP_RO_ATTR(bytes_count);
 SSDFS_SEGBMAP_RO_ATTR(items_count);
@@ -2825,7 +2781,6 @@ SSDFS_SEGBMAP_RO_ATTR(fragments_per_seg);
 SSDFS_SEGBMAP_RO_ATTR(fragments_per_peb);
 SSDFS_SEGBMAP_RO_ATTR(fragment_size);
 SSDFS_SEGBMAP_RO_ATTR(segs_count);
-SSDFS_SEGBMAP_RO_ATTR(seg_numbers);
 
 static struct attribute *ssdfs_segbmap_attrs[] = {
 	SSDFS_SEGBMAP_ATTR_LIST(flags),
@@ -2836,7 +2791,6 @@ static struct attribute *ssdfs_segbmap_attrs[] = {
 	SSDFS_SEGBMAP_ATTR_LIST(fragments_per_peb),
 	SSDFS_SEGBMAP_ATTR_LIST(fragment_size),
 	SSDFS_SEGBMAP_ATTR_LIST(segs_count),
-	SSDFS_SEGBMAP_ATTR_LIST(seg_numbers),
 	NULL,
 };
 ATTRIBUTE_GROUPS(ssdfs_segbmap);

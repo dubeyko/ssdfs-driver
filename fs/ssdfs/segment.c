@@ -3557,7 +3557,7 @@ u32 ssdfs_calculate_zns_reservation_threshold(void)
 
 	threshold = SSDFS_CUR_SEGS_COUNT * 2;
 	threshold += SSDFS_SB_CHAIN_MAX * SSDFS_SB_SEG_COPY_MAX;
-	threshold += SSDFS_SEGBMAP_SEGS * SSDFS_SEGBMAP_SEG_COPY_MAX;
+	threshold += SSDFS_SEGBMAP_RESERVED_EXTENTS * SSDFS_SEGBMAP_SEG_COPY_MAX;
 	threshold += SSDFS_MAPTBL_RESERVED_EXTENTS * SSDFS_MAPTBL_SEG_COPY_MAX;
 
 	return threshold;

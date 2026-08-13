@@ -111,64 +111,118 @@ extern const bool detect_clean_using_mask[U8_MAX + 1];
 extern const bool detect_used_dirty_mask[U8_MAX + 1];
 
 /*
- * ssdfs_segbmap_define_segments() - determine segment bitmap segment numbers
- * @fsi: file system info object
- * @array_type: array type (main or copy)
+ * CHECK_META_EXTENT_TYPE() - check type of metadata area's extent
+ */
+static
+int CHECK_META_EXTENT_TYPE(struct ssdfs_meta_area_extent *extent)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!extent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (le16_to_cpu(extent->type)) {
+	case SSDFS_EMPTY_EXTENT_TYPE:
+		return -ENODATA;
+
+	case SSDFS_SEG_EXTENT_TYPE:
+		return 0;
+	}
+
+	return -EOPNOTSUPP;
+}
+
+/*
+ * ssdfs_segbmap_define_segment_counts() - determine segment bitmap segment numbers
  * @segbmap: pointer on segment bitmap object [out]
  *
- * The method tries to retrieve segment numbers from volume header.
+ * This method determines total count of segments that are allocated
+ * for segment bitmap on the basis of metadata extents.
  *
  * RETURN:
- * [success] - count of valid segment numbers in the array.
+ * [success]
  * [failure] - error code:
  *
  * %-EIO     - volume header is corrupted.
  */
 static
-int ssdfs_segbmap_define_segments(struct ssdfs_fs_info *fsi,
-				  int array_type,
-				  struct ssdfs_segment_bmap *segbmap)
+int ssdfs_segbmap_define_segment_counts(struct ssdfs_segment_bmap *segbmap)
 {
-	u64 seg;
-	u8 count = 0;
+	u32 segs_count1 = 0, segs_count2 = 0;
 	int i;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !segbmap);
-	BUG_ON(array_type >= SSDFS_SEGBMAP_SEG_COPY_MAX);
+	BUG_ON(!segbmap);
 
-	SSDFS_DBG("fsi %p, array_type %#x, segbmap %p\n",
-		  fsi, array_type, segbmap);
+	SSDFS_DBG("segbmap %p\n", segbmap);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < SSDFS_SEGBMAP_SEGS; i++)
-		segbmap->seg_numbers[i][array_type] = U64_MAX;
+	for (i = 0; i < SSDFS_SEGBMAP_RESERVED_EXTENTS; i++) {
+		struct ssdfs_meta_area_extent *extent;
+		u32 len1 = 0, len2 = 0;
 
-	for (i = 0; i < SSDFS_SEGBMAP_SEGS; i++) {
-		seg = le64_to_cpu(fsi->vh->segbmap.segs[i][array_type]);
+		extent = &segbmap->extents[i][SSDFS_MAIN_SEGBMAP_SEG];
 
-		if (seg == U64_MAX)
+		err = CHECK_META_EXTENT_TYPE(extent);
+		if (err == -ENODATA) {
+			/* do nothing */
 			break;
-		else if (seg >= fsi->nsegs) {
-			SSDFS_ERR("invalid segment %llu, nsegs %llu\n",
-				  seg, fsi->nsegs);
-			return -EIO;
+		} else if (unlikely(err)) {
+			SSDFS_WARN("invalid meta area extent: "
+				   "index %d, err %d\n",
+				   i, err);
+			return err;
 		}
 
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("segbmap: seg[%d][%d] = %llu\n",
-			  i, array_type, seg);
-#endif /* CONFIG_SSDFS_DEBUG */
+		len1 = le32_to_cpu(extent->len);
 
-		segbmap->seg_numbers[i][array_type] = seg;
-		count++;
+		if (segbmap->flags & SSDFS_SEGBMAP_HAS_COPY) {
+			extent = &segbmap->extents[i][SSDFS_COPY_SEGBMAP_SEG];
+
+			err = CHECK_META_EXTENT_TYPE(extent);
+			if (err == -ENODATA) {
+				SSDFS_ERR("empty copy meta area extent: "
+					  "index %d\n", i);
+				return -EIO;
+			} else if (unlikely(err)) {
+				SSDFS_WARN("invalid meta area extent: "
+					   "index %d, err %d\n",
+					   i, err);
+				return err;
+			}
+
+			len2 = le32_to_cpu(extent->len);
+
+			if (len1 != len2) {
+				SSDFS_ERR("different main and copy extents: "
+					  "index %d, len1 %u, len2 %u\n",
+					  i, len1, len2);
+				return -EIO;
+			}
+		}
+
+		segs_count1 += len1;
+		segs_count2 += len2;
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("segbmap segments count %u\n", count);
-#endif /* CONFIG_SSDFS_DEBUG */
+	if (segs_count1 == 0) {
+		SSDFS_CRIT("empty segbmap extents\n");
+		return -EIO;
+	} else if (segs_count1 >= U16_MAX) {
+		SSDFS_CRIT("invalid segment count %u\n",
+			   segs_count1);
+		return -EIO;
+	}
 
-	return count;
+	if (segbmap->flags & SSDFS_SEGBMAP_HAS_COPY &&
+	    segs_count1 != segs_count2) {
+		SSDFS_ERR("segs_count1 %u != segs_count2 %u\n",
+			  segs_count1, segs_count2);
+		return -EIO;
+	}
+
+	segbmap->segs_count = (u16)segs_count1;
+	return 0;
 }
 
 /*
@@ -182,11 +236,12 @@ int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
 				  int array_type,
 				  struct ssdfs_segment_bmap *segbmap)
 {
+	struct ssdfs_segment_info **kaddr = NULL;
 	u64 seg;
-	struct ssdfs_segment_info **kaddr;
 	u16 log_pages;
 	u16 create_threads;
-	int i;
+	u32 created_segs = 0;
+	int i, j;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -194,51 +249,99 @@ int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
 	BUG_ON(array_type >= SSDFS_SEGBMAP_SEG_COPY_MAX);
 	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
 
-	SSDFS_DBG("fsi %p, array_type %#x, segbmap %p\n",
-		  fsi, array_type, segbmap);
+	SSDFS_DBG("fsi %p, array_type %#x, segbmap %p, segs_count %u\n",
+		  fsi, array_type, segbmap, segbmap->segs_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	log_pages = le16_to_cpu(fsi->vh->segbmap_log_pages);
 	create_threads = fsi->create_threads_per_seg;
 
-	for (i = 0; i < segbmap->segs_count; i++) {
-		seg = segbmap->seg_numbers[i][array_type];
-		kaddr = &segbmap->segs[i][array_type];
-		BUG_ON(*kaddr != NULL);
+	segbmap->segs[array_type] = ssdfs_seg_bmap_kcalloc(segbmap->segs_count,
+					sizeof(struct ssdfs_segment_info *),
+					GFP_KERNEL);
+	if (!segbmap->segs[array_type]) {
+		SSDFS_ERR("fail to allocate segment array\n");
+		return -ENOMEM;
+	}
 
-		*kaddr = ssdfs_segment_allocate_object(seg);
-		if (IS_ERR_OR_NULL(*kaddr)) {
-			err = !*kaddr ? -ENOMEM : PTR_ERR(*kaddr);
-			*kaddr = NULL;
-			SSDFS_ERR("fail to allocate segment object: "
-				  "seg %llu, err %d\n",
-				  seg, err);
-			return err;
-		}
+	for (i = 0; i < SSDFS_SEGBMAP_RESERVED_EXTENTS; i++) {
+		struct ssdfs_meta_area_extent *extent;
+		u64 start_seg;
+		u32 len;
 
-		err = ssdfs_segment_create_object(fsi, seg,
-						  SSDFS_SEG_LEAF_NODE_USING,
-						  SSDFS_SEGBMAP_SEG_TYPE,
-						  log_pages,
-						  create_threads,
-						  *kaddr);
-		if (err == -EINTR) {
-			/*
-			 * Ignore this error.
-			 */
-			ssdfs_segment_free_object(*kaddr);
-			*kaddr = NULL;
-			return err;
+		extent = &segbmap->extents[i][array_type];
+
+		err = CHECK_META_EXTENT_TYPE(extent);
+		if (err == -ENODATA) {
+			/* do nothing */
+			break;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to create segment: "
-				  "seg %llu, err %d\n",
-				  seg, err);
-			ssdfs_segment_free_object(*kaddr);
-			*kaddr = NULL;
+			SSDFS_WARN("invalid meta area extent: "
+				   "index %d, err %d\n",
+				   i, err);
 			return err;
 		}
 
-		ssdfs_segment_get_object(*kaddr);
+		start_seg = le64_to_cpu(extent->start_id);
+		len = le32_to_cpu(extent->len);
+
+		for (j = 0; j < len; j++) {
+			if (created_segs >= segbmap->segs_count) {
+				SSDFS_ERR("created_segs %u >= segs_count %u\n",
+					  created_segs, segbmap->segs_count);
+				return -ERANGE;
+			}
+
+			seg = start_seg + j;
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!segbmap->segs[array_type]);
+#endif /* CONFIG_SSDFS_DEBUG */
+			kaddr = &segbmap->segs[array_type][created_segs];
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(*kaddr != NULL);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			*kaddr = ssdfs_segment_allocate_object(seg);
+			if (IS_ERR_OR_NULL(*kaddr)) {
+				err = !*kaddr ? -ENOMEM : PTR_ERR(*kaddr);
+				*kaddr = NULL;
+				SSDFS_ERR("fail to allocate segment object: "
+					  "seg %llu, err %d\n",
+					  seg, err);
+				return err;
+			}
+
+			err = ssdfs_segment_create_object(fsi, seg,
+							  SSDFS_SEG_LEAF_NODE_USING,
+							  SSDFS_SEGBMAP_SEG_TYPE,
+							  log_pages,
+							  create_threads,
+							  *kaddr);
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				ssdfs_segment_free_object(*kaddr);
+				*kaddr = NULL;
+				return err;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to create segment: "
+					  "seg %llu, err %d\n",
+					  seg, err);
+				ssdfs_segment_free_object(*kaddr);
+				*kaddr = NULL;
+				return err;
+			}
+
+			ssdfs_segment_get_object(*kaddr);
+			created_segs++;
+		}
+	}
+
+	if (created_segs != segbmap->segs_count) {
+		SSDFS_ERR("created_segs %u != segs_count %u\n",
+			  created_segs, segbmap->segs_count);
+		return -ERANGE;
 	}
 
 	return 0;
@@ -263,7 +366,10 @@ void ssdfs_segbmap_destroy_segments(struct ssdfs_segment_bmap *segbmap)
 
 	for (i = 0; i < segbmap->segs_count; i++) {
 		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
-			si = segbmap->segs[i][j];
+			if (segbmap->segs[j] == NULL)
+				continue;
+
+			si = segbmap->segs[j][i];
 
 			if (!si)
 				continue;
@@ -278,6 +384,11 @@ void ssdfs_segbmap_destroy_segments(struct ssdfs_segment_bmap *segbmap)
 					   err);
 			}
 		}
+	}
+
+	for (i = 0; i < SSDFS_SEGBMAP_SEG_COPY_MAX; i++) {
+		ssdfs_seg_bmap_kfree(segbmap->segs[i]);
+		segbmap->segs[i] = NULL;
 	}
 }
 
@@ -379,7 +490,10 @@ int ssdfs_segbmap_init(struct ssdfs_segment_bmap *segbmap)
 
 	for (i = 0; i < segbmap->segs_count; i++) {
 		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
-			si = segbmap->segs[i][j];
+			if (!segbmap->segs[j])
+				continue;
+
+			si = segbmap->segs[j][i];
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("i %d, j %d, si %p\n", i, j, si);
@@ -581,6 +695,13 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto free_segbmap_object;
 	}
 
+	calculated = sizeof(struct ssdfs_meta_area_extent);
+	calculated *= SSDFS_SEGBMAP_RESERVED_EXTENTS;
+	calculated *= SSDFS_SEGBMAP_SEG_COPY_MAX;
+	ssdfs_memcpy(ptr->extents, 0, calculated,
+		     fsi->vh->segbmap.extents, 0, calculated,
+		     calculated);
+
 	init_rwsem(&ptr->search_lock);
 
 	err = ssdfs_segbmap_create_fragment_bitmaps(ptr);
@@ -615,61 +736,19 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto free_desc_array;
 	}
 
-	count = ssdfs_segbmap_define_segments(fsi, SSDFS_MAIN_SEGBMAP_SEG,
-					      ptr);
-	if (count < 0) {
-		err = count;
-		SSDFS_ERR("fail to get segbmap segment numbers: err %d\n",
-			  err);
-		goto destroy_folios;
-	} else if (count == 0 || count > SSDFS_SEGBMAP_SEGS) {
-		err = -ERANGE;
-		SSDFS_ERR("invalid segbmap segment numbers count %d\n",
-			  count);
+	err = ssdfs_segbmap_define_segment_counts(ptr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define segments count: err %d\n", err);
 		goto destroy_folios;
 	}
 
-	ptr->segs_count = le16_to_cpu(fsi->vh->segbmap.segs_count);
+	count = le16_to_cpu(fsi->vh->segbmap.segs_count);
 	if (ptr->segs_count != count) {
 		err = -EIO;
 		SSDFS_CRIT("segbmap header corrupted: "
 			   "segs_count %u != calculated %u\n",
-			   ptr->segs_count, count);
+			   count, ptr->segs_count);
 		goto destroy_folios;
-	}
-
-	count = ssdfs_segbmap_define_segments(fsi, SSDFS_COPY_SEGBMAP_SEG,
-					      ptr);
-	if (count < 0) {
-		err = count;
-		SSDFS_ERR("fail to get segbmap segment numbers: err %d\n",
-			  err);
-		goto destroy_folios;
-	} else if (count > SSDFS_SEGBMAP_SEGS) {
-		err = -ERANGE;
-		SSDFS_ERR("invalid segbmap segment numbers count %d\n",
-			  count);
-		goto destroy_folios;
-	}
-
-	if (ptr->flags & SSDFS_SEGBMAP_HAS_COPY) {
-		if (count == 0) {
-			err = -EIO;
-			SSDFS_CRIT("segbmap header corrupted: "
-				   "copy segments' chain is absent\n");
-			goto destroy_folios;
-		} else if (count != ptr->segs_count) {
-			SSDFS_ERR("count %u != ptr->segs_count %u\n",
-				  count, ptr->segs_count);
-			goto destroy_folios;
-		}
-	} else {
-		if (count != 0) {
-			err = -EIO;
-			SSDFS_CRIT("segbmap header corrupted: "
-				   "copy segments' chain is present\n");
-			goto destroy_folios;
-		}
 	}
 
 	err = ssdfs_segbmap_create_segments(fsi, SSDFS_MAIN_SEGBMAP_SEG, ptr);
@@ -1250,8 +1329,7 @@ static
 void ssdfs_sb_segbmap_header_correct_state(struct ssdfs_segment_bmap *segbmap)
 {
 	struct ssdfs_segbmap_sb_header *hdr;
-	__le64 seg;
-	int i, j;
+	size_t bytes_count;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
@@ -1273,15 +1351,12 @@ void ssdfs_sb_segbmap_header_correct_state(struct ssdfs_segment_bmap *segbmap)
 	hdr->flags = cpu_to_le16(segbmap->flags);
 	hdr->segs_count = cpu_to_le16(segbmap->segs_count);
 
-	for (i = 0; i < segbmap->segs_count; i++) {
-		j = SSDFS_MAIN_SEGBMAP_SEG;
-		seg = cpu_to_le64(segbmap->seg_numbers[i][j]);
-		hdr->segs[i][j] = seg;
-
-		j = SSDFS_COPY_SEGBMAP_SEG;
-		seg = cpu_to_le64(segbmap->seg_numbers[i][j]);
-		hdr->segs[i][j] = seg;
-	}
+	bytes_count = sizeof(struct ssdfs_meta_area_extent);
+	bytes_count *= SSDFS_SEGBMAP_RESERVED_EXTENTS;
+	bytes_count *= SSDFS_SEGBMAP_SEG_COPY_MAX;
+	ssdfs_memcpy(hdr->extents, 0, bytes_count,
+		     segbmap->extents, 0, bytes_count,
+		     bytes_count);
 }
 
 /*
@@ -1712,7 +1787,7 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 				     sizeof(struct ssdfs_volume_extent));
 		}
 
-		si = segbmap->segs[seg_index][SSDFS_MAIN_SEGBMAP_SEG];
+		si = segbmap->segs[SSDFS_MAIN_SEGBMAP_SEG][seg_index];
 
 		if (!is_ssdfs_segment_ready_for_requests(si)) {
 			err = ssdfs_wait_segment_init_end(si);
@@ -1729,8 +1804,9 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 							req1);
 		fragment->flush_pairs[0].si = si;
 
-		si = segbmap->segs[seg_index][SSDFS_COPY_SEGBMAP_SEG];
 		if (!err && has_backup) {
+			si = segbmap->segs[SSDFS_COPY_SEGBMAP_SEG][seg_index];
+
 			if (!is_ssdfs_segment_ready_for_requests(si)) {
 				err = ssdfs_wait_segment_init_end(si);
 				if (unlikely(err)) {
@@ -2262,7 +2338,7 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 				goto fail_issue_commit_logs;
 
 			copy_id = SSDFS_MAIN_SEGBMAP_SEG;
-			si = segbmap->segs[seg_index][copy_id];
+			si = segbmap->segs[copy_id][seg_index];
 			fragment->flush_pairs[0].si = si;
 
 			if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -2299,7 +2375,7 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 					     extent_size);
 
 				copy_id = SSDFS_COPY_SEGBMAP_SEG;
-				si = segbmap->segs[seg_index][copy_id];
+				si = segbmap->segs[copy_id][seg_index];
 				fragment->flush_pairs[1].si = si;
 
 				if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -5163,4 +5239,45 @@ finish_segment_check:
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
+}
+
+/*
+ * ssdfs_segbmap_seg_id_2_seg_index() - convert segment ID into index
+ * @segbmap: pointer on segment bitmap object
+ * @seg_id: segment number
+ *
+ * RETURN:
+ * [success] - index of segment in segbmap's segments sequence.
+ * [failure] - error code:
+ *
+ * %-ENODATA    - unable to find the segment.
+ */
+int ssdfs_segbmap_seg_id_2_seg_index(struct ssdfs_segment_bmap *segbmap,
+				     u64 seg_id)
+{
+	struct ssdfs_segment_info *si;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!segbmap);
+
+	SSDFS_DBG("segbmap %p, seg_id %llu\n", segbmap, seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (seg_id == U64_MAX)
+		return -ENODATA;
+
+	for (i = 0; i < segbmap->segs_count; i++) {
+		si = segbmap->segs[SSDFS_MAIN_SEGBMAP_SEG][i];
+		if (si && seg_id == si->seg_id)
+			return i;
+
+		if (segbmap->segs[SSDFS_COPY_SEGBMAP_SEG]) {
+			si = segbmap->segs[SSDFS_COPY_SEGBMAP_SEG][i];
+			if (si && seg_id == si->seg_id)
+				return i;
+		}
+	}
+
+	return -ENODATA;
 }

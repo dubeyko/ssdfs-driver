@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.82 [August 13, 2026]
+    (*) Switch segment bitmap on metadata extents.
+
 v.5.81 [August 09, 2026]
     (*) Introduce Kunit-based block device interface's unit-tests.
 

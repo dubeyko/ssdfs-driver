@@ -141,7 +141,7 @@ enum {
  * @fragments_per_seg: segbmap's fragments per segment
  * @fragments_per_peb: segbmap's fragments per PEB
  * @fragment_size: size of fragment in bytes
- * @seg_numbers: array of segment bitmap's segment numbers
+ * @extents: metadata extents that describe segment bitmap location
  * @segs_count: count of segment objects are used for segment bitmap
  * @segs: array of pointers on segment objects
  * @search_lock: lock for search and change state operations
@@ -159,11 +159,9 @@ struct ssdfs_segment_bmap {
 	u16 fragments_per_seg;
 	u16 fragments_per_peb;
 	u16 fragment_size;
-#define SEGS_LIMIT1	SSDFS_SEGBMAP_SEGS
-#define SEGS_LIMIT2	SSDFS_SEGBMAP_SEG_COPY_MAX
-	u64 seg_numbers[SEGS_LIMIT1][SEGS_LIMIT2];
+	struct ssdfs_meta_area_extent extents[SEGBMAP_LIMIT1][SEGBMAP_LIMIT2];
 	u16 segs_count;
-	struct ssdfs_segment_info *segs[SEGS_LIMIT1][SEGS_LIMIT2];
+	struct ssdfs_segment_info **segs[SSDFS_SEGBMAP_SEG_COPY_MAX];
 
 	struct rw_semaphore search_lock;
 	unsigned long *fbmap[SSDFS_SEGBMAP_FBMAP_TYPE_MAX];
@@ -256,25 +254,6 @@ u32 ssdfs_segbmap_get_item_byte_offset(u32 fragment_item)
 	u32 hdr_size = sizeof(struct ssdfs_segbmap_fragment_header);
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_SEG_STATE_BITS);
 	return hdr_size + (fragment_item / items_per_byte);
-}
-
-static inline
-int ssdfs_segbmap_seg_id_2_seg_index(struct ssdfs_segment_bmap *segbmap,
-				     u64 seg_id)
-{
-	int i;
-
-	if (seg_id == U64_MAX)
-		return -ENODATA;
-
-	for (i = 0; i < segbmap->segs_count; i++) {
-		if (seg_id == segbmap->seg_numbers[i][SSDFS_MAIN_SEGBMAP_SEG])
-			return i;
-		if (seg_id == segbmap->seg_numbers[i][SSDFS_COPY_SEGBMAP_SEG])
-			return i;
-	}
-
-	return -ENODATA;
 }
 
 static inline
@@ -375,19 +354,30 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 		  bmap->fragments_count, bmap->fragments_per_seg,
 		  bmap->fragments_per_peb, bmap->fragment_size);
 
-	for (i = 0; i < SSDFS_SEGBMAP_SEGS; i++) {
+	for (i = 0; i < SSDFS_SEGBMAP_RESERVED_EXTENTS; i++) {
 		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
-			SSDFS_DBG("seg_numbers[%d][%d] = %llu\n",
-				  i, j, bmap->seg_numbers[i][j]);
+			struct ssdfs_meta_area_extent *extent;
+
+			extent = &bmap->extents[i][j];
+			SSDFS_DBG("extents[%d][%d]: start_id %llu, "
+				  "len %u, type %#x, flags %#x\n",
+				  i, j,
+				  le64_to_cpu(extent->start_id),
+				  le32_to_cpu(extent->len),
+				  le16_to_cpu(extent->type),
+				  le16_to_cpu(extent->flags));
 		}
 	}
 
 	SSDFS_DBG("segs_count %u\n", bmap->segs_count);
 
-	for (i = 0; i < SSDFS_SEGBMAP_SEGS; i++) {
-		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
+	for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
+		if (!bmap->segs[j])
+			continue;
+
+		for (i = 0; i < bmap->segs_count; i++) {
 			SSDFS_DBG("segs[%d][%d] = %p\n",
-				  i, j, bmap->segs[i][j]);
+				  j, i, bmap->segs[j][i]);
 		}
 	}
 
@@ -478,5 +468,7 @@ int ssdfs_segbmap_find_and_set(struct ssdfs_segment_bmap *segbmap,
 int ssdfs_segbmap_reserve_clean_segment(struct ssdfs_segment_bmap *segbmap,
 					u64 start, u64 max,
 					u64 *seg, struct completion **end);
+int ssdfs_segbmap_seg_id_2_seg_index(struct ssdfs_segment_bmap *segbmap,
+				     u64 seg_id);
 
 #endif /* _SSDFS_SEGMENT_BITMAP_H */

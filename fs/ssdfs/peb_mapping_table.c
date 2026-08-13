@@ -7109,8 +7109,10 @@ int ssdfs_maptbl_find_clean_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 		if (index >= max) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find the clean unused peb: "
-				  "index %lu, max %lu\n",
-				  index, max);
+				  "folio_index %lu, index %lu, "
+				  "start %lu, max %lu, threshold %u\n",
+				  folio_index, index,
+				  start, max, threshold);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return -ENODATA;
 		}
@@ -7235,7 +7237,13 @@ int ssdfs_maptbl_find_pre_erased_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (index >= max) {
-			SSDFS_DBG("unable to find the unused peb\n");
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find the unused peb: "
+				  "folio_index %lu, index %lu, "
+				  "start %lu, max %lu, threshold %u\n",
+				  folio_index, index,
+				  start, max, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENODATA;
 		}
 
@@ -7441,7 +7449,13 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		if (err == -ENODATA) {
-			SSDFS_DBG("unable to find the unused peb\n");
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find the unused peb: "
+				  "folio_index %lu, start %lu, max %lu, "
+				  "threshold %u, found %lu, err %d\n",
+				  folio_index, start, max,
+				  threshold, *found, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the unused peb: err %d\n", err);
 		}
@@ -7513,6 +7527,13 @@ int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 	*erase_cycles = threshold;
 	found_for_threshold = *found;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio_index %lu, start %lu, max %lu, "
+		  "threshold %u, found_for_threshold %lu\n",
+		  folio_index, start, max,
+		  threshold, found_for_threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = __ssdfs_maptbl_find_unused_peb(tbl, fdesc,
 					     hdr, folio_index,
 					     start, max,
@@ -7534,11 +7555,15 @@ int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 		u16 last_selected_peb;
 		unsigned long used_pebs;
 		u32 found_cycles;
+		u8 peb_type;
+		u8 peb_state;
 		int i;
 
 		SSDFS_DBG("unable to find unused PEB: "
-			  "found_for_threshold %lu, threshold %u\n",
-			  found_for_threshold, threshold);
+			  "found_for_threshold %lu, threshold %u, "
+			  "found %lu, err %d\n",
+			  found_for_threshold, threshold,
+			  *found, err);
 
 		bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
 		start_peb = le64_to_cpu(hdr->start_peb);
@@ -7552,6 +7577,15 @@ int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 			  "reserved_pebs %u, used_pebs %lu\n",
 			  hdr, start_peb, pebs_count, last_selected_peb,
 			  reserved_pebs, used_pebs);
+		SSDFS_DBG("lebs_count %u, mapped_lebs %u, migrating_lebs %u, "
+			  "reserved_pebs %u, pre_erase_pebs %u, "
+			  "recovering_pebs %u\n",
+			  fdesc->lebs_count,
+			  fdesc->mapped_lebs,
+			  fdesc->migrating_lebs,
+			  fdesc->reserved_pebs,
+			  fdesc->pre_erase_pebs,
+			  fdesc->recovering_pebs);
 
 		for (i = 0; i < max; i++) {
 			desc = GET_PEB_DESCRIPTOR(hdr, (u16)i);
@@ -7559,9 +7593,13 @@ int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 				continue;
 
 			found_cycles = le32_to_cpu(desc->erase_cycles);
+			peb_type = desc->type;
+			peb_state = desc->state;
 
-			SSDFS_DBG("index %d, found_cycles %u\n",
-				  i, found_cycles);
+			SSDFS_DBG("index %d, found_cycles %u, "
+				  "peb_type %#x, peb_state %#x\n",
+				  i, found_cycles,
+				  peb_type, peb_state);
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -7588,21 +7626,27 @@ enum {
  * @folio_index: folio index in the fragment
  * @pebs_per_volume: number of PEBs per whole volume
  * @peb_goal: PEB purpose
+ * @item_index: pointer on found item index [out]
  *
  * This method tries to find unused PEB and to set this
  * PEB as used.
  *
  * RETURN:
- * [success] - item index.
- * [failure] - U16_MAX.
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - unable to find unused PEB.
  */
 static
-u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_peb_mapping_table *tbl,
+int ssdfs_maptbl_select_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 				   struct ssdfs_maptbl_fragment_desc *fdesc,
 				   struct ssdfs_peb_table_fragment_header *hdr,
 				   pgoff_t folio_index,
 				   u64 pebs_per_volume,
-				   int peb_goal)
+				   int peb_goal,
+				   u16 *item_index)
 {
 	unsigned long *bmap;
 	u64 start_peb;
@@ -7617,9 +7661,11 @@ u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!hdr || !fdesc);
+	BUG_ON(!hdr || !fdesc || !item_index);
 	BUG_ON(peb_goal >= SSDFS_MAPTBL_PEB_PURPOSE_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	*item_index = U16_MAX;
 
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
 	start_peb = le64_to_cpu(hdr->start_peb);
@@ -7660,17 +7706,27 @@ u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 			SSDFS_DBG("unused_pebs %u, reserved_pebs %u\n",
 				  unused_pebs, reserved_pebs);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return U16_MAX;
+			return -ENODATA;
 		}
 		break;
 
 	case SSDFS_MAPTBL_MIGRATING_PEB:
 		if (reserved_pebs == 0 && unused_pebs == 0) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("reserved_pebs %u, unused_pebs %u\n",
-				  reserved_pebs, unused_pebs);
+			SSDFS_DBG("hdr %p, start_peb %llu, pebs_count %u, "
+				  "last_selected_peb %u, unused_pebs %u, "
+				  "reserved_pebs %u, used_pebs %lu\n",
+				  hdr, start_peb, pebs_count,
+				  last_selected_peb, unused_pebs,
+				  reserved_pebs, used_pebs);
+			SSDFS_DBG("mapped_lebs %u, migrating_lebs %u, "
+				  "pre_erase_pebs %u, recovering_pebs %u\n",
+				  fdesc->mapped_lebs,
+				  fdesc->migrating_lebs,
+				  fdesc->pre_erase_pebs,
+				  fdesc->recovering_pebs);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return U16_MAX;
+			return -ENODATA;
 		}
 		break;
 
@@ -7689,14 +7745,28 @@ u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 	if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find the unused peb: "
-			  "peb_goal %#x\n", peb_goal);
+			  "peb_goal %#x, err %d\n",
+			  peb_goal, err);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return U16_MAX;
+
+		switch (peb_goal) {
+		case SSDFS_MAPTBL_MIGRATING_PEB:
+			if (reserved_pebs > 0) {
+				err = -EBUSY;
+			}
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+
+		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find unused peb: "
 			  "start %lu, pebs_count %u, err %d\n",
 			  start, pebs_count, err);
-		return U16_MAX;
+		return err;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7733,7 +7803,9 @@ u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 		  found, erase_cycles);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return (u16)found;
+	*item_index = (u16)found;
+
+	return 0;
 }
 
 /*
@@ -7786,13 +7858,18 @@ int __ssdfs_maptbl_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		  fdesc, hdr, leb_id, peb_type, pebr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	item_index = ssdfs_maptbl_select_unused_peb(tbl, fdesc, hdr,
-						    folio_index,
-						    tbl->pebs_count,
-						    SSDFS_MAPTBL_MAPPING_PEB);
-	if (item_index == U16_MAX) {
+	err = ssdfs_maptbl_select_unused_peb(tbl, fdesc, hdr,
+					     folio_index,
+					     tbl->pebs_count,
+					     SSDFS_MAPTBL_MAPPING_PEB,
+					     &item_index);
+	if (err == -ENODATA) {
 		SSDFS_DBG("unable to select unused peb\n");
 		return -ENOENT;
+	} else if (unlikely(err)) {
+		SSDFS_DBG("fail to select unused peb: "
+			  "err %d\n", err);
+		return err;
 	}
 
 	memset(pebr, 0xFF, sizeof(struct ssdfs_maptbl_peb_relation));
@@ -10202,6 +10279,7 @@ bool has_fragment_reserved_pebs(struct ssdfs_peb_table_fragment_header *hdr)
  * @tbl: pointer on mapping table object
  * @fdesc: fragment descriptor
  * @leb_id: LEB ID number
+ * @folio_index: pointer on folio index [out]
  *
  * This method tries to select a folio of PEB table.
  */
@@ -10435,13 +10513,24 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_peb_mapping_table *tbl,
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
-	*item_index = ssdfs_maptbl_select_unused_peb(tbl, fdesc, hdr,
-						     pebtbl_folio,
-						     tbl->pebs_count,
-						     peb_goal);
-	if (*item_index >= U16_MAX) {
-		err = -ERANGE;
+	err = ssdfs_maptbl_select_unused_peb(tbl, fdesc, hdr,
+					     pebtbl_folio,
+					     tbl->pebs_count,
+					     peb_goal,
+					     item_index);
+	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to select unused peb\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_set_peb_descriptor;
+	} else if (err == -EBUSY) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to select unused peb\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_set_peb_descriptor;
+	} else if (unlikely(err)) {
+		SSDFS_DBG("fail to select unused peb: "
+			  "err %d\n", err);
 		goto finish_set_peb_descriptor;
 	}
 
@@ -10619,6 +10708,8 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 	pgoff_t pebtbl_folio = ULONG_MAX;
 	u16 item_index;
 	int consistency;
+	u64 start_peb;
+	u64 end_peb;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10778,17 +10869,68 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 		goto finish_fragment_change;
 	}
 
-	err = ssdfs_maptbl_select_pebtbl_folio(tbl, fdesc,
-						leb_id, &pebtbl_folio);
-	if (unlikely(err)) {
-		SSDFS_DBG("unable to find the peb table's folio\n");
-		goto finish_fragment_change;
+	start_peb = fdesc->start_leb;
+	end_peb = fdesc->start_leb + fdesc->lebs_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("leb_id %llu, start_peb %llu, "
+		  "start_peb %llu, end_peb %llu\n",
+		  leb_id, start_peb,
+		  start_peb, end_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = -ENODATA;
+	while (err == -ENODATA || err == -ENOENT) {
+		err = ssdfs_maptbl_select_pebtbl_folio(tbl,
+							fdesc,
+							start_peb,
+							&pebtbl_folio);
+		if (err == -ENOENT || err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to add migration PEB: "
+				  "leb_id %llu, start_peb %llu, "
+				  "end_peb %llu\n",
+				  leb_id, start_peb, end_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+			start_peb += fdesc->pebs_per_page;
+		} else if (err == -EBUSY) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to add migration PEB: "
+				  "leb_id %llu, start_peb %llu, "
+				  "end_peb %llu\n",
+				  leb_id, start_peb, end_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_fragment_change;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to add migration PEB: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			goto finish_fragment_change;
+		}
+
+		if (start_peb >= end_peb) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to add migration PEB: "
+				  "leb_id %llu, start_peb %llu, "
+				  "end_peb %llu\n",
+				  leb_id, start_peb, end_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_fragment_change;
+		}
 	}
 
 	err = ssdfs_maptbl_set_peb_descriptor(tbl, fdesc, pebtbl_folio,
 						SSDFS_MAPTBL_MIGRATING_PEB,
 						peb_type, &item_index);
-	if (unlikely(err)) {
+	if (err == -EBUSY) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to add migration PEB: "
+			  "leb_id %llu, start_peb %llu, "
+			  "end_peb %llu\n",
+			  leb_id, start_peb, end_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_fragment_change;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to set PEB descriptor: "
 			  "pebtbl_folio %lu, "
 			  "peb_type %#x, err %d\n",
