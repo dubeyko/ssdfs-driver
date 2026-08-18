@@ -166,7 +166,7 @@ int ssdfs_inode_by_name(struct inode *dir,
 			u64 *ino);
 int ssdfs_create(struct mnt_idmap *idmap,
 		 struct inode *dir, struct dentry *dentry,
-		 umode_t mode, bool excl);
+		 umode_t mode);
 
 /* file.c */
 int ssdfs_allocate_inline_file_buffer(struct inode *inode);

@@ -459,7 +459,7 @@ static int ssdfs_add_nondir(struct inode *dir, struct dentry *dentry,
  */
 int ssdfs_create(struct mnt_idmap *idmap,
 		 struct inode *dir, struct dentry *dentry,
-		 umode_t mode, bool excl)
+		 umode_t mode)
 {
 	struct inode *inode;
 	int err = 0;

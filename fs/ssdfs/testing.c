@@ -1937,7 +1937,7 @@ int ssdfs_testing_dentries_tree_add_file(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_create(&nop_mnt_idmap, root_i, dentry_inode,
-			   S_IFREG | S_IRWXU, false);
+			   S_IFREG | S_IRWXU);
 	if (err) {
 		SSDFS_ERR("fail to create file: "
 			  "file_index %llu\n",
