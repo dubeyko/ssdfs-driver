@@ -3889,8 +3889,13 @@ do_erase_now:
 				err = -EFAULT;
 				SSDFS_ERR("fail to add migration PEB: "
 					  "leb_id %llu, peb_type %#x, "
+					  "number_of_tries %d, "
+					  "total_pre_erase_pebs %d, "
 					  "err %d\n",
-					  leb_id, ptr->peb_type, err);
+					  leb_id, ptr->peb_type,
+					  number_of_tries,
+					  total_pre_erase_pebs,
+					  err);
 				goto fail_prepare_destination;
 			} else
 				goto do_erase_now;

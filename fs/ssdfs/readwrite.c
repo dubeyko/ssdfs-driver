@@ -496,6 +496,11 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 				  byte_off);
 			return -ERANGE;
 		}
+
+		SSDFS_DBG("leb_id %llu, peb_id %llu, "
+			  "index %d, byte_off %llu\n",
+			  sb_log->leb_id, sb_log->peb_id,
+			  i, byte_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = fsi->devops->can_write_block(sb, PAGE_SIZE,

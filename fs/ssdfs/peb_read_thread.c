@@ -9023,6 +9023,7 @@ int __ssdfs_read_blk_desc_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		switch (frag->type) {
+		case SSDFS_DATA_BLK_DESC:
 		case SSDFS_DATA_BLK_DESC_ZLIB:
 		case SSDFS_DATA_BLK_DESC_LZO:
 		case SSDFS_DATA_BLK_DESC_LZ4:

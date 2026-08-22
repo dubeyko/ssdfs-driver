@@ -2135,6 +2135,10 @@ finish_dirty_pebs_processing:
 
 	wake_up_all(&tbl->erase_ops_end_wq);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err;
 }
 
@@ -2652,6 +2656,10 @@ int ssdfs_maptbl_erase_dirty_pebs_now(struct ssdfs_peb_mapping_table *tbl)
 {
 	struct ssdfs_erase_result_array array = {NULL, 0, 0};
 	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("erase dirty pebs now\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&tbl->tbl_lock);
 	array.capacity = (u32)tbl->fragments_count *

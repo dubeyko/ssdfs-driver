@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.83 [August 22, 2026]
+    (*) Fix logic of searching unused PEB in mapping table.
+
 v.5.82 [August 13, 2026]
     (*) Switch segment bitmap on metadata extents.
 

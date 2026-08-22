@@ -7407,6 +7407,7 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 				   unsigned long start, unsigned long max,
 				   u32 threshold, unsigned long *found)
 {
+	int number_of_tries = 0;
 	int err = -ENODATA;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7416,51 +7417,43 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 		  hdr, start, max, threshold);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_maptbl_find_clean_unused_peb(tbl, fdesc, hdr,
-						 folio_index,
-						 start, max,
-						 threshold,
-						 found);
-	if (err == -ENODATA) {
-		err = ssdfs_maptbl_find_pre_erased_unused_peb(tbl, fdesc, hdr,
-							      folio_index,
-							      start, max,
-							      threshold,
-							      found);
-	}
-
-	if (err == -ENODATA) {
-		/* try to increase threshold */
-		threshold++;
-
-		err = ssdfs_maptbl_find_clean_unused_peb(tbl, fdesc, hdr,
+	while (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
+		err = ssdfs_maptbl_find_clean_unused_peb(tbl,
+							 fdesc,
+							 hdr,
 							 folio_index,
 							 start, max,
 							 threshold,
 							 found);
 		if (err == -ENODATA) {
 			err = ssdfs_maptbl_find_pre_erased_unused_peb(tbl,
-								    fdesc,
-								    hdr,
-								    folio_index,
-								    start, max,
-								    threshold,
-								    found);
+								fdesc,
+								hdr,
+								folio_index,
+								start, max,
+								threshold,
+								found);
 		}
 
-		if (err == -ENODATA) {
+		if (err == -ENODATA)
+			threshold++;
+		else
+			break;
+
+		number_of_tries++;
+	}
+
+	if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to find the unused peb: "
-				  "folio_index %lu, start %lu, max %lu, "
-				  "threshold %u, found %lu, err %d\n",
-				  folio_index, start, max,
-				  threshold, *found, err);
+		SSDFS_DBG("unable to find the unused peb: "
+			  "folio_index %lu, start %lu, max %lu, "
+			  "threshold %u, found %lu, err %d\n",
+			  folio_index, start, max,
+			  threshold, *found, err);
 #endif /* CONFIG_SSDFS_DEBUG */
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find the unused peb: err %d\n", err);
-		}
 	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find the unused peb: err %d\n", err);
+		SSDFS_ERR("fail to find the unused peb: err %d\n",
+			  err);
 	}
 
 	return err;
@@ -7751,7 +7744,7 @@ int ssdfs_maptbl_select_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 
 		switch (peb_goal) {
 		case SSDFS_MAPTBL_MIGRATING_PEB:
-			if (reserved_pebs > 0) {
+			if (reserved_pebs > 0 || unused_pebs > 0) {
 				err = -EBUSY;
 			}
 			break;
