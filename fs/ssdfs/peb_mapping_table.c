@@ -396,11 +396,15 @@ int ssdfs_check_maptbl_sb_header(struct ssdfs_fs_info *fsi)
 	if (ptr->lebs_count > calculated ||
 	    calculated > (ptr->lebs_count + (2 * ptr->lebs_per_fragment))) {
 		SSDFS_CRIT("mapping table has corrupted state: "
+			   "lebs_count %llu, pebs_count %llu, nsegs %llu, "
 			   "lebs_per_fragment %u, fragments_count %u, "
-			   "lebs_per_fragment %u\n",
+			   "lebs_per_fragment %u, calculated %llu\n",
+			   ptr->lebs_count, ptr->pebs_count,
+			   fsi->nsegs,
 			   ptr->lebs_per_fragment,
 			   ptr->fragments_count,
-			   ptr->lebs_per_fragment);
+			   ptr->lebs_per_fragment,
+			   calculated);
 		return -EIO;
 	}
 

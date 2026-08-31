@@ -5198,7 +5198,13 @@ int ssdfs_peb_check_full_log_end(struct ssdfs_fs_info *fsi,
 					&last_log_time,
 					&log_blocks,
 					&log_bytes);
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		err = 0;
+		/*
+		 * Last partial log of full log is absent.
+		 * Continue logic.
+		 */
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read log header: "
 			  "seg %llu, peb %llu, header_block %u, "
 			  "err %d\n",
