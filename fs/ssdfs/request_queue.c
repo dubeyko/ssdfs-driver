@@ -515,16 +515,18 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_fs_info *fsi,
 				  req->place.len);
 #endif /* CONFIG_SSDFS_DEBUG */
 		} else {
-			SSDFS_ERR_DBG("delete request: "
+			SSDFS_WARN_DBG("delete request: "
 				      "class %#x, cmd %#x, "
 				      "type %#x, refs_count %u, "
-				      "seg %llu, extent (start %u, len %u)\n",
+				      "seg %llu, extent (start %u, len %u), "
+				      "err %d\n",
 				      req->private.class, req->private.cmd,
 				      req->private.type,
 				      atomic_read(&req->private.refs_count),
 				      req->place.start.seg_id,
 				      req->place.start.blk_index,
-				      req->place.len);
+				      req->place.len,
+				      err);
 		}
 
 		atomic_set(&req->result.state, SSDFS_REQ_FAILED);

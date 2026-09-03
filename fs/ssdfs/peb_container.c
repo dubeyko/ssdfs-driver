@@ -3842,7 +3842,7 @@ int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 			  leb_id, ptr->peb_type);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto fail_prepare_destination;
-	} else if (err == -EBUSY && is_unmount_in_progress(si)) {
+	} else if (err == -EBUSY && is_unmount_in_progress(si->fsi)) {
 do_erase_now:
 		err = ssdfs_maptbl_erase_dirty_pebs_now(fsi->maptbl);
 		if (unlikely(err)) {

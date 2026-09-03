@@ -392,7 +392,7 @@ bool ssdfs_segs_tree_can_be_shrunk(struct ssdfs_segment_info *si)
 	BUG_ON(!si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (is_unmount_in_progress(si))
+	if (is_unmount_in_progress(si->fsi))
 		return false;
 
 	if (atomic_read(&si->refs_count) != 0)

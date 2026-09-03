@@ -14808,7 +14808,7 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 		}
 	}
 
-	if (is_unmount_in_progress(si))
+	if (is_unmount_in_progress(si->fsi))
 		return false;
 
 	switch (atomic_read(&si->obj_state)) {

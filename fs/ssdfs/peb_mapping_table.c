@@ -526,6 +526,7 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 		return -ENODATA;
 	}
 
+	atomic_set(&ptr->erase_op_state, SSDFS_MAPTBL_NO_ERASE);
 	atomic_set(&ptr->state, SSDFS_MAPTBL_FRAG_CREATED);
 
 	return 0;
@@ -1070,7 +1071,6 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	ptr->stripes_per_fragment =
 		le16_to_cpu(fsi->vh->maptbl.stripes_per_fragment);
 
-	atomic_set(&ptr->erase_op_state, SSDFS_MAPTBL_NO_ERASE);
 	atomic_set(&ptr->min_pre_erase_pebs,
 		   le16_to_cpu(fsi->vh->maptbl.pre_erase_pebs));
 	atomic_set(&ptr->total_pre_erase_pebs, 0);

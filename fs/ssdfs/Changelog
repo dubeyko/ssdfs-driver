@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.84 [September 03, 2026]
+    (*) Fix soft lockup issue in PEB mapping table thread's logic.
+
 v.5.83 [August 22, 2026]
     (*) Fix logic of searching unused PEB in mapping table.
 

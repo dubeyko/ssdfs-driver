@@ -46,6 +46,7 @@ struct ssdfs_maptbl_flush_pair {
  * struct ssdfs_maptbl_fragment_desc - fragment descriptor
  * @lock: fragment lock
  * @state: fragment state
+ * @erase_op_state: state of erase operation
  * @fragment_id: fragment's ID in the whole sequence
  * @fragment_folios: count of memory folios in fragment
  * @start_leb: start LEB of fragment
@@ -69,6 +70,7 @@ struct ssdfs_maptbl_flush_pair {
 struct ssdfs_maptbl_fragment_desc {
 	struct rw_semaphore lock;
 	atomic_t state;
+	atomic_t erase_op_state;
 
 	u32 fragment_id;
 	u32 fragment_folios;
@@ -144,7 +146,6 @@ struct ssdfs_maptbl_area {
  * @segs: array of pointers on segment objects
  * @segs_count: count of segment objects are used for mapping table
  * @state: mapping table's state
- * @erase_op_state: state of erase operation
  * @min_pre_erase_pebs: minimum number of PEBs in pre-erase state
  * @total_pre_erase_pebs: total number of PEBs in pre-erase state
  * @max_erase_ops: upper bound of erase operations for one iteration
@@ -177,7 +178,6 @@ struct ssdfs_peb_mapping_table {
 
 	atomic_t state;
 
-	atomic_t erase_op_state;
 	atomic_t min_pre_erase_pebs;
 	atomic_t total_pre_erase_pebs;
 	atomic_t max_erase_ops;

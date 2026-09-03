@@ -18834,7 +18834,7 @@ bool need_wait_next_create_data_request(struct ssdfs_peb_info *pebi)
 	if (!is_ssdfs_peb_containing_user_data(pebi->pebc))
 		goto finish_check;
 
-	if (is_unmount_in_progress(si))
+	if (is_unmount_in_progress(si->fsi))
 		goto finish_check;
 
 	spin_lock(&si->pending_lock);
@@ -18888,7 +18888,7 @@ bool need_wait_next_update_request(struct ssdfs_peb_info *pebi)
 	if (!is_ssdfs_peb_containing_user_data(pebi->pebc))
 		goto finish_check;
 
-	if (is_unmount_in_progress(si))
+	if (is_unmount_in_progress(si->fsi))
 		goto finish_check;
 
 	spin_lock(&pebi->pebc->pending_lock);
@@ -21162,7 +21162,7 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 					SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			}
 		} else if (ssdfs_peb_has_dirty_folios(pebi)) {
-			if (is_unmount_in_progress(si)) {
+			if (is_unmount_in_progress(si->fsi)) {
 				err = -EAGAIN;
 				thread_state->state =
 					SSDFS_FLUSH_THREAD_COMMIT_LOG;
@@ -22831,7 +22831,8 @@ int ssdfs_process_commit_log_state(struct ssdfs_peb_container *pebc)
 			  thread_state->req->private.cmd);
 		thread_state->unfinished_reqs++;
 #endif /* CONFIG_SSDFS_DEBUG */
-	} else if (thread_state->req != NULL && !is_unmount_in_progress(si)) {
+	} else if (thread_state->req != NULL &&
+		   !is_unmount_in_progress(si->fsi)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("req->private.class %#x, "
 			  "req->private.cmd %#x\n",

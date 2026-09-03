@@ -524,9 +524,9 @@ bool is_metadata_going_flushing(struct ssdfs_segment_info *si)
 }
 
 static inline
-bool is_unmount_in_progress(struct ssdfs_segment_info *si)
+bool is_unmount_in_progress(struct ssdfs_fs_info *fsi)
 {
-	switch (atomic_read(&si->fsi->global_fs_state)) {
+	switch (atomic_read(&fsi->global_fs_state)) {
 	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
 	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
 	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:

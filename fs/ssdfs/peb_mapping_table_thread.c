@@ -31,6 +31,11 @@
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "folio_array.h"
+#include "peb.h"
+#include "offset_translation_table.h"
+#include "peb_container.h"
+#include "segment_bitmap.h"
+#include "segment.h"
 #include "peb_mapping_table.h"
 
 #include <trace/events/ssdfs.h>
@@ -2014,10 +2019,12 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 				    struct ssdfs_erase_result_array *array)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_maptbl_fragment_desc *fdesc;
 	u32 fragments_count;
 	int max_erase_ops;
 	int erases_per_fragment;
 	int state = SSDFS_MAPTBL_NO_ERASE;
+	int erased_pebs = 0;
 	int i;
 	int err = 0;
 
@@ -2044,8 +2051,6 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		return 0;
 	}
 
-	down_read(&tbl->tbl_lock);
-
 	if (is_ssdfs_maptbl_start_migration(fsi)) {
 		/* continue logic */
 		SSDFS_DBG("mapping table is starting migration\n");
@@ -2055,26 +2060,36 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		goto finish_collect_dirty_pebs;
 	}
 
-	state = atomic_cmpxchg(&tbl->erase_op_state,
-				SSDFS_MAPTBL_NO_ERASE,
-				SSDFS_MAPTBL_ERASE_IN_PROGRESS);
-	if (state != SSDFS_MAPTBL_NO_ERASE) {
-		err = -EBUSY;
-		SSDFS_DBG("erase operation is in progress\n");
-		goto finish_collect_dirty_pebs;
-	} else
-		state = SSDFS_MAPTBL_ERASE_IN_PROGRESS;
-
-	fragments_count = tbl->fragments_count;
-	erases_per_fragment = max_erase_ops / fragments_count;
-	if (erases_per_fragment == 0)
-		erases_per_fragment = 1;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("erases_per_fragment %d\n", erases_per_fragment);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < fragments_count; i++) {
+		down_read(&tbl->tbl_lock);
+
+		if (i >= tbl->fragments_count) {
+			err = -ERANGE;
+			SSDFS_ERR("fragment_index %u >= fragments_count %u\n",
+				  i, tbl->fragments_count);
+			goto finish_dirty_pebs_processing;
+		}
+
+		fdesc = &tbl->desc_array[i];
+
+		state = atomic_cmpxchg(&fdesc->erase_op_state,
+					SSDFS_MAPTBL_NO_ERASE,
+					SSDFS_MAPTBL_ERASE_IN_PROGRESS);
+		if (state != SSDFS_MAPTBL_NO_ERASE) {
+			err = -EBUSY;
+			SSDFS_DBG("erase operation is in progress\n");
+			goto finish_dirty_pebs_processing;
+		} else
+			state = SSDFS_MAPTBL_ERASE_IN_PROGRESS;
+
+		erases_per_fragment = max_erase_ops - erased_pebs;
+		if (erases_per_fragment <= 0)
+			goto finish_dirty_pebs_processing;
+
 		err = ssdfs_maptbl_collect_dirty_pebs(tbl, i,
 					erases_per_fragment, array);
 		if (err == -ENOENT) {
@@ -2088,10 +2103,8 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			SSDFS_ERR("fail to collect dirty pebs: "
 				  "fragment_index %d, err %d\n",
 				  i, err);
-			goto finish_collect_dirty_pebs;
+			goto finish_dirty_pebs_processing;
 		}
-
-		up_read(&tbl->tbl_lock);
 
 		if (is_ssdfs_maptbl_start_migration(fsi)) {
 			/* continue logic */
@@ -2102,7 +2115,10 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_dirty_pebs_processing;
 		}
 
+		up_read(&tbl->tbl_lock);
 		err = ssdfs_maptbl_erase_pebs_array(tbl->fsi, array);
+		down_read(&tbl->tbl_lock);
+
 		if (err == -EROFS) {
 			err = 0;
 			SSDFS_DBG("file system has READ-ONLY state\n");
@@ -2112,27 +2128,45 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_dirty_pebs_processing;
 		}
 
-		wake_up_all(&tbl->erase_ops_end_wq);
-
-		down_read(&tbl->tbl_lock);
+		erased_pebs += array->size;
 
 		err = ssdfs_maptbl_correct_dirty_pebs(tbl, array);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to correct erased PEBs state: err %d\n",
 				  err);
-			goto finish_collect_dirty_pebs;
+			goto finish_dirty_pebs_processing;
 		}
+
+		wake_up_all(&tbl->erase_ops_end_wq);
+
+finish_dirty_pebs_processing:
+		if (i >= tbl->fragments_count) {
+			err = -ERANGE;
+			SSDFS_ERR("fragment_index %u >= fragments_count %u\n",
+				  i, tbl->fragments_count);
+		} else {
+			fdesc = &tbl->desc_array[i];
+			if (state == SSDFS_MAPTBL_ERASE_IN_PROGRESS) {
+				state = SSDFS_MAPTBL_NO_ERASE;
+				atomic_set(&fdesc->erase_op_state, state);
+			}
+		}
+
+		up_read(&tbl->tbl_lock);
+
+		if (kthread_should_stop() || is_unmount_in_progress(fsi))
+			goto finish_collect_dirty_pebs;
+
+		if (err == -EBUSY) {
+			err = 0;
+			continue;
+		}
+
+		if (err)
+			goto finish_collect_dirty_pebs;
 	}
 
 finish_collect_dirty_pebs:
-	up_read(&tbl->tbl_lock);
-
-finish_dirty_pebs_processing:
-	if (state == SSDFS_MAPTBL_ERASE_IN_PROGRESS) {
-		state = SSDFS_MAPTBL_NO_ERASE;
-		atomic_set(&tbl->erase_op_state, SSDFS_MAPTBL_NO_ERASE);
-	}
-
 	wake_up_all(&tbl->erase_ops_end_wq);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2224,7 +2258,7 @@ int __ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_collect_recovering_pebs;
 		}
 
-		if (kthread_should_stop()) {
+		if (kthread_should_stop() || is_unmount_in_progress(fsi)) {
 			err = -EAGAIN;
 			goto finish_collect_recovering_pebs;
 		}
@@ -2245,7 +2279,7 @@ finish_collect_recovering_pebs:
 		goto finish_pebs_recovering;
 	}
 
-	if (kthread_should_stop()) {
+	if (kthread_should_stop() || is_unmount_in_progress(fsi)) {
 		err = -EAGAIN;
 		goto finish_pebs_recovering;
 	}
@@ -2755,7 +2789,7 @@ int ssdfs_maptbl_thread_func(void *data)
 		up_read(&tbl->tbl_lock);
 
 		wait_for_completion_timeout(init_end, HZ);
-		if (kthread_should_stop())
+		if (kthread_should_stop() || is_unmount_in_progress(fsi))
 			goto repeat;
 
 		down_read(&tbl->tbl_lock);
@@ -2790,6 +2824,9 @@ repeat:
 
 	if (fsi->sb->s_flags & SB_RDONLY)
 		goto sleep_read_only_maptbl_thread;
+
+	if (is_unmount_in_progress(fsi))
+		goto sleep_maptbl_thread;
 
 	if (!has_maptbl_pre_erase_pebs(tbl) &&
 	    is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue)) {
@@ -2836,7 +2873,7 @@ repeat:
 
 		ssdfs_peb_mapping_info_free(pmi);
 
-		if (kthread_should_stop())
+		if (kthread_should_stop() || is_unmount_in_progress(fsi))
 			goto repeat;
 	}
 
@@ -2857,7 +2894,7 @@ repeat:
 	}
 
 check_next_step:
-	if (kthread_should_stop())
+	if (kthread_should_stop() || is_unmount_in_progress(fsi))
 		goto repeat;
 
 	if (unlikely(err))
@@ -2881,7 +2918,7 @@ check_next_step:
 					kthread_should_stop(), HZ);
 	}
 
-	if (kthread_should_stop())
+	if (kthread_should_stop() || is_unmount_in_progress(fsi))
 		goto repeat;
 
 	while (err == -EAGAIN) {
@@ -2900,11 +2937,11 @@ check_next_step:
 		wait_event_interruptible_timeout(*wait_queue,
 					kthread_should_stop(), HZ);
 
-		if (kthread_should_stop())
+		if (kthread_should_stop() || is_unmount_in_progress(fsi))
 			goto repeat;
 	}
 
-	if (kthread_should_stop())
+	if (kthread_should_stop() || is_unmount_in_progress(fsi))
 		goto repeat;
 
 	if (has_maptbl_pre_erase_pebs(tbl))
