@@ -1992,7 +1992,7 @@ int ssdfs_maptbl_correct_max_erase_ops(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (max_erase_ops <= 0)
-		return 0;
+		max_erase_ops = SSDFS_MAPTBL_IO_RANGE;
 
 	reqs_count = atomic64_read(&fsi->flush_reqs);
 	reqs_count += atomic_read(&fsi->pending_bios);
@@ -2022,7 +2022,7 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	struct ssdfs_maptbl_fragment_desc *fdesc;
 	u32 fragments_count;
 	int max_erase_ops;
-	int erases_per_fragment;
+	int erases_per_fragment = 0;
 	int state = SSDFS_MAPTBL_NO_ERASE;
 	int erased_pebs = 0;
 	int i;
@@ -2039,8 +2039,8 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	fsi = tbl->fsi;
 
 	max_erase_ops = atomic_read(&tbl->max_erase_ops);
-	max_erase_ops = min_t(int, max_erase_ops, array->capacity);
 	max_erase_ops = ssdfs_maptbl_correct_max_erase_ops(fsi, max_erase_ops);
+	max_erase_ops = min_t(int, max_erase_ops, array->capacity);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("max_erase_ops %d\n", max_erase_ops);
@@ -2060,8 +2060,13 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		goto finish_collect_dirty_pebs;
 	}
 
+	down_read(&tbl->tbl_lock);
+	fragments_count = tbl->fragments_count;
+	up_read(&tbl->tbl_lock);
+
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("erases_per_fragment %d\n", erases_per_fragment);
+	SSDFS_DBG("fragments_count %u, max_erase_ops %d\n",
+		  fragments_count, max_erase_ops);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < fragments_count; i++) {
@@ -2098,7 +2103,7 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			SSDFS_DBG("fragment %d has no dirty PEBs\n",
 				  i);
 #endif /* CONFIG_SSDFS_DEBUG */
-			continue;
+			goto finish_dirty_pebs_processing;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to collect dirty pebs: "
 				  "fragment_index %d, err %d\n",
@@ -2139,7 +2144,6 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 		wake_up_all(&tbl->erase_ops_end_wq);
 
-finish_dirty_pebs_processing:
 		if (i >= tbl->fragments_count) {
 			err = -ERANGE;
 			SSDFS_ERR("fragment_index %u >= fragments_count %u\n",
@@ -2152,12 +2156,20 @@ finish_dirty_pebs_processing:
 			}
 		}
 
+finish_dirty_pebs_processing:
 		up_read(&tbl->tbl_lock);
 
-		if (kthread_should_stop() || is_unmount_in_progress(fsi))
+		if (is_unmount_in_progress(fsi))
 			goto finish_collect_dirty_pebs;
 
+		if (is_ssdfs_maptbl_under_flush(fsi)) {
+			err = -EBUSY;
+			SSDFS_DBG("mapping table is under flush\n");
+			goto finish_collect_dirty_pebs;
+		}
+
 		if (err == -EBUSY) {
+			/* current fragment is under erase */
 			err = 0;
 			continue;
 		}
@@ -2222,15 +2234,17 @@ int __ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 	fsi = tbl->fsi;
 
 	max_erase_ops = atomic_read(&tbl->max_erase_ops);
-	max_erase_ops = min_t(int, max_erase_ops, array->capacity);
 	max_erase_ops = ssdfs_maptbl_correct_max_erase_ops(fsi, max_erase_ops);
+	max_erase_ops = min_t(int, max_erase_ops, array->capacity);
 
 	if (max_erase_ops == 0) {
 		SSDFS_WARN("max_erase_ops == 0\n");
 		return 0;
 	}
 
-	down_read(&tbl->tbl_lock);
+	erases_per_fragment = max_erase_ops;
+	if (erases_per_fragment == 0)
+		erases_per_fragment = 1;
 
 	if (is_ssdfs_maptbl_start_migration(fsi)) {
 		/* continue logic */
@@ -2238,15 +2252,28 @@ int __ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 	} else if (is_ssdfs_maptbl_under_flush(fsi)) {
 		err = -EBUSY;
 		SSDFS_DBG("mapping table is under flush\n");
-		goto finish_collect_recovering_pebs;
+		goto finish_pebs_recovering;
 	}
 
+	down_read(&tbl->tbl_lock);
 	fragments_count = tbl->fragments_count;
-	erases_per_fragment = max_erase_ops / fragments_count;
-	if (erases_per_fragment == 0)
-		erases_per_fragment = 1;
+	up_read(&tbl->tbl_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("fragments_count %u, max_erase_ops %d\n",
+		  fragments_count, max_erase_ops);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < fragments_count; i++) {
+		down_read(&tbl->tbl_lock);
+
+		if (i >= tbl->fragments_count) {
+			err = -ERANGE;
+			SSDFS_ERR("fragment_index %u >= fragments_count %u\n",
+				  i, tbl->fragments_count);
+			goto finish_collect_recovering_pebs;
+		}
+
 		err = ssdfs_maptbl_collect_recovering_pebs(tbl, i,
 							   erases_per_fragment,
 							   stage,
@@ -2258,17 +2285,21 @@ int __ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_collect_recovering_pebs;
 		}
 
-		if (kthread_should_stop() || is_unmount_in_progress(fsi)) {
-			err = -EAGAIN;
-			goto finish_collect_recovering_pebs;
-		}
-	}
-
 finish_collect_recovering_pebs:
-	up_read(&tbl->tbl_lock);
+		up_read(&tbl->tbl_lock);
 
-	if (err)
-		goto finish_pebs_recovering;
+		if (kthread_should_stop() || is_unmount_in_progress(fsi))
+			goto finish_pebs_recovering;
+
+		if (is_ssdfs_maptbl_under_flush(fsi)) {
+			err = -EBUSY;
+			SSDFS_DBG("mapping table is under flush\n");
+			goto finish_pebs_recovering;
+		}
+
+		if (err)
+			goto finish_pebs_recovering;
+	}
 
 	if (is_ssdfs_maptbl_start_migration(fsi)) {
 		/* continue logic */
@@ -2296,11 +2327,12 @@ finish_collect_recovering_pebs:
 
 	down_read(&tbl->tbl_lock);
 	err = ssdfs_maptbl_correct_recovered_pebs(tbl, array);
+	up_read(&tbl->tbl_lock);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to correct recovered PEBs state: err %d\n",
 			  err);
 	}
-	up_read(&tbl->tbl_lock);
 
 finish_pebs_recovering:
 	return err;
@@ -2730,9 +2762,20 @@ finish_erase_dirty_pebs:
 
 #define MAPTBL_PTR(tbl) \
 	((struct ssdfs_peb_mapping_table *)(tbl))
+
+static inline
+bool is_it_time_process_pre_erase_pebs(struct ssdfs_peb_mapping_table *tbl)
+{
+	if (is_ssdfs_maptbl_under_flush(tbl->fsi))
+		return false;
+
+	return has_maptbl_pre_erase_pebs(MAPTBL_PTR(tbl));
+}
+
 #define MAPTBL_THREAD_WAKE_CONDITION(tbl, cache) \
 	(kthread_should_stop() || \
-	 has_maptbl_pre_erase_pebs(MAPTBL_PTR(tbl)) || \
+	 is_unmount_in_progress(tbl->fsi) || \
+	 is_it_time_process_pre_erase_pebs(tbl) || \
 	 !is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue))
 #define MAPTBL_THREAD_RDONLY_WAKE_CONDITION() \
 	(kthread_should_stop())

@@ -2463,7 +2463,14 @@ static int ssdfs_sysfs_create_segbmap_fragments(struct ssdfs_fs_info *fsi)
 	down_read(&segbmap->search_lock);
 
 	for (i = 0; i < segbmap->fragments_count; i++) {
-		fdesc = &segbmap->desc_array[i];
+		fdesc = ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (!fdesc) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get segbmap fragment %d descriptor\n",
+				  i);
+			goto cleanup_created_groups;
+		}
+
 		err = ssdfs_sysfs_create_segbmap_frag_group(fdesc,
 						    &fsi->segbmap_frags_kobj);
 		if (err) {
@@ -2484,8 +2491,9 @@ static int ssdfs_sysfs_create_segbmap_fragments(struct ssdfs_fs_info *fsi)
 
 cleanup_created_groups:
 	for (--i; i >= 0; i--) {
-		fdesc = &segbmap->desc_array[i];
-		ssdfs_sysfs_delete_segbmap_frag_group(fdesc);
+		fdesc = ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (fdesc)
+			ssdfs_sysfs_delete_segbmap_frag_group(fdesc);
 	}
 
 	up_read(&segbmap->search_lock);
@@ -2511,9 +2519,10 @@ static void ssdfs_sysfs_delete_segbmap_fragments(struct ssdfs_fs_info *fsi)
 	down_read(&segbmap->resize_lock);
 	down_read(&segbmap->search_lock);
 
-	for (i = 0; i < segbmap->fragments_count; i++) {;
-		fdesc = &segbmap->desc_array[i];
-		ssdfs_sysfs_delete_segbmap_frag_group(fdesc);
+	for (i = 0; i < segbmap->fragments_count; i++) {
+		fdesc = ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (fdesc)
+			ssdfs_sysfs_delete_segbmap_frag_group(fdesc);
 	}
 
 	up_read(&segbmap->search_lock);

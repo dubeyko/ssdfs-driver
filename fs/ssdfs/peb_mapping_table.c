@@ -1074,16 +1074,7 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	atomic_set(&ptr->min_pre_erase_pebs,
 		   le16_to_cpu(fsi->vh->maptbl.pre_erase_pebs));
 	atomic_set(&ptr->total_pre_erase_pebs, 0);
-	/*
-	 * TODO: the max_erase_ops field should be used by GC or
-	 *       special management thread for determination of
-	 *       upper bound of erase operations for one iteration
-	 *       with the goal to orchestrate I/O load with
-	 *       erasing load. But if it will be used TRIM command
-	 *       for erasing then maybe the erasing load will be
-	 *       no so sensitive.
-	 */
-	atomic_set(&ptr->max_erase_ops, ptr->pebs_count);
+	atomic_set(&ptr->max_erase_ops, ptr->pebs_per_stripe);
 
 	init_waitqueue_head(&ptr->erase_ops_end_wq);
 

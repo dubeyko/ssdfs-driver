@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.86 [September 06, 2026]
+    (*) Switch segment bitmap's memory management on xarray structure.
+
 v.5.85 [September 06, 2026]
     (*) Correct logic of log pages calculation for superblock segments.
 

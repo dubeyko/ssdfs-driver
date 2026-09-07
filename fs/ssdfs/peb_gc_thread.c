@@ -2432,7 +2432,8 @@ repeat:
 			wait_event_interruptible_timeout(*wq,
 					kthread_should_stop(), HZ);
 
-			if (kthread_should_stop())
+			if (kthread_should_stop() ||
+			    is_unmount_in_progress(fsi))
 				goto finish_seg_processing;
 			else
 				continue;
@@ -2449,7 +2450,7 @@ repeat:
 			  seg_id, seg_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (kthread_should_stop())
+		if (kthread_should_stop() || is_unmount_in_progress(fsi))
 			goto finish_seg_processing;
 
 		i = 0;
@@ -2467,7 +2468,8 @@ repeat:
 				continue;
 			}
 
-			if (kthread_should_stop())
+			if (kthread_should_stop() ||
+			    is_unmount_in_progress(fsi))
 				goto finish_seg_processing;
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
@@ -2521,7 +2523,8 @@ repeat:
 				continue;
 			}
 
-			if (kthread_should_stop())
+			if (kthread_should_stop() ||
+			    is_unmount_in_progress(fsi))
 				goto finish_seg_processing;
 
 			peb_type = pebd->type;
@@ -2603,7 +2606,7 @@ check_next_segment:
 
 		atomic_dec(&fsi->gc_should_act[thread_type]);
 
-		if (kthread_should_stop())
+		if (kthread_should_stop() || is_unmount_in_progress(fsi))
 			goto finish_seg_processing;
 
 		if (atomic_read(&fsi->gc_should_act[thread_type]) > 0) {
@@ -2613,7 +2616,7 @@ check_next_segment:
 		} else
 			goto finish_seg_processing;
 
-		if (kthread_should_stop())
+		if (kthread_should_stop() || is_unmount_in_progress(fsi))
 			goto finish_seg_processing;
 	}
 
@@ -2662,9 +2665,10 @@ sleep_failed_gc_thread:
  * should_continue_processing() - should continue processing?
  */
 static inline
-bool should_continue_processing(int mandatory_ops)
+bool should_continue_processing(struct ssdfs_fs_info *fsi,
+				int mandatory_ops)
 {
-	if (kthread_should_stop()) {
+	if (kthread_should_stop() || is_unmount_in_progress(fsi)) {
 		if (mandatory_ops > 0)
 			return true;
 		else
@@ -3053,7 +3057,7 @@ repeat:
 			  seg_id, seg_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (!should_continue_processing(mandatory_ops))
+		if (!should_continue_processing(fsi, mandatory_ops))
 			goto finish_seg_processing;
 
 		i = 0;
@@ -3102,7 +3106,7 @@ repeat:
 				goto check_next_segment;
 			}
 
-			if (!should_continue_processing(mandatory_ops))
+			if (!should_continue_processing(fsi, mandatory_ops))
 				goto finish_seg_processing;
 
 			goto try_to_find_seg_object;
@@ -3262,7 +3266,7 @@ check_next_segment:
 		mandatory_ops--;
 		seg_id++;
 
-		if (!should_continue_processing(mandatory_ops))
+		if (!should_continue_processing(fsi, mandatory_ops))
 			goto finish_seg_processing;
 	}
 

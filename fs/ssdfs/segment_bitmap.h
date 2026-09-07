@@ -143,10 +143,10 @@ enum {
  * @fragment_size: size of fragment in bytes
  * @extents: metadata extents that describe segment bitmap location
  * @segs_count: count of segment objects are used for segment bitmap
- * @segs: array of pointers on segment objects
+ * @segs: xarrays of pointers on segment objects (main and copy)
  * @search_lock: lock for search and change state operations
  * @fbmap: array of fragment bitmaps
- * @desc_array: array of fragments' descriptors
+ * @desc_array: xarray of fragments' descriptors indexed by fragment index
  * @folios: memory folios of the whole segment bitmap
  * @fsi: pointer on shared file system object
  */
@@ -161,15 +161,46 @@ struct ssdfs_segment_bmap {
 	u16 fragment_size;
 	struct ssdfs_meta_area_extent extents[SEGBMAP_LIMIT1][SEGBMAP_LIMIT2];
 	u16 segs_count;
-	struct ssdfs_segment_info **segs[SSDFS_SEGBMAP_SEG_COPY_MAX];
+	struct xarray segs[SSDFS_SEGBMAP_SEG_COPY_MAX];
 
 	struct rw_semaphore search_lock;
 	unsigned long *fbmap[SSDFS_SEGBMAP_FBMAP_TYPE_MAX];
-	struct ssdfs_segbmap_fragment_desc *desc_array;
+	struct xarray desc_array;
 	struct ssdfs_folio_array folios;
 
 	struct ssdfs_fs_info *fsi;
 };
+
+/*
+ * ssdfs_segbmap_get_fragment_desc() - get fragment descriptor by index
+ * @bmap: pointer on segment bitmap object
+ * @fragment_index: index of fragment descriptor
+ */
+static inline
+struct ssdfs_segbmap_fragment_desc *
+ssdfs_segbmap_get_fragment_desc(struct ssdfs_segment_bmap *bmap,
+				pgoff_t fragment_index)
+{
+	return xa_load(&bmap->desc_array, fragment_index);
+}
+
+/*
+ * ssdfs_segbmap_segment() - get segment object by index
+ * @bmap: pointer on segment bitmap object
+ * @array_type: type of segments' xarray (main or copy)
+ * @seg_index: index of segment object in the sequence
+ */
+static inline
+struct ssdfs_segment_info *
+ssdfs_segbmap_segment(struct ssdfs_segment_bmap *bmap,
+		      int array_type, u16 seg_index)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(array_type >= SSDFS_SEGBMAP_SEG_COPY_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return xa_load(&bmap->segs[array_type], seg_index);
+}
 
 /*
  * Inline functions
@@ -372,12 +403,13 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 	SSDFS_DBG("segs_count %u\n", bmap->segs_count);
 
 	for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
-		if (!bmap->segs[j])
+		if (xa_empty(&bmap->segs[j]))
 			continue;
 
 		for (i = 0; i < bmap->segs_count; i++) {
 			SSDFS_DBG("segs[%d][%d] = %p\n",
-				  j, i, bmap->segs[j][i]);
+				  j, i,
+				  xa_load(&bmap->segs[j], i));
 		}
 	}
 
@@ -393,7 +425,9 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 	for (i = 0; i < bmap->fragments_count; i++) {
 		struct ssdfs_segbmap_fragment_desc *desc;
 
-		desc = &bmap->desc_array[i];
+		desc = xa_load(&bmap->desc_array, i);
+		if (!desc)
+			continue;
 
 		SSDFS_DBG("state %#x, total_segs %u, "
 			  "clean_or_using_segs %u, used_or_dirty_segs %u, "
