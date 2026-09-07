@@ -59,6 +59,7 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 	u64 free_pages;
 	u8 log_segsize = U8_MAX;
 	u32 seg_size = U32_MAX;
+	u16 seg_type;
 	u32 page_size = U32_MAX;
 	u64 cno = U64_MAX;
 	u16 log_pages = U16_MAX;
@@ -94,6 +95,7 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 		seg_size = 1 << vh->log_segsize;
 		page_size = 1 << vh->log_pagesize;
 		cno = le64_to_cpu(hdr->cno);
+		seg_type = le16_to_cpu(hdr->seg_type);
 		log_pages = le16_to_cpu(hdr->log_pages);
 	} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
 		struct ssdfs_partial_log_header *pl_hdr;
@@ -104,6 +106,7 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 		seg_size = 1 << pl_hdr->log_segsize;
 		page_size = 1 << pl_hdr->log_pagesize;
 		cno = le64_to_cpu(pl_hdr->cno);
+		seg_type = le16_to_cpu(pl_hdr->seg_type);
 		log_pages = le16_to_cpu(pl_hdr->log_pages);
 	} else {
 		SSDFS_DBG("log header is corrupted\n");
@@ -156,7 +159,21 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 		return false;
 	}
 
-	log_bytes = (u32)log_pages * fsi->pagesize;
+	switch (seg_type) {
+	case SSDFS_SB_SEG_TYPE:
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		if (le32_to_cpu(footer->volume_state.flags) &
+					SSDFS_VS_4KB_PAGE_SIZE_PEB)
+			log_bytes = (u32)log_pages * SSDFS_4KB;
+		else
+			log_bytes = (u32)log_pages * fsi->pagesize;
+		break;
+
+	default:
+		log_bytes = (u32)log_pages * fsi->pagesize;
+		break;
+	}
+
 	if (le32_to_cpu(footer->log_bytes) > log_bytes) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("hdr log_bytes %u > footer log_bytes %u\n",
@@ -926,6 +943,7 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 /*
  * ssdfs_prepare_log_footer_for_commit() - prepare log footer for commit
  * @fsi: pointer on shared file system object
+ * @seg_type: segment type
  * @block_size: block size in bytes
  * @log_pages: count of pages in the log
  * @log_flags: log's flags
@@ -942,6 +960,7 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
  * %-EINVAL     - invalid input values.
  */
 int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
+					u16 seg_type,
 					u32 block_size,
 					u32 log_pages,
 					u32 log_flags,
@@ -950,12 +969,13 @@ int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 					struct ssdfs_log_footer *footer)
 {
 	u16 data_size = sizeof(struct ssdfs_log_footer);
+	u32 flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("fsi %p, block_size %u, log_pages %u, "
+	SSDFS_DBG("fsi %p, seg_type %#x, block_size %u, log_pages %u, "
 		  "log_flags %#x, footer %p\n",
-		  fsi, block_size, log_pages, log_flags, footer);
+		  fsi, seg_type, block_size, log_pages, log_flags, footer);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	footer->volume_state.magic.key = cpu_to_le16(SSDFS_LOG_FOOTER_MAGIC);
@@ -976,6 +996,19 @@ int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 	}
 
 	footer->log_flags = cpu_to_le32(log_flags);
+
+	switch (seg_type) {
+	case SSDFS_SB_SEG_TYPE:
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		flags = le32_to_cpu(footer->volume_state.flags);
+		flags |= SSDFS_VS_4KB_PAGE_SIZE_PEB;
+		footer->volume_state.flags = cpu_to_le32(flags);
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
 
 	footer->volume_state.check.bytes = cpu_to_le16(data_size);
 	footer->volume_state.check.flags = cpu_to_le16(SSDFS_CRC32);

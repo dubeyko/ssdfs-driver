@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.85 [September 06, 2026]
+    (*) Correct logic of log pages calculation for superblock segments.
+
 v.5.84 [September 03, 2026]
     (*) Fix soft lockup issue in PEB mapping table thread's logic.
 

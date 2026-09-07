@@ -276,6 +276,9 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	bool major_magic_valid, minor_magic_valid;
 	u64 dev_size;
+	u64 erase_size;
+	u16 log_pages;
+	u32 pages_per_peb;
 	int res;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -376,27 +379,6 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 		return -EIO;
 	}
 
-	if (le16_to_cpu(hdr->log_pages) > fsi->pages_per_peb) {
-		if (!silent) {
-			SSDFS_ERR("log_pages %u > pages_per_peb %u\n",
-				  le16_to_cpu(hdr->log_pages),
-				  fsi->pages_per_peb);
-			ssdfs_show_volume_header(vh);
-		} else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("log_pages %u > pages_per_peb %u\n",
-				  le16_to_cpu(hdr->log_pages),
-				  fsi->pages_per_peb);
-			ssdfs_show_volume_header(vh);
-#else
-			SSDFS_DBG("log_pages %u > pages_per_peb %u\n",
-				  le16_to_cpu(hdr->log_pages),
-				  fsi->pages_per_peb);
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
-		return -EIO;
-	}
-
 	if (le16_to_cpu(hdr->seg_type) > SSDFS_LAST_KNOWN_SEG_TYPE) {
 		if (!silent) {
 			SSDFS_ERR("unknown seg_type %#x\n",
@@ -428,6 +410,41 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 #else
 			SSDFS_DBG("corrupted seg_flags %#x\n",
 				  le32_to_cpu(hdr->seg_flags));
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+		return -EIO;
+	}
+
+	log_pages = le16_to_cpu(hdr->log_pages);
+
+	switch (le16_to_cpu(hdr->seg_type)) {
+	case SSDFS_SB_SEG_TYPE:
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		if (le32_to_cpu(vh->flags) & SSDFS_VH_4KB_PAGE_SIZE_PEB) {
+			erase_size = 1 << vh->log_erasesize;
+			pages_per_peb = div_u64(erase_size, SSDFS_4KB);
+		} else
+			pages_per_peb = fsi->pages_per_peb;
+		break;
+
+	default:
+		pages_per_peb = fsi->pages_per_peb;
+		break;
+	}
+
+	if (log_pages > pages_per_peb) {
+		if (!silent) {
+			SSDFS_ERR("log_pages %u > pages_per_peb %u\n",
+				  log_pages, pages_per_peb);
+			ssdfs_show_volume_header(vh);
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_ERR("log_pages %u > pages_per_peb %u\n",
+				  log_pages, pages_per_peb);
+			ssdfs_show_volume_header(vh);
+#else
+			SSDFS_DBG("log_pages %u > pages_per_peb %u\n",
+				  log_pages, pages_per_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
@@ -649,6 +666,9 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 	size_t hdr_size = sizeof(struct ssdfs_partial_log_header);
 	bool major_magic_valid, minor_magic_valid;
 	u64 dev_size;
+	u64 erase_size;
+	u16 log_pages;
+	u32 pages_per_peb;
 	u32 log_bytes;
 	int res;
 
@@ -724,45 +744,6 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 		return -EIO;
 	}
 
-	if (le16_to_cpu(hdr->log_pages) > fsi->pages_per_peb) {
-		if (!silent) {
-			SSDFS_ERR("log_pages %u > pages_per_peb %u\n",
-				  le16_to_cpu(hdr->log_pages),
-				  fsi->pages_per_peb);
-		} else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("log_pages %u > pages_per_peb %u\n",
-				  le16_to_cpu(hdr->log_pages),
-				  fsi->pages_per_peb);
-#else
-			SSDFS_DBG("log_pages %u > pages_per_peb %u\n",
-				  le16_to_cpu(hdr->log_pages),
-				  fsi->pages_per_peb);
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
-		return -EIO;
-	}
-
-	log_bytes = (u32)le16_to_cpu(hdr->log_pages) * fsi->pagesize;
-	if (le32_to_cpu(hdr->log_bytes) > log_bytes) {
-		if (!silent) {
-			SSDFS_ERR("calculated log_bytes %u < log_bytes %u\n",
-				  log_bytes,
-				  le32_to_cpu(hdr->log_bytes));
-		} else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("calculated log_bytes %u < log_bytes %u\n",
-				  log_bytes,
-				  le32_to_cpu(hdr->log_bytes));
-#else
-			SSDFS_DBG("calculated log_bytes %u < log_bytes %u\n",
-				  log_bytes,
-				  le32_to_cpu(hdr->log_bytes));
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
-		return -EIO;
-	}
-
 	if (le16_to_cpu(hdr->seg_type) > SSDFS_LAST_KNOWN_SEG_TYPE) {
 		if (!silent) {
 			SSDFS_ERR("unknown seg_type %#x\n",
@@ -790,6 +771,75 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 #else
 			SSDFS_DBG("corrupted pl_flags %#x\n",
 				  le32_to_cpu(hdr->pl_flags));
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+		return -EIO;
+	}
+
+	log_pages = le16_to_cpu(hdr->log_pages);
+
+	switch (le16_to_cpu(hdr->seg_type)) {
+	case SSDFS_SB_SEG_TYPE:
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		if (le32_to_cpu(hdr->flags) & SSDFS_VS_4KB_PAGE_SIZE_PEB) {
+			erase_size = 1 << hdr->log_erasesize;
+			pages_per_peb = div_u64(erase_size, SSDFS_4KB);
+		} else
+			pages_per_peb = fsi->pages_per_peb;
+		break;
+
+	default:
+		pages_per_peb = fsi->pages_per_peb;
+		break;
+	}
+
+	if (log_pages > pages_per_peb) {
+		if (!silent) {
+			SSDFS_ERR("log_pages %u > pages_per_peb %u\n",
+				  le16_to_cpu(hdr->log_pages),
+				  fsi->pages_per_peb);
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_ERR("log_pages %u > pages_per_peb %u\n",
+				  le16_to_cpu(hdr->log_pages),
+				  fsi->pages_per_peb);
+#else
+			SSDFS_DBG("log_pages %u > pages_per_peb %u\n",
+				  le16_to_cpu(hdr->log_pages),
+				  fsi->pages_per_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+		return -EIO;
+	}
+
+	switch (le16_to_cpu(hdr->seg_type)) {
+	case SSDFS_SB_SEG_TYPE:
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		if (le32_to_cpu(hdr->flags) & SSDFS_VS_4KB_PAGE_SIZE_PEB)
+			log_bytes = (u32)log_pages * SSDFS_4KB;
+		else
+			log_bytes = (u32)log_pages * fsi->pagesize;
+		break;
+
+	default:
+		log_bytes = (u32)log_pages * fsi->pagesize;
+		break;
+	}
+
+	if (le32_to_cpu(hdr->log_bytes) > log_bytes) {
+		if (!silent) {
+			SSDFS_ERR("calculated log_bytes %u < log_bytes %u\n",
+				  log_bytes,
+				  le32_to_cpu(hdr->log_bytes));
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_ERR("calculated log_bytes %u < log_bytes %u\n",
+				  log_bytes,
+				  le32_to_cpu(hdr->log_bytes));
+#else
+			SSDFS_DBG("calculated log_bytes %u < log_bytes %u\n",
+				  log_bytes,
+				  le32_to_cpu(hdr->log_bytes));
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
@@ -1230,6 +1280,8 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 					    struct ssdfs_segment_header *hdr)
 {
 	u16 data_size = sizeof(struct ssdfs_segment_header);
+	u32 pages_per_peb;
+	u32 flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1244,13 +1296,6 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->timestamp = cpu_to_le64(last_log_time);
 	hdr->cno = cpu_to_le64(last_log_cno);
 
-	if (log_pages > fsi->pages_per_seg || log_pages > U16_MAX) {
-		SSDFS_ERR("invalid value of log_pages %u\n", log_pages);
-		return -EINVAL;
-	}
-
-	hdr->log_pages = cpu_to_le16((u16)log_pages);
-
 	if (seg_type == SSDFS_UNKNOWN_SEG_TYPE ||
 	    seg_type > SSDFS_LAST_KNOWN_SEG_TYPE) {
 		SSDFS_ERR("invalid value of seg_type %#x\n", seg_type);
@@ -1260,10 +1305,41 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->seg_type = cpu_to_le16(seg_type);
 	hdr->seg_flags = cpu_to_le32(seg_flags);
 
+	switch (seg_type) {
+	case SSDFS_SB_SEG_TYPE:
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		pages_per_peb = fsi->erasesize / SSDFS_4KB;
+		break;
+
+	default:
+		pages_per_peb = fsi->pages_per_peb;
+		break;
+	}
+
+	if (log_pages > pages_per_peb || log_pages > U16_MAX) {
+		SSDFS_ERR("invalid value of log_pages %u\n", log_pages);
+		return -EINVAL;
+	}
+
+	hdr->log_pages = cpu_to_le16((u16)log_pages);
+
 	hdr->seg_id = cpu_to_le64(seg_id);
 	hdr->leb_id = cpu_to_le64(leb_id);
 	hdr->peb_id = cpu_to_le64(peb_id);
 	hdr->relation_peb_id = cpu_to_le64(relation_peb_id);
+
+	switch (seg_type) {
+	case SSDFS_SB_SEG_TYPE:
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		flags = le32_to_cpu(hdr->volume_hdr.flags);
+		flags |= SSDFS_VH_4KB_PAGE_SIZE_PEB;
+		hdr->volume_hdr.flags = cpu_to_le32(flags);
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
 
 	hdr->volume_hdr.check.bytes = cpu_to_le16(data_size);
 	hdr->volume_hdr.check.flags = cpu_to_le16(SSDFS_CRC32);
@@ -1307,6 +1383,8 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 					struct ssdfs_partial_log_header *hdr)
 {
 	u16 data_size = sizeof(struct ssdfs_partial_log_header);
+	u32 pages_per_peb;
+	u32 flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1327,14 +1405,6 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->timestamp = cpu_to_le64(last_log_time);
 	hdr->cno = cpu_to_le64(last_log_cno);
 
-	if (log_pages > fsi->pages_per_seg || log_pages > U16_MAX) {
-		SSDFS_ERR("invalid value of log_pages %u\n", log_pages);
-		return -EINVAL;
-	}
-
-	hdr->log_pages = cpu_to_le16((u16)log_pages);
-	hdr->log_bytes = cpu_to_le32(log_pages << fsi->log_pagesize);
-
 	if (seg_type == SSDFS_UNKNOWN_SEG_TYPE ||
 	    seg_type > SSDFS_LAST_KNOWN_SEG_TYPE) {
 		SSDFS_ERR("invalid value of seg_type %#x\n", seg_type);
@@ -1344,10 +1414,42 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->seg_type = cpu_to_le16(seg_type);
 	hdr->pl_flags = cpu_to_le32(pl_flags);
 
+	switch (seg_type) {
+	case SSDFS_SB_SEG_TYPE:
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		pages_per_peb = fsi->erasesize / SSDFS_4KB;
+		break;
+
+	default:
+		pages_per_peb = fsi->pages_per_peb;
+		break;
+	}
+
+	if (log_pages > pages_per_peb || log_pages > U16_MAX) {
+		SSDFS_ERR("invalid value of log_pages %u\n", log_pages);
+		return -EINVAL;
+	}
+
+	hdr->log_pages = cpu_to_le16((u16)log_pages);
+	hdr->log_bytes = cpu_to_le32(log_pages << fsi->log_pagesize);
+
 	spin_lock(&fsi->volume_state_lock);
 	hdr->free_pages = cpu_to_le64(fsi->free_pages);
 	hdr->flags = cpu_to_le32(fsi->fs_flags);
 	spin_unlock(&fsi->volume_state_lock);
+
+	switch (seg_type) {
+	case SSDFS_SB_SEG_TYPE:
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		flags = le32_to_cpu(hdr->flags);
+		flags |= SSDFS_VS_4KB_PAGE_SIZE_PEB;
+		hdr->flags = cpu_to_le32(flags);
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
 
 	mutex_lock(&fsi->resize_mutex);
 	hdr->nsegs = cpu_to_le64(fsi->nsegs);

@@ -2561,7 +2561,8 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		     footer_desc, 0, footer_array_bytes,
 		     footer_array_bytes);
 
-	err = ssdfs_prepare_log_footer_for_commit(fsi, PAGE_SIZE,
+	err = ssdfs_prepare_log_footer_for_commit(fsi, SSDFS_SB_SEG_TYPE,
+						  PAGE_SIZE,
 						  log_pages_count,
 						  flags, timestamp,
 						  cno, footer);
@@ -3074,7 +3075,8 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		     footer_desc, 0, footer_array_bytes,
 		     footer_array_bytes);
 
-	err = ssdfs_prepare_log_footer_for_commit(fsi, PAGE_SIZE,
+	err = ssdfs_prepare_log_footer_for_commit(fsi, SSDFS_SB_SEG_TYPE,
+						  PAGE_SIZE,
 						  log_pages_count,
 						  flags, timestamp,
 						  cno, footer);

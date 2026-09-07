@@ -243,6 +243,7 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 						u64 last_log_cno,
 						struct ssdfs_volume_state *vs);
 int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
+					u16 seg_type,
 					u32 block_size,
 					u32 log_pages,
 					u32 log_flags,

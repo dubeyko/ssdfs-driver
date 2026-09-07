@@ -14483,6 +14483,7 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	pgoff_t start_block;
 	pgoff_t lf_folio_index;
 	int padding;
+	u16 seg_type;
 	u32 log_blocks;
 	u32 area_offset, area_size;
 	u64 last_log_time;
@@ -14638,7 +14639,9 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 							 &footer->volume_state);
 
 	if (!err) {
+		seg_type = pebi->pebc->parent_si->seg_type;
 		err = ssdfs_prepare_log_footer_for_commit(fsi,
+							  seg_type,
 							  fsi->pagesize,
 							  log_blocks,
 							  flags,
