@@ -2593,7 +2593,7 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 	bytes_count = le32_to_cpu(meta_desc->size);
 
 	if (bytes_count == 0 ||
-	    bytes_count > (u32)FOLIO_BATCH_SIZE * PAGE_SIZE) {
+	    bytes_count > (u32)SSDFS_MAPTBL_CACHE_FRAGMENTS_MAX * PAGE_SIZE) {
 		SSDFS_ERR("invalid maptbl cache size %u\n",
 			  bytes_count);
 		err = -EFBIG;
@@ -2604,9 +2604,10 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 
 	folios_count = (bytes_count + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
-	if (folios_count > FOLIO_BATCH_SIZE) {
-		SSDFS_ERR("folios_count %u exceeds batch capacity %u\n",
-			  folios_count, (unsigned)FOLIO_BATCH_SIZE);
+	if (folios_count > SSDFS_MAPTBL_CACHE_FRAGMENTS_MAX) {
+		SSDFS_ERR("folios_count %u exceeds maptbl cache capacity %u\n",
+			  folios_count,
+			  (unsigned)SSDFS_MAPTBL_CACHE_FRAGMENTS_MAX);
 		err = -ERANGE;
 		goto finish_read_maptbl_cache;
 	}

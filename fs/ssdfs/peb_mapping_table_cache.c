@@ -1562,9 +1562,10 @@ int ssdfs_maptbl_cache_init_folio(struct ssdfs_maptbl_cache *cache,
 		  kaddr, sequence_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (sequence_id >= SSDFS_EXTENT_LEN_MAX) {
-		SSDFS_ERR("invalid sequence_id %u\n",
-			  sequence_id);
+	if (sequence_id >= SSDFS_MAPTBL_CACHE_FRAGMENTS_MAX) {
+		SSDFS_ERR("invalid sequence_id %u (max %u)\n",
+			  sequence_id,
+			  (unsigned)SSDFS_MAPTBL_CACHE_FRAGMENTS_MAX);
 		return -EINVAL;
 	}
 

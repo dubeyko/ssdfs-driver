@@ -25,6 +25,8 @@
 
 #include <linux/ssdfs_fs.h>
 
+#define SSDFS_MAPTBL_CACHE_FRAGMENTS_MAX	(FOLIO_BATCH_SIZE)
+
 /*
  * struct ssdfs_maptbl_cache - maptbl cache
  * @lock: lock of maptbl cache
