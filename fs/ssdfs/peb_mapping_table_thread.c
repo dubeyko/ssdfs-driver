@@ -441,7 +441,12 @@ int ssdfs_maptbl_collect_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		array->capacity * sizeof(struct ssdfs_erase_result));
 	array->size = 0;
 
-	fdesc = &tbl->desc_array[fragment_index];
+	fdesc = ssdfs_maptbl_fragment_desc(tbl, fragment_index);
+	if (!fdesc) {
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "fragment_index %u\n", fragment_index);
+		return -ERANGE;
+	}
 
 	state = atomic_read(&fdesc->state);
 	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED ||
@@ -915,7 +920,12 @@ ssdfs_maptbl_correct_fragment_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		return -ERANGE;
 	}
 
-	fdesc = &tbl->desc_array[fragment_index];
+	fdesc = ssdfs_maptbl_fragment_desc(tbl, fragment_index);
+	if (!fdesc) {
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "fragment_index %u\n", fragment_index);
+		return -ERANGE;
+	}
 
 	state = atomic_read(&fdesc->state);
 	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED ||
@@ -1455,7 +1465,12 @@ int ssdfs_maptbl_collect_recovering_pebs(struct ssdfs_peb_mapping_table *tbl,
 		array->capacity * sizeof(struct ssdfs_erase_result));
 	array->size = 0;
 
-	fdesc = &tbl->desc_array[fragment_index];
+	fdesc = ssdfs_maptbl_fragment_desc(tbl, fragment_index);
+	if (!fdesc) {
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "fragment_index %u\n", fragment_index);
+		return -ERANGE;
+	}
 
 	state = atomic_read(&fdesc->state);
 	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED ||
@@ -1834,7 +1849,12 @@ ssdfs_correct_fragment_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 		return -ERANGE;
 	}
 
-	fdesc = &tbl->desc_array[fragment_index];
+	fdesc = ssdfs_maptbl_fragment_desc(tbl, fragment_index);
+	if (!fdesc) {
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "fragment_index %u\n", fragment_index);
+		return -ERANGE;
+	}
 
 	state = atomic_read(&fdesc->state);
 	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED ||
@@ -2079,7 +2099,13 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_dirty_pebs_processing;
 		}
 
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %u\n", i);
+			goto finish_dirty_pebs_processing;
+		}
 
 		state = atomic_cmpxchg(&fdesc->erase_op_state,
 					SSDFS_MAPTBL_NO_ERASE,
@@ -2149,8 +2175,12 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			SSDFS_ERR("fragment_index %u >= fragments_count %u\n",
 				  i, tbl->fragments_count);
 		} else {
-			fdesc = &tbl->desc_array[i];
-			if (state == SSDFS_MAPTBL_ERASE_IN_PROGRESS) {
+			fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+			if (!fdesc) {
+				err = -ERANGE;
+				SSDFS_ERR("fail to get fragment descriptor: "
+					  "index %u\n", i);
+			} else if (state == SSDFS_MAPTBL_ERASE_IN_PROGRESS) {
 				state = SSDFS_MAPTBL_NO_ERASE;
 				atomic_set(&fdesc->erase_op_state, state);
 			}
@@ -2827,7 +2857,18 @@ int ssdfs_maptbl_thread_func(void *data)
 
 	down_read(&tbl->tbl_lock);
 	for (i = 0; i < tbl->fragments_count; i++) {
-		struct completion *init_end = &tbl->desc_array[i].init_end;
+		struct ssdfs_maptbl_fragment_desc *fdesc;
+		struct completion *init_end;
+
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %u\n", i);
+			up_read(&tbl->tbl_lock);
+			goto repeat;
+		}
+
+		init_end = &fdesc->init_end;
 
 		up_read(&tbl->tbl_lock);
 

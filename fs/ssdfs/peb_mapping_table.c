@@ -458,16 +458,23 @@ static
 int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 {
 	struct ssdfs_maptbl_fragment_desc *ptr;
+	void *result;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !fsi->maptbl || !fsi->maptbl->desc_array);
+	BUG_ON(!fsi || !fsi->maptbl);
 	BUG_ON(index >= fsi->maptbl->fragments_count);
 
 	SSDFS_DBG("fsi %p, index %u\n", fsi, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ptr = &fsi->maptbl->desc_array[index];
+	ptr = ssdfs_map_tbl_kzalloc(sizeof(struct ssdfs_maptbl_fragment_desc),
+				    GFP_KERNEL);
+	if (!ptr) {
+		SSDFS_ERR("fail to allocate fragment descriptor: "
+			  "index %u\n", index);
+		return -ENOMEM;
+	}
 
 	init_rwsem(&ptr->lock);
 	ptr->fragment_id = index;
@@ -491,6 +498,7 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 		SSDFS_ERR("fail to create folio array: "
 			  "capacity %u, err %d\n",
 			  ptr->fragment_folios, err);
+		ssdfs_map_tbl_kfree(ptr);
 		return err;
 	}
 
@@ -507,6 +515,7 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 					GFP_KERNEL);
 	if (!ptr->flush_pair1) {
 		ssdfs_destroy_folio_array(&ptr->array);
+		ssdfs_map_tbl_kfree(ptr);
 		SSDFS_ERR("fail to allocate flush requests array: "
 			  "array_size %u\n",
 			  ptr->flush_seq_size);
@@ -520,6 +529,7 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 		ssdfs_destroy_folio_array(&ptr->array);
 		ssdfs_map_tbl_kfree(ptr->flush_pair1);
 		ptr->flush_pair1 = NULL;
+		ssdfs_map_tbl_kfree(ptr);
 		SSDFS_ERR("fail to allocate flush requests array: "
 			  "array_size %u\n",
 			  ptr->flush_seq_size);
@@ -528,6 +538,18 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 
 	atomic_set(&ptr->erase_op_state, SSDFS_MAPTBL_NO_ERASE);
 	atomic_set(&ptr->state, SSDFS_MAPTBL_FRAG_CREATED);
+
+	result = xa_store(&fsi->maptbl->desc_array, index, ptr, GFP_KERNEL);
+	if (xa_is_err(result)) {
+		err = xa_err(result);
+		SSDFS_ERR("fail to store fragment descriptor: "
+			  "index %u, err %d\n", index, err);
+		ssdfs_destroy_folio_array(&ptr->array);
+		ssdfs_map_tbl_kfree(ptr->flush_pair1);
+		ssdfs_map_tbl_kfree(ptr->flush_pair2);
+		ssdfs_map_tbl_kfree(ptr);
+		return err;
+	}
 
 	return 0;
 }
@@ -672,7 +694,8 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 	int seg_state = SSDFS_SEG_LEAF_NODE_USING;
 	u16 log_pages;
 	u8 create_threads;
-	struct ssdfs_segment_info **kaddr = NULL;
+	struct ssdfs_segment_info *si = NULL;
+	void *result;
 	int i, j;
 	u32 created_segs = 0;
 	int err;
@@ -688,14 +711,6 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 
 	log_pages = le16_to_cpu(fsi->vh->maptbl_log_pages);
 	create_threads = fsi->create_threads_per_seg;
-
-	tbl->segs[array_type] = ssdfs_map_tbl_kcalloc(tbl->segs_count,
-					sizeof(struct ssdfs_segment_info *),
-					GFP_KERNEL);
-	if (!tbl->segs[array_type]) {
-		SSDFS_ERR("fail to allocate segment array\n");
-		return -ENOMEM;
-	}
 
 	for (i = 0; i < SSDFS_MAPTBL_RESERVED_EXTENTS; i++) {
 		struct ssdfs_meta_area_extent *extent;
@@ -726,14 +741,15 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 			}
 
 			seg = start_seg + j;
-			BUG_ON(!tbl->segs[array_type]);
-			kaddr = &tbl->segs[array_type][created_segs];
-			BUG_ON(*kaddr != NULL);
 
-			*kaddr = ssdfs_segment_allocate_object(seg);
-			if (IS_ERR_OR_NULL(*kaddr)) {
-				err = !*kaddr ? -ENOMEM : PTR_ERR(*kaddr);
-				*kaddr = NULL;
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(xa_load(&tbl->segs[array_type],
+				       created_segs) != NULL);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			si = ssdfs_segment_allocate_object(seg);
+			if (IS_ERR_OR_NULL(si)) {
+				err = !si ? -ENOMEM : PTR_ERR(si);
 				SSDFS_ERR("fail to allocate segment object: "
 					  "seg %llu, err %d\n",
 					  seg, err);
@@ -743,24 +759,33 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 			err = ssdfs_segment_create_object(fsi, seg, seg_state,
 							  seg_type, log_pages,
 							  create_threads,
-							  *kaddr);
+							  si);
 			if (err == -EINTR) {
 				/*
 				 * Ignore this error.
 				 */
-				ssdfs_segment_free_object(*kaddr);
-				*kaddr = NULL;
+				ssdfs_segment_free_object(si);
 				return err;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create segment: "
 					  "seg %llu, err %d\n",
 					  seg, err);
-				ssdfs_segment_free_object(*kaddr);
-				*kaddr = NULL;
+				ssdfs_segment_free_object(si);
 				return err;
 			}
 
-			ssdfs_segment_get_object(*kaddr);
+			result = xa_store(&tbl->segs[array_type],
+					  created_segs, si, GFP_KERNEL);
+			if (xa_is_err(result)) {
+				err = xa_err(result);
+				SSDFS_ERR("fail to store segment object: "
+					  "seg %llu, err %d\n",
+					  seg, err);
+				ssdfs_segment_destroy_object(si);
+				return err;
+			}
+
+			ssdfs_segment_get_object(si);
 			created_segs++;
 		}
 	}
@@ -793,10 +818,10 @@ void ssdfs_maptbl_destroy_segments(struct ssdfs_peb_mapping_table *tbl)
 
 	for (i = 0; i < tbl->segs_count; i++) {
 		for (j = 0; j < SSDFS_MAPTBL_SEG_COPY_MAX; j++) {
-			if (tbl->segs[j] == NULL)
-				continue;
+			si = xa_load(&tbl->segs[j], i);
 
-			si = tbl->segs[j][i];
+			if (!si)
+				continue;
 
 			ssdfs_segment_put_object(si);
 			err = ssdfs_segment_destroy_object(si);
@@ -810,10 +835,8 @@ void ssdfs_maptbl_destroy_segments(struct ssdfs_peb_mapping_table *tbl)
 		}
 	}
 
-	for (i = 0; i < SSDFS_MAPTBL_SEG_COPY_MAX; i++) {
-		ssdfs_map_tbl_kfree(tbl->segs[i]);
-		tbl->segs[i] = NULL;
-	}
+	for (i = 0; i < SSDFS_MAPTBL_SEG_COPY_MAX; i++)
+		xa_destroy(&tbl->segs[i]);
 }
 
 /*
@@ -828,13 +851,17 @@ void ssdfs_maptbl_destroy_fragment(struct ssdfs_fs_info *fsi, u32 index)
 	int state;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !fsi->maptbl || !fsi->maptbl->desc_array);
+	BUG_ON(!fsi || !fsi->maptbl);
 	BUG_ON(index >= fsi->maptbl->fragments_count);
 
 	SSDFS_DBG("fsi %p, index %u\n", fsi, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ptr = &fsi->maptbl->desc_array[index];
+	ptr = xa_erase(&fsi->maptbl->desc_array, index);
+	if (!ptr) {
+		SSDFS_DBG("fragment %u is absent\n", index);
+		return;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(rwsem_is_locked(&ptr->lock));
@@ -846,6 +873,7 @@ void ssdfs_maptbl_destroy_fragment(struct ssdfs_fs_info *fsi, u32 index)
 		SSDFS_WARN("fragment %u is dirty\n", index);
 	else if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
 		SSDFS_DBG("fragment %u init was failed\n", index);
+		ssdfs_map_tbl_kfree(ptr);
 		return;
 	} else if (state >= SSDFS_MAPTBL_FRAG_STATE_MAX)
 		BUG();
@@ -862,6 +890,31 @@ void ssdfs_maptbl_destroy_fragment(struct ssdfs_fs_info *fsi, u32 index)
 
 	ssdfs_destroy_folio_array(&ptr->array);
 	complete_all(&ptr->init_end);
+	ssdfs_map_tbl_kfree(ptr);
+}
+
+/*
+ * ssdfs_maptbl_destroy_fragments() - destroy all mapping table's fragments
+ * @fsi: file system info object
+ *
+ * This method destroys every fragment descriptor that has been stored
+ * into the @desc_array xarray and destroys the xarray itself.
+ */
+static
+void ssdfs_maptbl_destroy_fragments(struct ssdfs_fs_info *fsi)
+{
+	u32 i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !fsi->maptbl);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < fsi->maptbl->fragments_count; i++)
+		ssdfs_maptbl_destroy_fragment(fsi, i);
+
+	xa_destroy(&fsi->maptbl->desc_array);
 }
 
 /*
@@ -992,10 +1045,7 @@ int ssdfs_maptbl_init(struct ssdfs_peb_mapping_table *tbl)
 
 	for (i = 0; i < tbl->segs_count; i++) {
 		for (j = 0; j < SSDFS_MAPTBL_SEG_COPY_MAX; j++) {
-			if (tbl->segs[j] == NULL)
-				continue;
-
-			si = tbl->segs[j][i];
+			si = xa_load(&tbl->segs[j], i);
 
 			if (!si)
 				continue;
@@ -1021,7 +1071,6 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 {
 	struct ssdfs_peb_mapping_table *ptr;
 	size_t maptbl_obj_size = sizeof(struct ssdfs_peb_mapping_table);
-	size_t frag_desc_size = sizeof(struct ssdfs_maptbl_fragment_desc);
 	void *kaddr;
 	size_t bytes_count;
 	size_t bmap_bytes;
@@ -1055,6 +1104,11 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 
 	init_rwsem(&ptr->tbl_lock);
 	init_completion(&ptr->flush_end);
+
+	for (i = 0; i < SSDFS_MAPTBL_SEG_COPY_MAX; i++)
+		xa_init(&ptr->segs[i]);
+
+	xa_init(&ptr->desc_array);
 
 	atomic_set(&ptr->flags, le16_to_cpu(fsi->vh->maptbl.flags));
 	ptr->fragments_count = le32_to_cpu(fsi->vh->maptbl.fragments_count);
@@ -1106,28 +1160,12 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 		goto free_dirty_bmap;
 	}
 
-	kaddr = ssdfs_map_tbl_kcalloc(ptr->fragments_count,
-					frag_desc_size, GFP_KERNEL);
-	if (!kaddr) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate fragment descriptors array\n");
-		goto free_dirty_bmap;
-	}
-
-	ptr->desc_array = (struct ssdfs_maptbl_fragment_desc *)kaddr;
-
 	for (i = 0; i < ptr->fragments_count; i++) {
 		err = ssdfs_maptbl_create_fragment(fsi, i);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to create fragment: "
 				  "index %d, err %d\n",
 				  i, err);
-
-			for (--i; i >= 0; i--) {
-				/* Destroy created fragments */
-				ssdfs_maptbl_destroy_fragment(fsi, i);
-			}
-
 			goto free_fragment_descriptors;
 		}
 	}
@@ -1209,7 +1247,7 @@ destroy_seg_objects:
 	ssdfs_maptbl_destroy_segments(ptr);
 
 free_fragment_descriptors:
-	ssdfs_map_tbl_kfree(ptr->desc_array);
+	ssdfs_maptbl_destroy_fragments(fsi);
 
 free_dirty_bmap:
 	ssdfs_map_tbl_kfree(fsi->maptbl->dirty_bmap);
@@ -1232,8 +1270,6 @@ free_maptbl_object:
  */
 void ssdfs_maptbl_destroy(struct ssdfs_fs_info *fsi)
 {
-	int i;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1250,11 +1286,8 @@ void ssdfs_maptbl_destroy(struct ssdfs_fs_info *fsi)
 	ssdfs_sysfs_delete_maptbl_group(fsi);
 
 	ssdfs_maptbl_destroy_segments(fsi->maptbl);
+	ssdfs_maptbl_destroy_fragments(fsi);
 
-	for (i = 0; i < fsi->maptbl->fragments_count; i++)
-		ssdfs_maptbl_destroy_fragment(fsi, i);
-
-	ssdfs_map_tbl_kfree(fsi->maptbl->desc_array);
 	ssdfs_map_tbl_kfree(fsi->maptbl->dirty_bmap);
 	fsi->maptbl->dirty_bmap = NULL;
 	ssdfs_map_tbl_kfree(fsi->maptbl);
@@ -1817,7 +1850,12 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 		return -EINVAL;
 	}
 
-	fdesc = &tbl->desc_array[area->portion_id];
+	fdesc = ssdfs_maptbl_fragment_desc(tbl, area->portion_id);
+	if (!fdesc) {
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "portion_id %u\n", area->portion_id);
+		return -ERANGE;
+	}
 
 	state = atomic_read(&fdesc->state);
 	if (state != SSDFS_MAPTBL_FRAG_CREATED) {
@@ -2610,7 +2648,13 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 		  tbl, fragment_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	fdesc = &tbl->desc_array[fragment_index];
+	fdesc = ssdfs_maptbl_fragment_desc(tbl, fragment_index);
+	if (!fdesc) {
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "fragment_index %u\n", fragment_index);
+		return -ERANGE;
+	}
+
 	has_backup = atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY;
 
 	state = atomic_read(&fdesc->state);
@@ -2791,7 +2835,13 @@ define_update_area:
 			     sizeof(struct ssdfs_volume_extent));
 	}
 
-	si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
+	si = ssdfs_maptbl_segment(tbl, SSDFS_MAIN_MAPTBL_SEG, seg_index);
+	if (!si) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to get segment object: "
+			  "seg_index %u\n", seg_index);
+		goto fail_issue_fragment_updates;
+	}
 	pair1->si = si;
 
 	if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -2808,13 +2858,14 @@ define_update_area:
 						SSDFS_REQ_ASYNC_NO_FREE,
 						&pair1->req);
 	if (!err && has_backup) {
-		if (!tbl->segs[SSDFS_COPY_MAPTBL_SEG]) {
+		si = ssdfs_maptbl_segment(tbl, SSDFS_COPY_MAPTBL_SEG,
+					  seg_index);
+		if (!si) {
 			err = -ERANGE;
 			SSDFS_ERR("copy of maptbl doesn't exist\n");
 			goto fail_issue_fragment_updates;
 		}
 
-		si = tbl->segs[SSDFS_COPY_MAPTBL_SEG][seg_index];
 		pair2->si = si;
 
 		if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -3282,7 +3333,12 @@ int ssdfs_maptbl_wait_flush_end(struct ssdfs_peb_mapping_table *tbl)
 	has_backup = atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY;
 
 	for (i = 0; i < fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %u\n", i);
+			return -ERANGE;
+		}
 
 		down_write(&fdesc->lock);
 
@@ -3463,7 +3519,13 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 				     sizeof(struct ssdfs_volume_extent));
 		}
 
-		si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
+		si = ssdfs_maptbl_segment(tbl, SSDFS_MAIN_MAPTBL_SEG, seg_index);
+		if (!si) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get segment object: "
+				  "seg_index %u\n", seg_index);
+			goto finish_issue_commit_request;
+		}
 		pair1->si = si;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3485,13 +3547,14 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 						&pair1->req);
 
 		if (!err && has_backup) {
-			if (!tbl->segs[SSDFS_COPY_MAPTBL_SEG]) {
+			si = ssdfs_maptbl_segment(tbl, SSDFS_COPY_MAPTBL_SEG,
+						  seg_index);
+			if (!si) {
 				err = -ERANGE;
 				SSDFS_ERR("copy of maptbl doesn't exist\n");
 				goto finish_issue_commit_request;
 			}
 
-			si = tbl->segs[SSDFS_COPY_MAPTBL_SEG][seg_index];
 			pair2->si = si;
 
 			if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -3567,7 +3630,12 @@ int ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl)
 	has_backup = atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY;
 
 	for (i = 0; i < fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %u\n", i);
+			return -ERANGE;
+		}
 
 		down_write(&fdesc->lock);
 
@@ -3638,7 +3706,12 @@ int ssdfs_maptbl_wait_commit_logs_end(struct ssdfs_peb_mapping_table *tbl)
 	has_backup = atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY;
 
 	for (i = 0; i < fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %u\n", i);
+			return -ERANGE;
+		}
 
 		down_write(&fdesc->lock);
 
@@ -3834,7 +3907,13 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 				     sizeof(struct ssdfs_volume_extent));
 		}
 
-		si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
+		si = ssdfs_maptbl_segment(tbl, SSDFS_MAIN_MAPTBL_SEG, seg_index);
+		if (!si) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get segment object: "
+				  "seg_index %u\n", seg_index);
+			goto finish_issue_prepare_migration_request;
+		}
 		pair1->si = si;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3855,13 +3934,14 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 						SSDFS_REQ_ASYNC_NO_FREE,
 						&pair1->req);
 		if (!err && has_backup) {
-			if (!tbl->segs[SSDFS_COPY_MAPTBL_SEG]) {
+			si = ssdfs_maptbl_segment(tbl, SSDFS_COPY_MAPTBL_SEG,
+						  seg_index);
+			if (!si) {
 				err = -ERANGE;
 				SSDFS_ERR("copy of maptbl doesn't exist\n");
 				goto finish_issue_prepare_migration_request;
 			}
 
-			si = tbl->segs[SSDFS_COPY_MAPTBL_SEG][seg_index];
 			pair2->si = si;
 
 			if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -3936,7 +4016,12 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 	fragments_count = tbl->fragments_count;
 
 	for (i = 0; i < fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %u\n", i);
+			return -ERANGE;
+		}
 
 		state = atomic_read(&fdesc->state);
 		if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
@@ -4028,7 +4113,12 @@ int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 	has_backup = atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY;
 
 	for (i = 0; i < fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %u\n", i);
+			return -ERANGE;
+		}
 
 		down_write(&fdesc->lock);
 
@@ -4585,6 +4675,7 @@ struct ssdfs_maptbl_fragment_desc *
 ssdfs_maptbl_get_fragment_descriptor(struct ssdfs_peb_mapping_table *tbl,
 				     u64 leb_id)
 {
+	struct ssdfs_maptbl_fragment_desc *fdesc;
 	u32 fragment_index = FRAGMENT_INDEX(tbl, leb_id);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4598,7 +4689,14 @@ ssdfs_maptbl_get_fragment_descriptor(struct ssdfs_peb_mapping_table *tbl,
 		return ERR_PTR(-ERANGE);
 	}
 
-	return &tbl->desc_array[fragment_index];
+	fdesc = ssdfs_maptbl_fragment_desc(tbl, fragment_index);
+	if (!fdesc) {
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "fragment_index %u\n", fragment_index);
+		return ERR_PTR(-ERANGE);
+	}
+
+	return fdesc;
 }
 
 /*
@@ -9075,7 +9173,13 @@ int ssdfs_maptbl_recommend_search_range(struct ssdfs_fs_info *fsi,
 	start_index = FRAGMENT_INDEX(tbl, start_search_leb);
 
 	for (i = start_index; i < tbl->fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %d\n", i);
+			goto finish_check;
+		}
 
 		*end = &fdesc->init_end;
 
@@ -13730,7 +13834,13 @@ int ssdfs_try2increase_free_pages(struct ssdfs_fs_info *fsi)
 	down_read(&tbl->tbl_lock);
 
 	for (i = 0; i < fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %u\n", i);
+			goto finish_fragment_check;
+		}
 
 		state = atomic_read(&fdesc->state);
 		if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
@@ -13806,7 +13916,13 @@ int ssdfs_wait_maptbl_init_ending(struct ssdfs_fs_info *fsi, u32 count)
 	down_read(&tbl->tbl_lock);
 
 	for (i = 0; i < fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %u\n", i);
+			goto finish_fragment_check;
+		}
 
 		state = atomic_read(&fdesc->state);
 		if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
@@ -14041,11 +14157,10 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 	SSDFS_DBG("segs_count %u\n", tbl->segs_count);
 
 	for (i = 0; i < SSDFS_MAPTBL_SEG_COPY_MAX; i++) {
-		if (!tbl->segs[i])
-			continue;
-
-		for (j = 0; j < tbl->segs_count; j++)
-			SSDFS_DBG("seg[%d][%d] %p\n", i, j, tbl->segs[i][j]);
+		for (j = 0; j < tbl->segs_count; j++) {
+			SSDFS_DBG("seg[%d][%d] %p\n", i, j,
+				  xa_load(&tbl->segs[i], j));
+		}
 	}
 
 	SSDFS_DBG("min_pre_erase_pebs %u, total_pre_erase_pebs %u, "
@@ -14066,7 +14181,11 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 		u32 folios_count;
 		int state;
 
-		desc = &tbl->desc_array[i];
+		desc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!desc) {
+			SSDFS_DBG("fragment #%d descriptor is absent\n", i);
+			continue;
+		}
 
 		state = atomic_read(&desc->state);
 		SSDFS_DBG("fragment #%d: "

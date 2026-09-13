@@ -4513,7 +4513,14 @@ static int ssdfs_sysfs_create_maptbl_fragments(struct ssdfs_fs_info *fsi)
 	}
 
 	for (i = 0; i < tbl->fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "index %d\n", i);
+			goto cleanup_fragments;
+		}
+
 		err = ssdfs_sysfs_create_maptbl_frag_group(fdesc,
 							   &fsi->maptbl_frags_kobj);
 		if (unlikely(err)) {
@@ -4527,8 +4534,9 @@ static int ssdfs_sysfs_create_maptbl_fragments(struct ssdfs_fs_info *fsi)
 
 cleanup_fragments:
 	for (i--; i >= 0; i--) {
-		fdesc = &tbl->desc_array[i];
-		ssdfs_sysfs_delete_maptbl_frag_group(fdesc);
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (fdesc)
+			ssdfs_sysfs_delete_maptbl_frag_group(fdesc);
 	}
 	return err;
 }
@@ -4550,7 +4558,9 @@ static void ssdfs_sysfs_delete_maptbl_fragments(struct ssdfs_fs_info *fsi)
 
 	down_read(&tbl->tbl_lock);
 	for (i = 0; i < tbl->fragments_count; i++) {
-		fdesc = &tbl->desc_array[i];
+		fdesc = ssdfs_maptbl_fragment_desc(tbl, i);
+		if (!fdesc)
+			continue;
 
 		down_read(&fdesc->lock);
 		ssdfs_sysfs_delete_maptbl_frag_group(fdesc);

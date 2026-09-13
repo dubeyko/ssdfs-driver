@@ -23,6 +23,8 @@
 #ifndef _SSDFS_PEB_MAPPING_TABLE_H
 #define _SSDFS_PEB_MAPPING_TABLE_H
 
+#include <linux/xarray.h>
+
 #include "request_queue.h"
 
 #define SSDFS_MAPTBL_FIRST_PROTECTED_INDEX	0
@@ -143,7 +145,7 @@ struct ssdfs_maptbl_area {
  * @pebs_per_stripe: count of PEB descriptors in stripe
  * @stripes_per_fragment: count of stripes in fragment
  * @extents: metadata extents that describe mapping table location
- * @segs: array of pointers on segment objects
+ * @segs: xarrays of pointers on segment objects (main and copy)
  * @segs_count: count of segment objects are used for mapping table
  * @state: mapping table's state
  * @min_pre_erase_pebs: minimum number of PEBs in pre-erase state
@@ -152,7 +154,7 @@ struct ssdfs_maptbl_area {
  * @erase_ops_end_wq: wait queue of threads are waiting end of erase operation
  * @bmap_lock: dirty bitmap's lock
  * @dirty_bmap: bitmap of dirty fragments
- * @desc_array: array of fragment descriptors
+ * @desc_array: xarray of fragment descriptors indexed by fragment index
  * @wait_queue: wait queue of mapping table's thread
  * @flush_end: wait of flush ending
  * @thread: descriptor of mapping table's thread
@@ -173,7 +175,7 @@ struct ssdfs_peb_mapping_table {
 	u16 pebs_per_stripe;
 	u16 stripes_per_fragment;
 	struct ssdfs_meta_area_extent extents[MAPTBL_LIMIT1][MAPTBL_LIMIT2];
-	struct ssdfs_segment_info **segs[SSDFS_MAPTBL_SEG_COPY_MAX];
+	struct xarray segs[SSDFS_MAPTBL_SEG_COPY_MAX];
 	u16 segs_count;
 
 	atomic_t state;
@@ -187,7 +189,7 @@ struct ssdfs_peb_mapping_table {
 
 	struct mutex bmap_lock;
 	unsigned long *dirty_bmap;
-	struct ssdfs_maptbl_fragment_desc *desc_array;
+	struct xarray desc_array;
 
 	wait_queue_head_t wait_queue;
 	struct completion flush_end;
@@ -198,6 +200,37 @@ struct ssdfs_peb_mapping_table {
 	atomic64_t dirty_fragments;
 #endif /* CONFIG_SSDFS_DEBUG */
 };
+
+/*
+ * ssdfs_maptbl_fragment_desc() - get fragment descriptor by index
+ * @tbl: pointer on mapping table object
+ * @fragment_index: index of fragment descriptor
+ */
+static inline
+struct ssdfs_maptbl_fragment_desc *
+ssdfs_maptbl_fragment_desc(struct ssdfs_peb_mapping_table *tbl,
+			   pgoff_t fragment_index)
+{
+	return xa_load(&tbl->desc_array, fragment_index);
+}
+
+/*
+ * ssdfs_maptbl_segment() - get segment object by index
+ * @tbl: pointer on mapping table object
+ * @array_type: type of segments' xarray (main or copy)
+ * @seg_index: index of segment object in the sequence
+ */
+static inline
+struct ssdfs_segment_info *
+ssdfs_maptbl_segment(struct ssdfs_peb_mapping_table *tbl,
+		     int array_type, u16 seg_index)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(array_type >= SSDFS_MAPTBL_SEG_COPY_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return xa_load(&tbl->segs[array_type], seg_index);
+}
 
 /* PEB mapping table's state */
 enum {

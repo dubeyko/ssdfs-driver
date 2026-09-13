@@ -358,9 +358,9 @@ struct folio *ssdfs_folio_alloc(gfp_t gfp_mask, unsigned int order)
 	 * High-order (costly) allocations trigger memory compaction which
 	 * can stall the system and ultimately invoke the OOM killer.
 	 * SSDFS always handles allocation failure gracefully, so prevent
-	 * the allocator from doing expensive retries for order >= 3.
+	 * the allocator from doing expensive retries for order > 3.
 	 */
-	if (order >= PAGE_ALLOC_COSTLY_ORDER)
+	if (order > PAGE_ALLOC_COSTLY_ORDER)
 		gfp_mask |= __GFP_NORETRY;
 
 	nofs_flags = memalloc_nofs_save();
