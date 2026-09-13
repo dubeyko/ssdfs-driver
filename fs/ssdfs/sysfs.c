@@ -976,6 +976,9 @@ ssdfs_segbmap_frag_state_show(struct ssdfs_segbmap_frag_attr *attr,
 	case SSDFS_SEGBMAP_FRAG_CREATED:
 		state_name = "CREATED";
 		break;
+	case SSDFS_SEGBMAP_FRAG_UNDER_INIT:
+		state_name = "UNDER_INIT";
+		break;
 	case SSDFS_SEGBMAP_FRAG_INIT_FAILED:
 		state_name = "INIT_FAILED";
 		break;
@@ -1147,7 +1150,8 @@ ssdfs_segbmap_frag_bitmap_section_show(struct ssdfs_segbmap_fragment_desc *fdesc
 	int count = 0;
 	u8 byte_value;
 	u8 seg_state;
-	u32 seg_index;
+	u64 seg_id;
+	u64 seg_index;
 	u32 i, j;
 	int err = 0;
 
@@ -1192,6 +1196,9 @@ ssdfs_segbmap_frag_bitmap_section_show(struct ssdfs_segbmap_fragment_desc *fdesc
 
 	items_per_fragment =
 		ssdfs_segbmap_items_per_fragment(segbmap->fragment_size);
+	seg_id = ssdfs_segbmap_define_first_fragment_item(fragment_id,
+						segbmap->fragment_size);
+
 	items_per_fragment =
 		min_t(u32, items_per_fragment, le16_to_cpu(hdr->total_segs));
 
@@ -1206,9 +1213,10 @@ ssdfs_segbmap_frag_bitmap_section_show(struct ssdfs_segbmap_fragment_desc *fdesc
 	}
 
 	count += snprintf(buf + count, PAGE_SIZE - count,
-			  "SEGMENT BITMAP FRAGMENT %u SECTION %d (segments %u-%u):\n",
+			  "SEGMENT BITMAP FRAGMENT %u SECTION %d (segments %llu-%llu):\n",
 			  fragment_id, section_index,
-			  section_start, section_end - 1);
+			  seg_id + section_start,
+			  seg_id + section_end - 1);
 	count += snprintf(buf + count, PAGE_SIZE - count,
 			  "  Header: magic=0x%x, seg_index=%u, peb_index=%u\n",
 			  le16_to_cpu(hdr->magic),
@@ -1228,7 +1236,7 @@ ssdfs_segbmap_frag_bitmap_section_show(struct ssdfs_segbmap_fragment_desc *fdesc
 		if (i >= items_per_fragment)
 			break;
 
-		seg_index = i;
+		seg_index = seg_id + i;
 		j = i % items_per_byte;
 		byte_value = bitmap[i / items_per_byte];
 		seg_state = byte_value >> (j * SSDFS_SEG_STATE_BITS);
@@ -1274,13 +1282,14 @@ ssdfs_segbmap_frag_bitmap_section_show(struct ssdfs_segbmap_fragment_desc *fdesc
 		}
 
 		count += snprintf(buf + count, PAGE_SIZE - count,
-				  "  Segment %u: %s (%u)\n",
+				  "  Segment %llu: %s (%u)\n",
 				  seg_index, state_name, seg_state);
 	}
 
 	if (i < section_end) {
 		count += snprintf(buf + count, PAGE_SIZE - count,
-				  "  ... (section truncated at segment %u)\n", i);
+				  "  ... (section truncated at segment %llu)\n",
+				  seg_id + i);
 	}
 
 finish_folio:
@@ -2358,7 +2367,63 @@ static struct attribute *ssdfs_segbmap_frag_attrs[] = {
 	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_99),
 	NULL,
 };
-ATTRIBUTE_GROUPS(ssdfs_segbmap_frag);
+
+/*
+ * ssdfs_segbmap_frag_attr_is_visible() - hide unused "bitmap_section_N" files
+ * @kobj: fragment kobject
+ * @attr: attribute being probed
+ * @n: index of @attr in ssdfs_segbmap_frag_attrs[] (unused)
+ *
+ * The "bitmap_section_N" attributes are declared statically up to a
+ * fixed upper bound, but a given fragment only needs
+ * ceil(total_segs / entries-per-section) of them to represent its
+ * real content. Report every section index beyond that count as
+ * invisible, so the sysfs directory exposes exactly as many section
+ * files as 'sections_count' reports.
+ *
+ * This callback runs from the sysfs group (re-)creation path, which
+ * may hold segbmap->search_lock, so it stays lock-free: @total_segs
+ * is a plain scalar that becomes stable once the fragment is
+ * initialized, and ssdfs_sysfs_refresh_segbmap_frag_sections()
+ * re-evaluates visibility at that point.
+ */
+static umode_t ssdfs_segbmap_frag_attr_is_visible(struct kobject *kobj,
+						  struct attribute *attr,
+						  int n)
+{
+	struct ssdfs_segbmap_fragment_desc *fdesc = container_of(kobj,
+					struct ssdfs_segbmap_fragment_desc,
+					frag_kobj);
+	u32 entries_per_section;
+	u32 sections_count;
+	int section_index;
+
+	if (sscanf(attr->name, "bitmap_section_%d", &section_index) != 1)
+		return attr->mode;
+
+	if (section_index < 0)
+		return 0;
+
+	entries_per_section = SSDFS_SEGBMAP_OUTPUT_THRESHOLD2 /
+				SSDFS_SEGBMAP_OUTPUT_CHARS_PER_LINE;
+	sections_count = (READ_ONCE(fdesc->total_segs) + entries_per_section - 1) /
+				entries_per_section;
+
+	if ((u32)section_index >= sections_count)
+		return 0;
+
+	return attr->mode;
+}
+
+static const struct attribute_group ssdfs_segbmap_frag_group = {
+	.attrs		= ssdfs_segbmap_frag_attrs,
+	.is_visible	= ssdfs_segbmap_frag_attr_is_visible,
+};
+
+static const struct attribute_group *ssdfs_segbmap_frag_groups[] = {
+	&ssdfs_segbmap_frag_group,
+	NULL,
+};
 
 static ssize_t ssdfs_segbmap_frag_attr_show(struct kobject *kobj,
 					     struct attribute *attr, char *buf)
@@ -2463,13 +2528,12 @@ static int ssdfs_sysfs_create_segbmap_fragments(struct ssdfs_fs_info *fsi)
 	down_read(&segbmap->search_lock);
 
 	for (i = 0; i < segbmap->fragments_count; i++) {
-		fdesc = ssdfs_segbmap_get_fragment_desc(segbmap, i);
-		if (!fdesc) {
-			err = -ERANGE;
-			SSDFS_ERR("fail to get segbmap fragment %d descriptor\n",
-				  i);
-			goto cleanup_created_groups;
-		}
+		fdesc = __ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (!fdesc)
+			continue;
+
+		if (fdesc->sysfs_kobj_created)
+			continue;
 
 		err = ssdfs_sysfs_create_segbmap_frag_group(fdesc,
 						    &fsi->segbmap_frags_kobj);
@@ -2478,6 +2542,8 @@ static int ssdfs_sysfs_create_segbmap_fragments(struct ssdfs_fs_info *fsi)
 				  "err %d\n", i, err);
 			goto cleanup_created_groups;
 		}
+
+		fdesc->sysfs_kobj_created = true;
 	}
 
 	up_read(&segbmap->search_lock);
@@ -2491,14 +2557,99 @@ static int ssdfs_sysfs_create_segbmap_fragments(struct ssdfs_fs_info *fsi)
 
 cleanup_created_groups:
 	for (--i; i >= 0; i--) {
-		fdesc = ssdfs_segbmap_get_fragment_desc(segbmap, i);
-		if (fdesc)
+		fdesc = __ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (fdesc && fdesc->sysfs_kobj_created) {
 			ssdfs_sysfs_delete_segbmap_frag_group(fdesc);
+			fdesc->sysfs_kobj_created = false;
+		}
 	}
 
 	up_read(&segbmap->search_lock);
 	up_read(&segbmap->resize_lock);
 	return err;
+}
+
+/*
+ * __ssdfs_sysfs_create_segbmap_frag_group() - lazily create fragment's group
+ * @ptr: fragment descriptor
+ *
+ * Segment bitmap's fragment descriptors are allocated on-demand
+ * (on the first lookup of a given fragment), which can happen at
+ * any point after mount is done, well after the one-time sysfs
+ * pass in ssdfs_sysfs_create_segbmap_fragments() has already run.
+ * Without this hook such lazily created fragments would never get
+ * a "fragmentN" entry under .../segbmap/fragments, and the sysfs
+ * tree would stay silent (or incomplete) about them.
+ *
+ * This method is called right after a fresh fragment descriptor has
+ * been inserted into segbmap->desc_array, and creates the missing
+ * sysfs group for it, but only if the parent .../segbmap/fragments
+ * kobject is already registered.
+ */
+void
+__ssdfs_sysfs_create_segbmap_frag_group(struct ssdfs_segbmap_fragment_desc *ptr)
+{
+	struct ssdfs_segment_bmap *segbmap;
+	struct ssdfs_fs_info *fsi;
+	int err;
+
+	if (!ptr)
+		return;
+
+	segbmap = ptr->segbmap;
+	if (!segbmap)
+		return;
+
+	if (ptr->sysfs_kobj_created)
+		return;
+
+	if (!READ_ONCE(segbmap->frags_sysfs_ready))
+		return;
+
+	fsi = segbmap->fsi;
+	if (!fsi)
+		return;
+
+	err = ssdfs_sysfs_create_segbmap_frag_group(ptr,
+						&fsi->segbmap_frags_kobj);
+	if (err) {
+		SSDFS_ERR("fail to create segbmap fragment %u group: "
+			  "err %d\n", ptr->fragment_id, err);
+		return;
+	}
+
+	ptr->sysfs_kobj_created = true;
+}
+
+/*
+ * __ssdfs_sysfs_refresh_segbmap_frag_group() - refresh visible section files
+ * @ptr: fragment descriptor
+ *
+ * A fragment's "bitmap_section_N" files are created from a static
+ * (worst-case) list, and ssdfs_segbmap_frag_attr_is_visible() hides
+ * the ones past the fragment's real section count. That count depends
+ * on ptr->total_segs, which is still zero when the fragment kobject
+ * is created on-demand (before the fragment is initialized). This
+ * helper must be called once total_segs is known so that sysfs
+ * re-evaluates attribute visibility and exposes exactly the sections
+ * that carry data.
+ */
+void
+__ssdfs_sysfs_refresh_segbmap_frag_group(struct ssdfs_segbmap_fragment_desc *ptr)
+{
+	int err;
+
+	if (!ptr || !ptr->sysfs_kobj_created)
+		return;
+
+	err = sysfs_update_group(&ptr->frag_kobj,
+				 &ssdfs_segbmap_frag_group);
+	if (unlikely(err)) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("fail to refresh segbmap fragment %u sections: "
+			  "err %d\n", ptr->fragment_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
 }
 
 static void ssdfs_sysfs_delete_segbmap_fragments(struct ssdfs_fs_info *fsi)
@@ -2520,9 +2671,11 @@ static void ssdfs_sysfs_delete_segbmap_fragments(struct ssdfs_fs_info *fsi)
 	down_read(&segbmap->search_lock);
 
 	for (i = 0; i < segbmap->fragments_count; i++) {
-		fdesc = ssdfs_segbmap_get_fragment_desc(segbmap, i);
-		if (fdesc)
+		fdesc = __ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (fdesc && fdesc->sysfs_kobj_created) {
 			ssdfs_sysfs_delete_segbmap_frag_group(fdesc);
+			fdesc->sysfs_kobj_created = false;
+		}
 	}
 
 	up_read(&segbmap->search_lock);
@@ -2871,6 +3024,9 @@ int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi)
 	if (err)
 		goto cleanup_segbmap_frags_group;
 
+	if (fsi->segbmap)
+		WRITE_ONCE(fsi->segbmap->frags_sysfs_ready, true);
+
 	return 0;
 
 cleanup_segbmap_frags_group:
@@ -2888,6 +3044,9 @@ void ssdfs_sysfs_delete_segbmap_group(struct ssdfs_fs_info *fsi)
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete segbmap group\n");
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->segbmap)
+		WRITE_ONCE(fsi->segbmap->frags_sysfs_ready, false);
 
 	ssdfs_sysfs_delete_segbmap_fragments(fsi);
 	ssdfs_sysfs_delete_segbmap_frags_group(fsi);

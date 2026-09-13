@@ -90,6 +90,7 @@ struct ssdfs_peb_info;
 struct ssdfs_peb_container;
 struct ssdfs_segment_info;
 struct ssdfs_peb_blk_bmap;
+struct ssdfs_segbmap_fragment_desc;
 
 /* btree_node.c */
 void ssdfs_zero_btree_node_obj_cache_ptr(void);
@@ -345,6 +346,10 @@ int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi);
 void ssdfs_sysfs_delete_maptbl_group(struct ssdfs_fs_info *fsi);
 int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi);
 void ssdfs_sysfs_delete_segbmap_group(struct ssdfs_fs_info *fsi);
+void
+__ssdfs_sysfs_create_segbmap_frag_group(struct ssdfs_segbmap_fragment_desc *);
+void
+__ssdfs_sysfs_refresh_segbmap_frag_group(struct ssdfs_segbmap_fragment_desc *);
 int ssdfs_sysfs_create_inodes_tree_group(struct ssdfs_fs_info *fsi);
 void ssdfs_sysfs_delete_inodes_tree_group(struct ssdfs_fs_info *fsi);
 int ssdfs_sysfs_create_snapshots_tree_group(struct ssdfs_fs_info *fsi);

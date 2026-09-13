@@ -3,6 +3,12 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.87 [September 12, 2026]
+    (*) Implement on-demand policy of segment bitmaps's fragments
+        and segment objects pre-fetching.
+    (*) Switch PEB mapping table's memory management on xarray structure.
+    (*) Prevent GC from freeing b-tree nodes under flush.
+
 v.5.86 [September 06, 2026]
     (*) Switch segment bitmap's memory management on xarray structure.
 

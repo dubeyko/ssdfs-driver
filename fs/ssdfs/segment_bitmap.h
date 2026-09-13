@@ -89,6 +89,7 @@ struct ssdfs_segment_bmap;
  * @segbmap: pointer on segment bitmap object
  * @frag_kobj: fragment kobject for sysfs
  * @frag_kobj_unregister: completion for fragment kobject cleanup
+ * @sysfs_kobj_created: has @frag_kobj been registered in sysfs?
  */
 struct ssdfs_segbmap_fragment_desc {
 	int state;
@@ -110,16 +111,18 @@ struct ssdfs_segbmap_fragment_desc {
 	/* /sys/fs/<ssdfs>/<device>/segbmap/fragments/fragment<N> */
 	struct kobject frag_kobj;
 	struct completion frag_kobj_unregister;
+	bool sysfs_kobj_created;
 };
 
 /* Fragment's state */
 enum {
 	SSDFS_SEGBMAP_FRAG_CREATED	= 0,
-	SSDFS_SEGBMAP_FRAG_INIT_FAILED	= 1,
-	SSDFS_SEGBMAP_FRAG_INITIALIZED	= 2,
-	SSDFS_SEGBMAP_FRAG_DIRTY	= 3,
-	SSDFS_SEGBMAP_FRAG_TOWRITE	= 4,
-	SSDFS_SEGBMAP_FRAG_STATE_MAX	= 5,
+	SSDFS_SEGBMAP_FRAG_UNDER_INIT	= 1,
+	SSDFS_SEGBMAP_FRAG_INIT_FAILED	= 2,
+	SSDFS_SEGBMAP_FRAG_INITIALIZED	= 3,
+	SSDFS_SEGBMAP_FRAG_DIRTY	= 4,
+	SSDFS_SEGBMAP_FRAG_TOWRITE	= 5,
+	SSDFS_SEGBMAP_FRAG_STATE_MAX	= 6,
 };
 
 /* Fragments bitmap types */
@@ -148,6 +151,7 @@ enum {
  * @fbmap: array of fragment bitmaps
  * @desc_array: xarray of fragments' descriptors indexed by fragment index
  * @folios: memory folios of the whole segment bitmap
+ * @frags_sysfs_ready: is .../segbmap/fragments sysfs group created?
  * @fsi: pointer on shared file system object
  */
 struct ssdfs_segment_bmap {
@@ -168,6 +172,7 @@ struct ssdfs_segment_bmap {
 	struct xarray desc_array;
 	struct ssdfs_folio_array folios;
 
+	bool frags_sysfs_ready;
 	struct ssdfs_fs_info *fsi;
 };
 
@@ -178,11 +183,15 @@ struct ssdfs_segment_bmap {
  */
 static inline
 struct ssdfs_segbmap_fragment_desc *
-ssdfs_segbmap_get_fragment_desc(struct ssdfs_segment_bmap *bmap,
-				pgoff_t fragment_index)
+__ssdfs_segbmap_get_fragment_desc(struct ssdfs_segment_bmap *bmap,
+				  pgoff_t fragment_index)
 {
 	return xa_load(&bmap->desc_array, fragment_index);
 }
+
+struct ssdfs_segbmap_fragment_desc *
+ssdfs_segbmap_get_fragment_desc(struct ssdfs_segment_bmap *bmap,
+				pgoff_t fragment_index);
 
 /*
  * ssdfs_segbmap_segment() - get segment object by index

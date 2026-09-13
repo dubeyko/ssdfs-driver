@@ -111,6 +111,53 @@ extern const bool detect_clean_using_mask[U8_MAX + 1];
 extern const bool detect_used_dirty_mask[U8_MAX + 1];
 
 /*
+ * ssdfs_segbmap_get_fragment_desc() - get fragment descriptor by index
+ * @segbmap: pointer on segment bitmap object
+ * @fragment_index: index of fragment descriptor
+ */
+struct ssdfs_segbmap_fragment_desc *
+ssdfs_segbmap_get_fragment_desc(struct ssdfs_segment_bmap *segbmap,
+				pgoff_t fragment_index)
+{
+	struct ssdfs_segbmap_fragment_desc *desc;
+	void *result;
+	size_t frag_desc_size = sizeof(struct ssdfs_segbmap_fragment_desc);
+	int err;
+
+	desc = __ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
+
+	if (!desc) {
+		desc = ssdfs_seg_bmap_kzalloc(frag_desc_size, GFP_KERNEL);
+		if (!desc) {
+			SSDFS_ERR("fail to allocate fragment descriptor: "
+				  "fragment_index %lu\n",
+				  fragment_index);
+			return ERR_PTR(-ENOMEM);
+		}
+
+		desc->fragment_id = fragment_index;
+		init_completion(&desc->init_end);
+		desc->segbmap = segbmap;
+
+		result = xa_store(&segbmap->desc_array,
+				  fragment_index, desc,
+				  GFP_KERNEL);
+		if (xa_is_err(result)) {
+			err = xa_err(result);
+			SSDFS_ERR("fail to store fragment descriptor: "
+				  "index %lu, err %d\n",
+				  fragment_index, err);
+			ssdfs_seg_bmap_kfree(desc);
+			return ERR_PTR(err);
+		}
+
+		__ssdfs_sysfs_create_segbmap_frag_group(desc);
+	}
+
+	return desc;
+}
+
+/*
  * CHECK_META_EXTENT_TYPE() - check type of metadata area's extent
  */
 static
@@ -226,36 +273,36 @@ int ssdfs_segbmap_define_segment_counts(struct ssdfs_segment_bmap *segbmap)
 }
 
 /*
- * ssdfs_segbmap_create_segments() - create segbmap's segment objects
- * @fsi: file system info object
+ * ssdfs_segbmap_define_seg_id() - resolve segbmap segment ID by sequence index
+ * @segbmap: pointer on segment bitmap object
  * @array_type: array type (main or copy)
- * @segbmap: pointer on segment bitmap object [out]
+ * @seg_index: index of segment in the reserved-extents sequence
+ * @seg_id: resolved segment ID [out]
+ *
+ * Walks the reserved segbmap extents and translates the linear
+ * @seg_index into a segment ID.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - @seg_index is out of the reserved-extents range.
  */
 static
-int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
-				  int array_type,
-				  struct ssdfs_segment_bmap *segbmap)
+int ssdfs_segbmap_define_seg_id(struct ssdfs_segment_bmap *segbmap,
+				int array_type, u16 seg_index,
+				u64 *seg_id)
 {
-	struct ssdfs_segment_info *si = NULL;
-	void *result;
-	u64 seg;
-	u16 log_pages;
-	u16 create_threads;
-	u32 created_segs = 0;
-	int i, j;
+	u32 cur_index = 0;
+	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !segbmap);
+	BUG_ON(!segbmap || !seg_id);
 	BUG_ON(array_type >= SSDFS_SEGBMAP_SEG_COPY_MAX);
-	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
-
-	SSDFS_DBG("fsi %p, array_type %#x, segbmap %p, segs_count %u\n",
-		  fsi, array_type, segbmap, segbmap->segs_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	log_pages = le16_to_cpu(fsi->vh->segbmap_log_pages);
-	create_threads = fsi->create_threads_per_seg;
+	*seg_id = U64_MAX;
 
 	for (i = 0; i < SSDFS_SEGBMAP_RESERVED_EXTENTS; i++) {
 		struct ssdfs_meta_area_extent *extent;
@@ -266,7 +313,7 @@ int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
 
 		err = CHECK_META_EXTENT_TYPE(extent);
 		if (err == -ENODATA) {
-			/* do nothing */
+			/* no more extents */
 			break;
 		} else if (unlikely(err)) {
 			SSDFS_WARN("invalid meta area extent: "
@@ -278,69 +325,291 @@ int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
 		start_seg = le64_to_cpu(extent->start_id);
 		len = le32_to_cpu(extent->len);
 
-		for (j = 0; j < len; j++) {
-			if (created_segs >= segbmap->segs_count) {
-				SSDFS_ERR("created_segs %u >= segs_count %u\n",
-					  created_segs, segbmap->segs_count);
-				return -ERANGE;
-			}
+		if (seg_index < cur_index + len) {
+			*seg_id = start_seg + (seg_index - cur_index);
+			return 0;
+		}
 
-			seg = start_seg + j;
+		cur_index += len;
+	}
+
+	SSDFS_ERR("unable to resolve seg id: "
+		  "array_type %#x, seg_index %u\n",
+		  array_type, seg_index);
+	return -ERANGE;
+}
+
+/*
+ * ssdfs_segbmap_create_segment() - create one segbmap segment object on demand
+ * @fsi: file system info object
+ * @segbmap: pointer on segment bitmap object
+ * @array_type: array type (main or copy)
+ * @seg_index: index of segment in the reserved-extents sequence
+ *
+ * Creates the segbmap's segment object for @seg_index and publishes it
+ * into segbmap->segs[@array_type] if it hasn't been created yet.
+ *
+ * The caller must NOT hold segbmap->search_lock: segment creation is a
+ * heavyweight, sleeping operation.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code.
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_segbmap_create_segment(struct ssdfs_fs_info *fsi,
+				 struct ssdfs_segment_bmap *segbmap,
+				 int array_type, u16 seg_index)
+{
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_info *object;
+	void *result;
+	wait_queue_head_t *wq;
+	u64 seg_id;
+	u16 log_pages;
+	u16 create_threads;
+	int res;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(xa_load(&segbmap->segs[array_type],
-				       created_segs) != NULL);
+	BUG_ON(!fsi || !segbmap);
+	BUG_ON(array_type >= SSDFS_SEGBMAP_SEG_COPY_MAX);
+
+	SSDFS_DBG("fsi %p, array_type %#x, seg_index %u\n",
+		  fsi, array_type, seg_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			si = ssdfs_segment_allocate_object(seg);
-			if (IS_ERR_OR_NULL(si)) {
-				err = !si ? -ENOMEM : PTR_ERR(si);
-				SSDFS_ERR("fail to allocate segment object: "
-					  "seg %llu, err %d\n",
-					  seg, err);
-				return err;
-			}
+	if (seg_index >= segbmap->segs_count) {
+		SSDFS_ERR("seg_index %u >= segs_count %u\n",
+			  seg_index, segbmap->segs_count);
+		return -ERANGE;
+	}
 
-			err = ssdfs_segment_create_object(fsi, seg,
-							  SSDFS_SEG_LEAF_NODE_USING,
-							  SSDFS_SEGBMAP_SEG_TYPE,
-							  log_pages,
-							  create_threads,
-							  si);
-			if (err == -EINTR) {
-				/*
-				 * Ignore this error.
-				 */
-				ssdfs_segment_free_object(si);
-				return err;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to create segment: "
-					  "seg %llu, err %d\n",
-					  seg, err);
-				ssdfs_segment_free_object(si);
-				return err;
-			}
+	/* fast path: the segment object already exists */
+	if (xa_load(&segbmap->segs[array_type], seg_index))
+		return 0;
 
-			result = xa_store(&segbmap->segs[array_type],
-					  created_segs, si, GFP_KERNEL);
-			if (xa_is_err(result)) {
-				err = xa_err(result);
-				SSDFS_ERR("fail to store segment object: "
-					  "seg %llu, err %d\n",
-					  seg, err);
-				ssdfs_segment_destroy_object(si);
-				return err;
-			}
+	err = ssdfs_segbmap_define_seg_id(segbmap, array_type,
+					  seg_index, &seg_id);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to resolve seg id: "
+			  "array_type %#x, seg_index %u, err %d\n",
+			  array_type, seg_index, err);
+		return err;
+	}
 
-			ssdfs_segment_get_object(si);
-			created_segs++;
+	log_pages = le16_to_cpu(fsi->vh->segbmap_log_pages);
+	create_threads = fsi->create_threads_per_seg;
+
+	si = ssdfs_segment_allocate_object(seg_id);
+	if (IS_ERR_OR_NULL(si)) {
+		err = !si ? -ENOMEM : PTR_ERR(si);
+		SSDFS_ERR("fail to allocate segment object: "
+			  "seg %llu, err %d\n",
+			  seg_id, err);
+		return err;
+	}
+
+	/*
+	 * Claim the slot before construction starts so that a
+	 * concurrent racer can detect the in-flight creation
+	 * instead of allocating and constructing a second object
+	 * for the same seg_id.
+	 */
+	result = xa_cmpxchg(&segbmap->segs[array_type], seg_index,
+			    NULL, si, GFP_KERNEL);
+	if (xa_is_err(result)) {
+		err = xa_err(result);
+		SSDFS_ERR("fail to store segment object: "
+			  "seg %llu, err %d\n",
+			  seg_id, err);
+		ssdfs_segment_free_object(si);
+		return err;
+	} else if (result != NULL) {
+		/*
+		 * Another thread is creating (or has already created)
+		 * this segment object: drop our copy and wait for the
+		 * winner to finish.
+		 */
+		ssdfs_segment_free_object(si);
+
+		object = result;
+		wq = &object->object_queue;
+
+		res = wait_event_killable_timeout(*wq,
+				is_ssdfs_segment_created(object),
+				SSDFS_DEFAULT_TIMEOUT);
+		if (res < 0) {
+			err = res;
+			WARN_ON(1);
+			return err;
+		} else if (res > 1) {
+			/*
+			 * Condition changed before timeout
+			 */
+		} else {
+			/* timeout is elapsed */
+			err = -ERANGE;
+			SSDFS_ERR("timeout on waiting segbmap segment "
+				  "creation: seg %llu\n",
+				  seg_id);
+			WARN_ON(1);
+		}
+
+		switch (atomic_read(&object->obj_state)) {
+		case SSDFS_SEG_OBJECT_CREATED:
+			return 0;
+
+		default:
+			SSDFS_ERR("fail to create segbmap segment: "
+				  "seg %llu\n",
+				  seg_id);
+			return -ERANGE;
 		}
 	}
 
-	if (created_segs != segbmap->segs_count) {
-		SSDFS_ERR("created_segs %u != segs_count %u\n",
-			  created_segs, segbmap->segs_count);
+	err = ssdfs_segment_create_object(fsi, seg_id,
+					  SSDFS_SEG_LEAF_NODE_USING,
+					  SSDFS_SEGBMAP_SEG_TYPE,
+					  log_pages,
+					  create_threads,
+					  si);
+	if (unlikely(err)) {
+		object = xa_cmpxchg(&segbmap->segs[array_type], seg_index,
+				    si, NULL, GFP_KERNEL);
+		WARN_ON(object != si);
+
+		ssdfs_segment_free_object(si);
+
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			return err;
+		}
+
+		SSDFS_ERR("fail to create segment: "
+			  "seg %llu, err %d\n",
+			  seg_id, err);
+		return err;
+	}
+
+	ssdfs_segment_get_object(si);
+	return 0;
+}
+
+/*
+ * ssdfs_segbmap_create_segments() - create all segbmap's segment objects
+ * @fsi: file system info object
+ * @array_type: array type (main or copy)
+ * @segbmap: pointer on segment bitmap object [out]
+ *
+ * Eager path: pre-creates every segbmap segment object. Used only when
+ * the segbmap is pre-fetched at mount time (see SSDFS_MOUNT_SEGBMAP_PREFETCH).
+ * Without the prefetch option the segment objects are created lazily by
+ * ssdfs_segbmap_prepare_fragment_segments() on the first on-demand
+ * fragment pre-fetch.
+ */
+static
+int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
+				  int array_type,
+				  struct ssdfs_segment_bmap *segbmap)
+{
+	u16 i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !segbmap);
+	BUG_ON(array_type >= SSDFS_SEGBMAP_SEG_COPY_MAX);
+	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
+
+	SSDFS_DBG("fsi %p, array_type %#x, segbmap %p, segs_count %u\n",
+		  fsi, array_type, segbmap, segbmap->segs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < segbmap->segs_count; i++) {
+		err = ssdfs_segbmap_create_segment(fsi, segbmap,
+						   array_type, i);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to create segbmap segment: "
+				  "array_type %#x, seg_index %u, err %d\n",
+				  array_type, i, err);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_segbmap_prepare_fragment_segments() - create on-demand segbmap segments
+ * @segbmap: pointer on segment bitmap object
+ * @fragment_index: index of the fragment to be pre-fetched
+ *
+ * Lazy path: makes sure the segbmap segment object(s) that store the
+ * requested fragment exist before the fragment's on-demand read request
+ * is queued. Creates the main segment object and, if the volume keeps a
+ * backup copy, the copy segment object too.
+ *
+ * The caller must hold segbmap->resize_lock (so that the geometry and
+ * the reserved extents stay stable) and must NOT hold
+ * segbmap->search_lock (segment creation can sleep).
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code.
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_segbmap_prepare_fragment_segments(struct ssdfs_segment_bmap *segbmap,
+					    pgoff_t fragment_index)
+{
+	u16 seg_index;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!segbmap || !segbmap->fsi);
+	BUG_ON(!rwsem_is_locked(&segbmap->resize_lock));
+
+	SSDFS_DBG("segbmap %p, fragment_index %lu\n",
+		  segbmap, (unsigned long)fragment_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (segbmap->fragments_per_seg == 0) {
+		SSDFS_ERR("invalid fragments_per_seg %u\n",
+			  segbmap->fragments_per_seg);
 		return -ERANGE;
+	}
+
+	seg_index = (u16)(fragment_index / segbmap->fragments_per_seg);
+
+	err = ssdfs_segbmap_create_segment(segbmap->fsi, segbmap,
+					   SSDFS_MAIN_SEGBMAP_SEG, seg_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create main segbmap segment: "
+			  "seg_index %u, err %d\n",
+			  seg_index, err);
+		return err;
+	}
+
+	if (segbmap->flags & SSDFS_SEGBMAP_HAS_COPY) {
+		err = ssdfs_segbmap_create_segment(segbmap->fsi, segbmap,
+						   SSDFS_COPY_SEGBMAP_SEG,
+						   seg_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to create copy segbmap segment: "
+				  "seg_index %u, err %d\n",
+				  seg_index, err);
+			return err;
+		}
 	}
 
 	return 0;
@@ -387,6 +656,92 @@ void ssdfs_segbmap_destroy_segments(struct ssdfs_segment_bmap *segbmap)
 }
 
 /*
+ * ssdfs_segbmap_issue_peb_init_request() - issue segbmap init command for a PEB
+ * @segbmap: pointer on segment bitmap object
+ * @si: segment object
+ * @seg_index: index of segment in the sequence
+ * @peb_index: index of PEB inside the segment
+ *
+ * This method queues a single SSDFS_READ_INIT_SEGBMAP request for the
+ * requested PEB. The PEB read thread reads and initializes the whole run
+ * of segbmap fragments that lives in that PEB.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - PEB has no content to read.
+ */
+static
+int ssdfs_segbmap_issue_peb_init_request(struct ssdfs_segment_bmap *segbmap,
+					 struct ssdfs_segment_info *si,
+					 int seg_index,
+					 int peb_index)
+{
+	struct ssdfs_peb_container *pebc;
+	struct ssdfs_segment_request *req;
+	u32 fragment_bytes = segbmap->fragment_size;
+	u64 logical_offset;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+
+	SSDFS_DBG("si %p, seg %llu, seg_index %d, peb_index %d\n",
+		  si, si->seg_id, seg_index, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (peb_index >= si->pebs_count) {
+		SSDFS_ERR("peb_index %d >= pebs_count %u\n",
+			  peb_index, si->pebs_count);
+		return -ERANGE;
+	}
+
+	pebc = SEG2PEBC(si, peb_index);
+	if (!pebc)
+		return -ENODATA;
+
+	if (is_peb_container_empty(pebc)) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("PEB container empty: seg %llu, peb_index %d\n",
+			  si->seg_id, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+	}
+
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate segment request: err %d\n", err);
+		return err;
+	}
+
+	ssdfs_request_init(req, si->fsi->pagesize);
+	ssdfs_get_request(req);
+
+	logical_offset = (u64)segbmap->fragments_per_peb * fragment_bytes;
+	logical_offset *= si->pebs_count;
+	logical_offset *= seg_index;
+	ssdfs_request_prepare_logical_extent(SSDFS_SEG_BMAP_INO,
+					     logical_offset,
+					     fragment_bytes,
+					     0, 0, req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    SSDFS_READ_INIT_SEGBMAP,
+					    SSDFS_REQ_ASYNC,
+					    req);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req);
+
+	wake_up_all(&si->wait_queue[SSDFS_PEB_READ_THREAD]);
+
+	return 0;
+}
+
+/*
  * ssdfs_segbmap_segment_init() - issue segbmap init command for PEBs
  * @segbmap: pointer on segment bitmap object
  * @si: segment object
@@ -397,8 +752,6 @@ int ssdfs_segbmap_segment_init(struct ssdfs_segment_bmap *segbmap,
 				struct ssdfs_segment_info *si,
 				int seg_index)
 {
-	u64 logical_offset;
-	u32 fragment_bytes = segbmap->fragment_size;
 	int i;
 	int err;
 
@@ -410,56 +763,18 @@ int ssdfs_segbmap_segment_init(struct ssdfs_segment_bmap *segbmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < si->pebs_count; i++) {
-		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
-		struct ssdfs_segment_request *req;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("i %d, pebc %p\n", i, pebc);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (!pebc)
+		err = ssdfs_segbmap_issue_peb_init_request(segbmap, si,
+							   seg_index, i);
+		if (err == -ENODATA) {
+			/* nothing to read from this PEB */
 			continue;
-
-		if (is_peb_container_empty(pebc)) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("PEB container empty: "
-				  "seg %llu, peb_index %d\n",
-				  si->seg_id, i);
-#endif /* CONFIG_SSDFS_DEBUG */
-			continue;
-		}
-
-		req = ssdfs_request_alloc();
-		if (IS_ERR_OR_NULL(req)) {
-			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
-			req = NULL;
-			SSDFS_ERR("fail to allocate segment request: err %d\n",
-				  err);
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to issue segbmap init request: "
+				  "seg %llu, peb_index %d, err %d\n",
+				  si->seg_id, i, err);
 			return err;
 		}
-
-		ssdfs_request_init(req, si->fsi->pagesize);
-		ssdfs_get_request(req);
-
-		logical_offset =
-			(u64)segbmap->fragments_per_peb * fragment_bytes;
-		logical_offset *= si->pebs_count;
-		logical_offset *= seg_index;
-		ssdfs_request_prepare_logical_extent(SSDFS_SEG_BMAP_INO,
-						     logical_offset,
-						     fragment_bytes,
-						     0, 0, req);
-		ssdfs_request_define_segment(si->seg_id, req);
-
-		ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
-						    SSDFS_READ_INIT_SEGBMAP,
-						    SSDFS_REQ_ASYNC,
-						    req);
-		ssdfs_peb_read_request_cno(pebc);
-		ssdfs_requests_queue_add_tail(&pebc->read_rq, req);
 	}
-
-	wake_up_all(&si->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	return 0;
 }
@@ -594,68 +909,6 @@ void ssdfs_segbmap_destroy_fragment_descriptors(struct ssdfs_segment_bmap *segbm
 	}
 
 	xa_destroy(&segbmap->desc_array);
-}
-
-/*
- * ssdfs_segbmap_create_fragment_descriptors() - create fragment descriptors
- * @segbmap: pointer on segment bitmap object
- *
- * This method allocates fragment descriptors and stores them into the
- * @desc_array xarray.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOMEM     - fail to allocate memory.
- * %-ERANGE     - internal error.
- */
-static
-int ssdfs_segbmap_create_fragment_descriptors(struct ssdfs_segment_bmap *segbmap)
-{
-	size_t frag_desc_size = sizeof(struct ssdfs_segbmap_fragment_desc);
-	int i;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!segbmap);
-	BUG_ON(segbmap->fragments_count == 0);
-
-	SSDFS_DBG("segbmap %p, fragments_count %u\n",
-		  segbmap, segbmap->fragments_count);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	for (i = 0; i < segbmap->fragments_count; i++) {
-		struct ssdfs_segbmap_fragment_desc *desc;
-		void *result;
-
-		desc = ssdfs_seg_bmap_kzalloc(frag_desc_size, GFP_KERNEL);
-		if (!desc) {
-			err = -ENOMEM;
-			SSDFS_ERR("fail to allocate fragment descriptor: "
-				  "index %d\n", i);
-			goto free_fragment_descriptors;
-		}
-
-		desc->fragment_id = i;
-		init_completion(&desc->init_end);
-		desc->segbmap = segbmap;
-
-		result = xa_store(&segbmap->desc_array, i, desc, GFP_KERNEL);
-		if (xa_is_err(result)) {
-			err = xa_err(result);
-			SSDFS_ERR("fail to store fragment descriptor: "
-				  "index %d, err %d\n", i, err);
-			ssdfs_seg_bmap_kfree(desc);
-			goto free_fragment_descriptors;
-		}
-	}
-
-	return 0;
-
-free_fragment_descriptors:
-	ssdfs_segbmap_destroy_fragment_descriptors(segbmap);
-	return err;
 }
 
 /*
@@ -794,13 +1047,6 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto free_segbmap_object;
 	}
 
-	err = ssdfs_segbmap_create_fragment_descriptors(ptr);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to create fragment descriptors: err %d\n",
-			  err);
-		goto free_fragment_bmaps;
-	}
-
 	err = ssdfs_create_folio_array(&ptr->folios,
 					get_order(PAGE_SIZE),
 					(u32)ptr->fragments_count);
@@ -808,7 +1054,7 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		SSDFS_ERR("fail to create folio array: "
 			  "capacity %u, err %d\n",
 			  ptr->fragments_count, err);
-		goto free_desc_array;
+		goto free_fragment_bmaps;
 	}
 
 	err = ssdfs_segbmap_define_segment_counts(ptr);
@@ -826,36 +1072,39 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto destroy_folios;
 	}
 
-	err = ssdfs_segbmap_create_segments(fsi, SSDFS_MAIN_SEGBMAP_SEG, ptr);
-	if (err == -EINTR) {
-		/*
-		 * Ignore this error.
-		 */
-		goto destroy_seg_objects;
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to create segbmap's segment objects: "
-			  "err %d\n",
-			  err);
-		goto destroy_seg_objects;
-	}
-
-	if (ptr->flags & SSDFS_SEGBMAP_HAS_COPY) {
+	if (ssdfs_test_opt(fsi->mount_opts, SEGBMAP_PREFETCH)) {
 		err = ssdfs_segbmap_create_segments(fsi,
-						    SSDFS_COPY_SEGBMAP_SEG,
-						    ptr);
-		if (unlikely(err)) {
+						    SSDFS_MAIN_SEGBMAP_SEG, ptr);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			goto destroy_seg_objects;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create segbmap's segment objects: "
 				  "err %d\n",
 				  err);
 			goto destroy_seg_objects;
 		}
-	}
 
-	err = ssdfs_segbmap_init(ptr);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to init segment bitmap: err %d\n",
-			  err);
-		goto destroy_seg_objects;
+		if (ptr->flags & SSDFS_SEGBMAP_HAS_COPY) {
+			err = ssdfs_segbmap_create_segments(fsi,
+							SSDFS_COPY_SEGBMAP_SEG,
+							ptr);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to create segbmap's segment "
+					  "objects: err %d\n",
+					  err);
+				goto destroy_seg_objects;
+			}
+		}
+
+		err = ssdfs_segbmap_init(ptr);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to init segment bitmap: err %d\n",
+				  err);
+			goto destroy_seg_objects;
+		}
 	}
 
 	err = ssdfs_sysfs_create_segbmap_group(fsi);
@@ -878,9 +1127,6 @@ destroy_seg_objects:
 
 destroy_folios:
 	ssdfs_destroy_folio_array(&fsi->segbmap->folios);
-
-free_desc_array:
-	ssdfs_segbmap_destroy_fragment_descriptors(fsi->segbmap);
 
 free_fragment_bmaps:
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
@@ -916,6 +1162,7 @@ int ssdfs_segbmap_check_fragment_validity(struct ssdfs_segment_bmap *segbmap,
 					  pgoff_t fragment_index)
 {
 	struct ssdfs_segbmap_fragment_desc *fragment;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
@@ -926,14 +1173,16 @@ int ssdfs_segbmap_check_fragment_validity(struct ssdfs_segment_bmap *segbmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fragment = ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
-	if (!fragment) {
+	if (unlikely(IS_ERR_OR_NULL(fragment))) {
+		err = !fragment ? -ENOMEM : PTR_ERR(fragment);
 		SSDFS_ERR("fail to get fragment descriptor: "
 			  "fragment_index %lu\n", fragment_index);
-		return -ERANGE;
+		return err;
 	}
 
 	switch (fragment->state) {
 	case SSDFS_SEGBMAP_FRAG_CREATED:
+	case SSDFS_SEGBMAP_FRAG_UNDER_INIT:
 		return -EAGAIN;
 
 	case SSDFS_SEGBMAP_FRAG_INIT_FAILED:
@@ -952,6 +1201,196 @@ int ssdfs_segbmap_check_fragment_validity(struct ssdfs_segment_bmap *segbmap,
 }
 
 /*
+ * ssdfs_segbmap_issue_fragment_init() - trigger on-demand fragment init
+ * @segbmap: pointer on segment bitmap object
+ * @desc: fragment descriptor
+ *
+ * This method is called when a segbmap lookup has found the requested
+ * fragment in the SSDFS_SEGBMAP_FRAG_CREATED state (i.e. it hasn't been
+ * read from the volume yet). It transitions the fragment descriptor into
+ * the SSDFS_SEGBMAP_FRAG_UNDER_INIT state and queues a per-PEB read
+ * request for the PEB (and its backup copy) that stores the fragment.
+ * The caller is expected to wait on the fragment's init_end completion
+ * and to retry the lookup afterwards.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EAGAIN     - need to wait the initilization end.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_segbmap_issue_fragment_init(struct ssdfs_segment_bmap *segbmap,
+				      struct ssdfs_segbmap_fragment_desc *desc)
+{
+	struct ssdfs_segment_info *si;
+	u16 fragments_per_seg;
+	u16 fragments_per_peb;
+	int seg_index;
+	int peb_index;
+	bool has_backup;
+	int copy_id;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!segbmap || !desc);
+	BUG_ON(!rwsem_is_locked(&segbmap->resize_lock));
+	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
+
+	SSDFS_DBG("segbmap %p, desc %p\n",
+		  segbmap, desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (desc->fragment_id >= segbmap->fragments_count) {
+		SSDFS_ERR("fragment_index %u >= fragments_count %u\n",
+			  desc->fragment_id, segbmap->fragments_count);
+		return -ERANGE;
+	}
+
+	fragments_per_seg = segbmap->fragments_per_seg;
+	fragments_per_peb = segbmap->fragments_per_peb;
+	has_backup = segbmap->flags & SSDFS_SEGBMAP_HAS_COPY;
+
+	if (fragments_per_seg == 0 || fragments_per_peb == 0) {
+		SSDFS_ERR("invalid geometry: fragments_per_seg %u, "
+			  "fragments_per_peb %u\n",
+			  fragments_per_seg, fragments_per_peb);
+		return -ERANGE;
+	}
+
+	seg_index = desc->fragment_id / fragments_per_seg;
+	peb_index = (desc->fragment_id % fragments_per_seg) / fragments_per_peb;
+
+	if (desc->state == SSDFS_SEGBMAP_FRAG_CREATED)
+		desc->state = SSDFS_SEGBMAP_FRAG_UNDER_INIT;
+	else
+		return -EAGAIN;
+
+	copy_id = SSDFS_MAIN_SEGBMAP_SEG;
+	si = ssdfs_segbmap_segment(segbmap, copy_id, seg_index);
+	if (!si) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to get segment: "
+			  "copy_id %#x, seg_index %d\n",
+			  copy_id, seg_index);
+		goto finish_issue_fragment_init;
+	}
+
+	err = ssdfs_segbmap_issue_peb_init_request(segbmap, si,
+						   seg_index, peb_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to issue segbmap fragment init: "
+			  "fragment_index %u, seg_index %d, "
+			  "peb_index %d, err %d\n",
+			  desc->fragment_id, seg_index, peb_index, err);
+		goto finish_issue_fragment_init;
+	}
+
+	if (has_backup) {
+		copy_id = SSDFS_COPY_SEGBMAP_SEG;
+		si = ssdfs_segbmap_segment(segbmap, copy_id, seg_index);
+		if (!si) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get segment: "
+				  "copy_id %#x, seg_index %d\n",
+				  copy_id, seg_index);
+			goto finish_issue_fragment_init;
+		}
+
+		err = ssdfs_segbmap_issue_peb_init_request(segbmap,
+							   si,
+							   seg_index,
+							   peb_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to issue segbmap fragment init: "
+				  "fragment_index %u, seg_index %d, "
+				  "peb_index %d, err %d\n",
+				  desc->fragment_id, seg_index,
+				  peb_index, err);
+			goto finish_issue_fragment_init;
+		}
+	}
+
+finish_issue_fragment_init:
+	if (unlikely(err)) {
+		SSDFS_ERR("unable to issue init for fragment %u: "
+			  "seg_index %d, peb_index %d\n",
+			  desc->fragment_id, seg_index, peb_index);
+
+		if (desc->state == SSDFS_SEGBMAP_FRAG_UNDER_INIT)
+			desc->state = SSDFS_SEGBMAP_FRAG_INIT_FAILED;
+		complete_all(&desc->init_end);
+		return err;
+	}
+
+	return -EAGAIN;
+}
+
+/*
+ * ssdfs_segbmap_start_fragment_init() - prepare segments and issue fragment init
+ * @segbmap: pointer on segment bitmap object
+ * @fragment_index: index of the fragment that needs to be pre-fetched
+ * @end: pointer on completion for waiting init ending [out]
+ *
+ * This helper is the common tail of every on-demand fragment lookup that
+ * discovers a not-yet-initialized fragment. It first makes sure the
+ * segbmap segment object(s) that store the fragment have been created
+ * (they are created lazily, on the first pre-fetch), and then queues the
+ * fragment's read request.
+ *
+ * Segment creation is done here WITHOUT segbmap->search_lock held (only
+ * resize_lock is expected to be held by the caller), because it is a
+ * heavyweight operation. The search_lock is taken internally only around
+ * the lightweight descriptor lookup and request queueing.
+ *
+ * RETURN:
+ * %-EAGAIN     - init request has been issued, wait for @end completion.
+ * [failure]    - error code.
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_segbmap_start_fragment_init(struct ssdfs_segment_bmap *segbmap,
+				      pgoff_t fragment_index,
+				      struct completion **end)
+{
+	struct ssdfs_segbmap_fragment_desc *fragment_desc;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!segbmap || !end);
+	BUG_ON(!rwsem_is_locked(&segbmap->resize_lock));
+
+	SSDFS_DBG("segbmap %p, fragment_index %lu\n",
+		  segbmap, (unsigned long)fragment_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_segbmap_prepare_fragment_segments(segbmap, fragment_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to prepare segbmap segments: "
+			  "fragment_index %lu, err %d\n",
+			  (unsigned long)fragment_index, err);
+		return err;
+	}
+
+	down_write(&segbmap->search_lock);
+	fragment_desc = __ssdfs_segbmap_get_fragment_desc(segbmap,
+							 fragment_index);
+	if (!fragment_desc) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "fragment_index %lu\n", (unsigned long)fragment_index);
+	} else {
+		*end = &fragment_desc->init_end;
+		err = ssdfs_segbmap_issue_fragment_init(segbmap, fragment_desc);
+	}
+	up_write(&segbmap->search_lock);
+
+	return err;
+}
+
+/*
  * ssdfs_segbmap_destroy() - destroy segment bitmap object
  * @fsi: file system info object
  *
@@ -962,7 +1401,6 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	struct completion *end;
 	u16 fragments_count;
 	int i;
-	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
@@ -987,14 +1425,13 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	for (i = 0; i < fragments_count; i++) {
 		struct ssdfs_segbmap_fragment_desc *desc;
 
-		desc = ssdfs_segbmap_get_fragment_desc(fsi->segbmap, i);
+		desc = __ssdfs_segbmap_get_fragment_desc(fsi->segbmap, i);
 		if (!desc)
 			continue;
 
 		end = &desc->init_end;
 
-		err = ssdfs_segbmap_check_fragment_validity(fsi->segbmap, i);
-		if (err == -EAGAIN) {
+		if (desc->state == SSDFS_SEGBMAP_FRAG_UNDER_INIT) {
 			up_read(&fsi->segbmap->search_lock);
 			up_read(&fsi->segbmap->resize_lock);
 			SSDFS_WAIT_COMPLETION(end);
@@ -1335,8 +1772,8 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 	down_write(&segbmap->search_lock);
 
 	desc = ssdfs_segbmap_get_fragment_desc(segbmap, sequence_id);
-	if (!desc) {
-		err = -ERANGE;
+	if (unlikely(IS_ERR_OR_NULL(desc))) {
+		err = !desc ? -ENOMEM : PTR_ERR(desc);
 		SSDFS_ERR("fail to get fragment descriptor: "
 			  "sequence_id %u\n", sequence_id);
 		goto unlock_search_lock;
@@ -1359,7 +1796,8 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		goto unlock_search_lock;
 	}
 
-	if (desc->state != SSDFS_SEGBMAP_FRAG_CREATED) {
+	if (desc->state != SSDFS_SEGBMAP_FRAG_CREATED &&
+	    desc->state != SSDFS_SEGBMAP_FRAG_UNDER_INIT) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to initialize segbmap fragment\n");
 	} else {
@@ -1405,6 +1843,9 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 unlock_search_lock:
 	complete_all(&desc->init_end);
 	up_write(&segbmap->search_lock);
+
+	if (!err)
+		__ssdfs_sysfs_refresh_segbmap_frag_group(desc);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -1496,7 +1937,7 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 		  segbmap, fragment_index, folio_index, req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	desc = ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
+	desc = __ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
 	if (!desc) {
 		SSDFS_ERR("fail to get fragment descriptor: "
 			  "fragment_index %u\n", fragment_index);
@@ -1797,7 +2238,8 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 			continue;
 		}
 
-		fragment = ssdfs_segbmap_get_fragment_desc(segbmap, blk_index);
+		fragment = __ssdfs_segbmap_get_fragment_desc(segbmap,
+							     blk_index);
 		if (!fragment) {
 			SSDFS_ERR("fail to get fragment descriptor: "
 				  "blk_index %u\n", blk_index);
@@ -2122,12 +2564,9 @@ int ssdfs_segbmap_wait_flush_end(struct ssdfs_segment_bmap *segbmap,
 	has_backup = segbmap->flags & SSDFS_SEGBMAP_HAS_COPY;
 
 	for (i = 0; i < fragments_count; i++) {
-		fragment = ssdfs_segbmap_get_fragment_desc(segbmap, i);
-		if (!fragment) {
-			SSDFS_ERR("fail to get fragment descriptor: "
-				  "index %d\n", i);
-			return -ERANGE;
-		}
+		fragment = __ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (!fragment)
+			continue;
 
 		switch (fragment->state) {
 		case SSDFS_SEGBMAP_FRAG_DIRTY:
@@ -2396,12 +2835,9 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 	has_backup = segbmap->flags & SSDFS_SEGBMAP_HAS_COPY;
 
 	for (i = 0; i < fragments_count; i++) {
-		fragment = ssdfs_segbmap_get_fragment_desc(segbmap, i);
-		if (!fragment) {
-			SSDFS_ERR("fail to get fragment descriptor: "
-				  "index %d\n", i);
-			return -ERANGE;
-		}
+		fragment = __ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (!fragment)
+			continue;
 
 		switch (fragment->state) {
 		case SSDFS_SEGBMAP_FRAG_DIRTY:
@@ -2594,12 +3030,9 @@ int ssdfs_segbmap_wait_finish_commit_logs(struct ssdfs_segment_bmap *segbmap,
 	has_backup = segbmap->flags & SSDFS_SEGBMAP_HAS_COPY;
 
 	for (i = 0; i < fragments_count; i++) {
-		fragment = ssdfs_segbmap_get_fragment_desc(segbmap, i);
-		if (!fragment) {
-			SSDFS_ERR("fail to get fragment descriptor: "
-				  "index %d\n", i);
-			return -ERANGE;
-		}
+		fragment = __ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (!fragment)
+			continue;
 
 		switch (fragment->state) {
 		case SSDFS_SEGBMAP_FRAG_DIRTY:
@@ -3098,16 +3531,6 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 
 	down_read(&segbmap->search_lock);
 
-	fragment_desc = ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
-	if (!fragment_desc) {
-		err = -ERANGE;
-		SSDFS_ERR("fail to get fragment descriptor: "
-			  "fragment_index %lu\n", fragment_index);
-		goto finish_get_state;
-	}
-
-	*end = &fragment_desc->init_end;
-
 	err = ssdfs_segbmap_check_fragment_validity(segbmap, fragment_index);
 	if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3120,6 +3543,16 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 			  fragment_index);
 		goto finish_get_state;
 	}
+
+	fragment_desc = __ssdfs_segbmap_get_fragment_desc(segbmap,
+							fragment_index);
+	if (!fragment_desc) {
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "fragment_index %lu\n", fragment_index);
+		goto finish_get_state;
+	}
+
+	*end = &fragment_desc->init_end;
 
 	folio = ssdfs_folio_array_get_folio_locked(&segbmap->folios,
 						   fragment_index);
@@ -3180,6 +3613,11 @@ free_folio:
 
 finish_get_state:
 	up_read(&segbmap->search_lock);
+
+	if (err == -EAGAIN) {
+		err = ssdfs_segbmap_start_fragment_init(segbmap,
+						       fragment_index, end);
+	}
 
 finish_segment_check:
 	up_read(&segbmap->resize_lock);
@@ -3354,10 +3792,13 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		break;
 	}
 
-	fragment = ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
+	fragment = __ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
 	if (!fragment) {
 		SSDFS_WARN("fail to get fragment descriptor: "
 			   "fragment_index %lu\n", fragment_index);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		return;
 	}
 
@@ -3784,7 +4225,7 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 			ssdfs_folio_array_set_folio_dirty(&segbmap->folios,
 							  fragment_index);
 
-			fragment = ssdfs_segbmap_get_fragment_desc(segbmap,
+			fragment = __ssdfs_segbmap_get_fragment_desc(segbmap,
 							       fragment_index);
 			if (!fragment) {
 				SSDFS_ERR("fail to get fragment descriptor: "
@@ -3913,7 +4354,7 @@ int ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 	}
 
 	down_write(&segbmap->search_lock);
-	fragment = ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
+	fragment = __ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
 	if (!fragment) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to get fragment descriptor: "
@@ -4090,10 +4531,10 @@ int ssdfs_segbmap_find_fragment(struct ssdfs_segment_bmap *segbmap,
 		u16 index = checking_fragment + i;
 
 		desc = ssdfs_segbmap_get_fragment_desc(segbmap, index);
-		if (!desc) {
+		if (unlikely(IS_ERR_OR_NULL(desc))) {
 			err = -ERANGE;
 			SSDFS_ERR("fail to get fragment descriptor: "
-				  "index %u\n", index);
+				  "fragment_index %u\n", index);
 			goto check_presence_valid_fragments;
 		}
 
@@ -4107,11 +4548,11 @@ int ssdfs_segbmap_find_fragment(struct ssdfs_segment_bmap *segbmap,
 			break;
 
 		case SSDFS_SEGBMAP_FRAG_CREATED:
+		case SSDFS_SEGBMAP_FRAG_UNDER_INIT:
 			/* It needs to wait the fragment's init */
 			err = -EAGAIN;
 			checked_size = index - checking_fragment;
 			goto check_presence_valid_fragments;
-			break;
 
 		case SSDFS_SEGBMAP_FRAG_INIT_FAILED:
 			err = -EFAULT;
@@ -4120,14 +4561,12 @@ int ssdfs_segbmap_find_fragment(struct ssdfs_segment_bmap *segbmap,
 				  index);
 			checked_size = 0;
 			goto check_presence_valid_fragments;
-			break;
 
 		default:
 			err = -ERANGE;
 			SSDFS_ERR("invalid fragment's state %#x\n",
 				  desc->state);
 			goto check_presence_valid_fragments;
-			break;
 		}
 	}
 
@@ -4733,7 +5172,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 		return err;
 	}
 
-	fragment = ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
+	fragment = __ssdfs_segbmap_get_fragment_desc(segbmap, fragment_index);
 	if (!fragment) {
 		SSDFS_ERR("fail to get fragment descriptor: "
 			  "fragment_index %u\n", fragment_index);
@@ -4799,6 +5238,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
  * @state: primary state for search
  * @mask: mask of additonal states that can be retrieved too
  * @fragment_size: fragment size in bytes
+ * @found_fragment: found fragment index [out]
  * @seg: found segment number [out]
  * @end: pointer on completion for waiting init ending [out]
  *
@@ -4821,17 +5261,19 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 			 u64 start, u64 max,
 			 int state, int mask,
 			 u16 fragment_size,
-			 u64 *seg, struct completion **end)
+			 int *found_fragment,
+			 u64 *seg,
+			 struct completion **end)
 {
 	struct ssdfs_segbmap_fragment_desc *found_desc;
 	unsigned long *fbmap;
-	int start_fragment, max_fragment, found_fragment;
+	int start_fragment, max_fragment;
 	u64 found = U64_MAX, found_for_mask = U64_MAX;
 	int found_state_for_mask = SSDFS_SEG_STATE_MAX;
 	int err = -ENODATA;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!segbmap || !seg);
+	BUG_ON(!segbmap || !found_fragment || !seg);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
 
 	SSDFS_DBG("segbmap %p, start %llu, max %llu, "
@@ -4841,6 +5283,7 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*end = NULL;
+	*found_fragment = -1;
 
 	if (start >= max) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4874,7 +5317,7 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 						  fbmap,
 						  start_fragment,
 						  max_fragment,
-						  &found_fragment);
+						  found_fragment);
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find fragment: "
@@ -4889,27 +5332,27 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 					__FILE__, __func__, __LINE__,
 					"segbmap inconsistent state: "
 					"found_fragment %d\n",
-					found_fragment);
+					*found_fragment);
 			goto finish_seg_search;
 		} else if (err == -EAGAIN) {
-			if (found_fragment >= U16_MAX) {
+			if (*found_fragment >= U16_MAX) {
 				/* select the first fragment by default */
-				found_fragment = 0;
+				*found_fragment = 0;
 			}
 
-			found_desc = ssdfs_segbmap_get_fragment_desc(segbmap,
-								found_fragment);
+			found_desc = __ssdfs_segbmap_get_fragment_desc(segbmap,
+								*found_fragment);
 			if (!found_desc) {
 				err = -ERANGE;
 				SSDFS_ERR("fail to get fragment descriptor: "
-					  "found_fragment %d\n", found_fragment);
+					  "found_fragment %d\n", *found_fragment);
 				goto finish_seg_search;
 			}
 
 			*end = &found_desc->init_end;
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("fragment %u is not initilaized yet\n",
-				  found_fragment);
+			SSDFS_DBG("fragment %u is not initialized yet\n",
+				  *found_fragment);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_seg_search;
 		} else if (unlikely(err)) {
@@ -4918,7 +5361,7 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 				  "err %d\n",
 				  start_fragment, max_fragment, err);
 			goto finish_seg_search;
-		} else if (found_fragment >= U16_MAX) {
+		} else if (*found_fragment >= U16_MAX) {
 			err = -ERANGE;
 			SSDFS_ERR("fail to find fragment: "
 				  "start_fragment %d, max_fragment %d, "
@@ -4927,7 +5370,7 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 			goto finish_seg_search;
 		}
 
-		start = ssdfs_segbmap_correct_search_start(found_fragment,
+		start = ssdfs_segbmap_correct_search_start(*found_fragment,
 							   start, max,
 							   fragment_size);
 		if (start == U64_MAX || start >= max) {
@@ -4938,17 +5381,18 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 			break;
 		}
 
-		found_desc = ssdfs_segbmap_get_fragment_desc(segbmap, found_fragment);
-		if (!found_desc) {
-			err = -ERANGE;
+		found_desc = ssdfs_segbmap_get_fragment_desc(segbmap,
+							     *found_fragment);
+		if (unlikely(IS_ERR_OR_NULL(found_desc))) {
+			err = !found_desc ? -ENOMEM : PTR_ERR(found_desc);
 			SSDFS_ERR("fail to get fragment descriptor: "
-				  "found_fragment %d\n", found_fragment);
+				  "found_fragment %d\n", *found_fragment);
 			goto finish_seg_search;
 		}
 
 		*end = &found_desc->init_end;
 
-		err = ssdfs_segbmap_find_in_fragment(segbmap, found_fragment,
+		err = ssdfs_segbmap_find_in_fragment(segbmap, *found_fragment,
 						     fragment_size,
 						     start, max,
 						     state, mask,
@@ -4960,7 +5404,7 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 				  "fragment %d, "
 				  "state %#x, mask %#x, "
 				  "start %llu, max %llu\n",
-				  found_fragment,
+				  *found_fragment,
 				  state, mask,
 				  start, max);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -4981,31 +5425,31 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 			/* Just try another iteration */
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fragment %d is inconsistent\n",
-				  found_fragment);
+				  *found_fragment);
 #endif /* CONFIG_SSDFS_DEBUG */
 		} else if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fragment %u is not initilaized yet\n",
-				  found_fragment);
+				  *found_fragment);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_seg_search;
 		} else if (unlikely(err < 0)) {
 			SSDFS_ERR("fail to find segment: "
 				  "found_fragment %d, start %llu, "
 				  "max %llu, err %d\n",
-				  found_fragment, start, max, err);
+				  *found_fragment, start, max, err);
 			goto finish_seg_search;
 		} else if (found == U64_MAX) {
 			err = -ERANGE;
 			SSDFS_ERR("invalid segment number: "
 				  "found_fragment %d, start %llu, "
 				  "max %llu\n",
-				  found_fragment, start, max);
+				  *found_fragment, start, max);
 			goto finish_seg_search;
 		} else
 			break;
 
-		start_fragment = found_fragment + 1;
+		start_fragment = *found_fragment + 1;
 	} while (start_fragment <= max_fragment);
 
 check_search_result:
@@ -5067,6 +5511,7 @@ int ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 {
 	u64 items_count;
 	u16 fragment_size;
+	int fragment_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5121,8 +5566,14 @@ int ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 
 	down_read(&segbmap->search_lock);
 	err = __ssdfs_segbmap_find(segbmap, start, max, state, mask,
-				   fragment_size, seg, end);
+				   fragment_size, &fragment_index,
+				   seg, end);
 	up_read(&segbmap->search_lock);
+
+	if (err == -EAGAIN) {
+		err = ssdfs_segbmap_start_fragment_init(segbmap,
+						       fragment_index, end);
+	}
 
 finish_search_preparation:
 	up_read(&segbmap->resize_lock);
@@ -5165,7 +5616,7 @@ int ssdfs_segbmap_find_and_set(struct ssdfs_segment_bmap *segbmap,
 	u64 items_count;
 	u16 fragments_count;
 	u16 fragment_size;
-	pgoff_t fragment_index;
+	int fragment_index;
 	int err = 0, res = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5235,7 +5686,9 @@ int ssdfs_segbmap_find_and_set(struct ssdfs_segment_bmap *segbmap,
 try_to_find_seg_id:
 	res = __ssdfs_segbmap_find(segbmap, start, max,
 				   state, mask,
-				   fragment_size, seg, end);
+				   fragment_size,
+				   &fragment_index,
+				   seg, end);
 	if (res == -ENODATA) {
 		err = res;
 		SSDFS_DBG("unable to find any segment\n");
@@ -5281,7 +5734,7 @@ try_to_find_seg_id:
 		err = -EFAULT;
 		ssdfs_fs_error(segbmap->fsi->sb,
 				__FILE__, __func__, __LINE__,
-				"fragment_index %lu >= fragments_count %u\n",
+				"fragment_index %d >= fragments_count %u\n",
 				fragment_index, fragments_count);
 		goto finish_find_set;
 	}
@@ -5298,6 +5751,11 @@ try_to_find_seg_id:
 
 finish_find_set:
 	up_write(&segbmap->search_lock);
+
+	if (err == -EAGAIN || res == -EAGAIN) {
+		err = ssdfs_segbmap_start_fragment_init(segbmap,
+						       fragment_index, end);
+	}
 
 finish_search_preparation:
 	up_read(&segbmap->resize_lock);
@@ -5341,7 +5799,7 @@ int ssdfs_segbmap_reserve_clean_segment(struct ssdfs_segment_bmap *segbmap,
 	u64 items_count;
 	u16 fragments_count;
 	u16 fragment_size;
-	pgoff_t fragment_index;
+	int fragment_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5391,7 +5849,9 @@ int ssdfs_segbmap_reserve_clean_segment(struct ssdfs_segment_bmap *segbmap,
 	err = __ssdfs_segbmap_find(segbmap, start, max,
 				   SSDFS_SEG_CLEAN,
 				   SSDFS_SEG_CLEAN_STATE_FLAG,
-				   fragment_size, seg, end);
+				   fragment_size,
+				   &fragment_index,
+				   seg, end);
 	if (err == -ENODATA) {
 		SSDFS_DBG("unable to find clean segment\n");
 		goto finish_reserve_segment;
@@ -5416,7 +5876,7 @@ int ssdfs_segbmap_reserve_clean_segment(struct ssdfs_segment_bmap *segbmap,
 		err = -EFAULT;
 		ssdfs_fs_error(segbmap->fsi->sb,
 				__FILE__, __func__, __LINE__,
-				"fragment_index %lu >= fragments_count %u\n",
+				"fragment_index %d >= fragments_count %u\n",
 				fragment_index, fragments_count);
 		goto finish_reserve_segment;
 	}
@@ -5433,6 +5893,11 @@ int ssdfs_segbmap_reserve_clean_segment(struct ssdfs_segment_bmap *segbmap,
 
 finish_reserve_segment:
 	up_write(&segbmap->search_lock);
+
+	if (err == -EAGAIN) {
+		err = ssdfs_segbmap_start_fragment_init(segbmap,
+						       fragment_index, end);
+	}
 
 finish_segment_check:
 	up_read(&segbmap->resize_lock);

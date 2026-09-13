@@ -899,6 +899,7 @@ bool is_ssdfs_magic_valid(struct ssdfs_signature *magic)
 #define SSDFS_MOUNT_IGNORE_FS_STATE		(1 << 6)
 #define SSDFS_MOUNT_COMPR_MODE_LZ4		(1 << 7)
 #define SSDFS_MOUNT_COMPR_MODE_ZSTD		(1 << 8)
+#define SSDFS_MOUNT_SEGBMAP_PREFETCH		(1 << 9)
 
 #define ssdfs_clear_opt(o, opt)		((o) &= ~SSDFS_MOUNT_##opt)
 #define ssdfs_set_opt(o, opt)		((o) |= SSDFS_MOUNT_##opt)

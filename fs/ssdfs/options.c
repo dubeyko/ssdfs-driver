@@ -42,11 +42,13 @@
  * Opt_err: behavior if fs error is detected
  * Opt_compr: change default compressor
  * Opt_ignore_fs_state: ignore on-disk file system state during mount
+ * Opt_segbmap_prefetch: prefetch the whole segment bitmap during mount
  */
 enum {
 	Opt_err,
 	Opt_compr,
 	Opt_ignore_fs_state,
+	Opt_segbmap_prefetch,
 };
 
 static const struct constant_table ssdfs_param_err[] = {
@@ -82,6 +84,7 @@ static const struct fs_parameter_spec ssdfs_fs_parameters[] = {
 	fsparam_enum	("errors", Opt_err, ssdfs_param_err),
 	fsparam_enum	("compr", Opt_compr, ssdfs_param_compr),
 	fsparam_enum	("fs_state", Opt_ignore_fs_state, ssdfs_param_fs_state),
+	fsparam_flag	("segbmap_prefetch", Opt_segbmap_prefetch),
 	{}
 };
 
@@ -114,6 +117,10 @@ int ssdfs_parse_param(struct fs_context *fc, struct fs_parameter *param)
 
 	case Opt_ignore_fs_state:
 		ctx->s_mount_opts |= result.uint_32;
+		break;
+
+	case Opt_segbmap_prefetch:
+		ssdfs_set_opt(ctx->s_mount_opts, SEGBMAP_PREFETCH);
 		break;
 
 	default:
@@ -179,6 +186,9 @@ int ssdfs_show_options(struct seq_file *seq, struct dentry *root)
 
 	if (ssdfs_test_opt(fsi->mount_opts, IGNORE_FS_STATE))
 		seq_puts(seq, ",fs_state=ignore");
+
+	if (ssdfs_test_opt(fsi->mount_opts, SEGBMAP_PREFETCH))
+		seq_puts(seq, ",segbmap_prefetch");
 
 	return 0;
 }
