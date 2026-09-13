@@ -399,8 +399,13 @@ int ssdfs_peb_stop_thread(struct ssdfs_peb_container *pebc, int type)
 		 */
 		return 0;
 	} else if (unlikely(err)) {
-		SSDFS_WARN("thread function had some issue: err %d\n",
-			    err);
+		SSDFS_WARN("thread function had some issue: "
+			   "seg %llu, peb_index %u, peb_type %#x, "
+			   "thread type %#x, err %d\n",
+			   pebc->parent_si->seg_id,
+			   pebc->peb_index,
+			   pebc->peb_type,
+			   type, err);
 		return err;
 	}
 
@@ -2668,6 +2673,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 		case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
 		case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+		case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
 			if (peb_has_ext_ptr) {
 				err = ssdfs_create_pre_dirty_peb_container(pebc,
 								SSDFS_SRC_PEB);

@@ -18940,6 +18940,19 @@ bool no_more_updated_pages(struct ssdfs_peb_container *pebc)
 	return !has_updated_pages;
 }
 
+static inline
+bool should_wake_up_for_fs_state(struct ssdfs_peb_container *pebc)
+{
+	if (is_regular_fs_operations(pebc->parent_si))
+		return false;
+	else if (is_unmount_in_progress(pebc->parent_si->fsi))
+		return true;
+	else if (is_ssdfs_peb_containing_user_data(pebc))
+		return false;
+	else
+		return true;
+}
+
 /* Flush thread possible states */
 enum {
 	SSDFS_FLUSH_THREAD_ERROR,				/* 0x00 */
@@ -18971,15 +18984,17 @@ enum {
 	(kthread_should_stop())
 #define FLUSH_THREAD_CUR_SEG_WAKE_CONDITION(pebc) \
 	(kthread_should_stop() || have_flush_requests(pebc) || \
-	 !is_regular_fs_operations(pebc->parent_si) || \
-	 atomic_read(&pebc->parent_si->obj_state) != SSDFS_CURRENT_SEG_OBJECT)
+	 is_unmount_in_progress(pebc->parent_si->fsi) || \
+	 atomic_read(&pebc->parent_si->obj_state) != SSDFS_CURRENT_SEG_OBJECT || \
+	 should_wake_up_for_fs_state(pebc))
 #define FLUSH_THREAD_UPDATE_WAKE_CONDITION(pebc) \
 	(kthread_should_stop() || have_flush_requests(pebc) || \
+	 is_unmount_in_progress(pebc->parent_si->fsi) || \
 	 no_more_updated_pages(pebc) || \
-	 !is_regular_fs_operations(pebc->parent_si))
+	 should_wake_up_for_fs_state(pebc))
 #define FLUSH_THREAD_INVALIDATE_WAKE_CONDITION(pebc) \
 	(kthread_should_stop() || have_flush_requests(pebc) || \
-	 !is_regular_fs_operations(pebc->parent_si))
+	 should_wake_up_for_fs_state(pebc))
 
 static inline
 int ssdfs_check_peb_init_state(u64 seg_id, u64 peb_id, int state,
@@ -19114,6 +19129,9 @@ int ssdfs_process_error_state(struct ssdfs_peb_container *pebc,
 
 	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_ERR("seg %llu, peb_index %u, err %d\n",
+		  pebc->parent_si->seg_id, pebc->peb_index, err);
 
 	thread_state->err = err;
 
@@ -20827,6 +20845,7 @@ int ssdfs_process_wait_next_create_state(struct ssdfs_peb_container *pebc)
 	is_current_seg = (state == SSDFS_CURRENT_SEG_OBJECT);
 
 	if (is_current_seg && has_reserved_pages &&
+	    !have_flush_requests(pebc) &&
 	    is_regular_fs_operations(pebc->parent_si)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("wait next data request: "
@@ -21533,7 +21552,8 @@ int ssdfs_process_wait_next_update_state(struct ssdfs_peb_container *pebc)
 	has_updated_pages = updated_pages > 0;
 	spin_unlock(&fsi->volume_state_lock);
 
-	if (has_updated_pages) {
+	if (has_updated_pages && !have_flush_requests(pebc) &&
+	    is_regular_fs_operations(pebc->parent_si)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("wait next update request: "
 			  "seg_id %llu, peb_index %u, updated_pages %llu\n",
@@ -24151,9 +24171,10 @@ next_partial_step:
 		err = ssdfs_process_wait_next_create_state(pebc);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("seg %llu, peb_index %u, unfinished_reqs %d\n",
+		SSDFS_DBG("seg %llu, peb_index %u, "
+			  "unfinished_reqs %d, err %d\n",
 			  pebc->parent_si->seg_id, pebc->peb_index,
-			  thread_state->unfinished_reqs);
+			  thread_state->unfinished_reqs, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (err == -EAGAIN) {
@@ -24627,6 +24648,11 @@ sleep_flush_thread:
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("START SLEEP: seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	wake_up_all(wait_queue);
 	{
 		DEFINE_WAIT_FUNC(wait, woken_wake_function);
@@ -24641,57 +24667,92 @@ sleep_flush_thread:
 		}
 		remove_wait_queue(wait_queue, &wait);
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("WAKE UP: seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	goto repeat;
 
 sleep_cur_seg_flush_thread:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("SLEEP CURRENT SEGMENT: wait next create: "
+		  "seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	wake_up_all(wait_queue);
 	{
 		DEFINE_WAIT_FUNC(wait, woken_wake_function);
 		add_wait_queue(&fsi->pending_wq, &wait);
 		while (!FLUSH_THREAD_CUR_SEG_WAKE_CONDITION(pebc)) {
-			if (signal_pending(current)) {
+			if (signal_pending(current))
 				break;
-			} else {
-				wait_woken(&wait, TASK_INTERRUPTIBLE,
-					   SSDFS_DEFAULT_TIMEOUT);
-			}
+			else
+				wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
 		}
 		remove_wait_queue(&fsi->pending_wq, &wait);
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("WAKE UP CURRENT SEGMENT: "
+		  "seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	goto repeat;
 
 sleep_waiting_pending_updates:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("START SLEEP: wait next update: "
+		  "seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	wake_up_all(wait_queue);
 	{
 		DEFINE_WAIT_FUNC(wait, woken_wake_function);
 		add_wait_queue(&fsi->pending_wq, &wait);
 		while (!FLUSH_THREAD_UPDATE_WAKE_CONDITION(pebc)) {
-			if (signal_pending(current)) {
+			if (signal_pending(current))
 				break;
-			} else {
-				wait_woken(&wait, TASK_INTERRUPTIBLE,
-					   SSDFS_DEFAULT_TIMEOUT);
-			}
+			else
+				wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
 		}
 		remove_wait_queue(&fsi->pending_wq, &wait);
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("WAKE UP: "
+		  "seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	goto repeat;
 
 sleep_waiting_pending_invalidations:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("START SLEEP: wait next invalidate: "
+		  "seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	wake_up_all(wait_queue);
 	{
 		DEFINE_WAIT_FUNC(wait, woken_wake_function);
 		add_wait_queue(&fsi->pending_wq, &wait);
 		while (!FLUSH_THREAD_INVALIDATE_WAKE_CONDITION(pebc)) {
-			if (signal_pending(current)) {
+			if (signal_pending(current))
 				break;
-			} else {
-				wait_woken(&wait, TASK_INTERRUPTIBLE,
-					   SSDFS_DEFAULT_TIMEOUT);
-			}
+			else
+				wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
 		}
 		remove_wait_queue(&fsi->pending_wq, &wait);
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("WAKE UP: "
+		  "seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	goto repeat;
 
 sleep_failed_flush_thread:

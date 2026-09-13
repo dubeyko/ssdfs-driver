@@ -644,6 +644,20 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 			}
 
 			if (!is_ssdfs_btree_node_pre_deleted(node)) {
+				/*
+				 * Reserve the node in the flush pipeline while
+				 * it is still dirty. The b-tree node GC thread
+				 * refuses to free the content of a node that is
+				 * marked with the TOWRITE tag; without this the
+				 * GC could release folios.
+				 */
+				rcu_read_lock();
+				spin_lock(&tree->nodes_lock);
+				radix_tree_tag_set(&tree->nodes, iter.index,
+						   SSDFS_BTREE_NODE_TOWRITE_TAG);
+				spin_unlock(&tree->nodes_lock);
+				rcu_read_unlock();
+
 				err = ssdfs_btree_node_pre_flush(node);
 				if (unlikely(err)) {
 					ssdfs_btree_node_put(node);
@@ -875,6 +889,19 @@ finish_check_update_req:
 				continue;
 			}
 
+			if (is_ssdfs_btree_node_content_freed(node)) {
+				/*
+				 * This slot-based walk also visits clean nodes
+				 * that are not part of the current flush. The GC
+				 * thread may have freed the content of such a
+				 * node. There is nothing to flush or to commit.
+				 */
+				ssdfs_btree_node_put(node);
+				rcu_read_lock();
+				spin_lock(&tree->nodes_lock);
+				continue;
+			}
+
 			if (atomic_read(&node->type) == SSDFS_BTREE_ROOT_NODE) {
 				/*
 				 * Root node is inline.
@@ -937,6 +964,19 @@ finish_check_update_req:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			if (atomic_read(&node->height) != cur_height) {
+				ssdfs_btree_node_put(node);
+				rcu_read_lock();
+				spin_lock(&tree->nodes_lock);
+				continue;
+			}
+
+			if (is_ssdfs_btree_node_content_freed(node)) {
+				/*
+				 * This slot-based walk also visits clean nodes
+				 * that are not part of the current flush. The GC
+				 * thread may have freed the content of such a
+				 * node. There is nothing to flush or to commit.
+				 */
 				ssdfs_btree_node_put(node);
 				rcu_read_lock();
 				spin_lock(&tree->nodes_lock);

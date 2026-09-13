@@ -658,6 +658,7 @@ bool is_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node);
 void set_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node);
 void clear_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node);
 bool is_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node);
+bool is_ssdfs_btree_node_content_freed(struct ssdfs_btree_node *node);
 void set_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node);
 void clear_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node);
 

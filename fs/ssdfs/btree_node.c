@@ -320,6 +320,7 @@ bool is_it_time_free_btree_node_content(struct ssdfs_btree_node *node)
 #endif /* CONFIG_SSDFS_DEBUG */
 	u64 cur_cno;
 	bool dont_touch = false;
+	bool is_under_flush = false;
 
 	if (atomic_read(&node->type) == SSDFS_BTREE_ROOT_NODE)
 		return false;
@@ -341,6 +342,18 @@ bool is_it_time_free_btree_node_content(struct ssdfs_btree_node *node)
 
 	default:
 		BUG();
+	}
+
+	spin_lock(&node->tree->nodes_lock);
+	is_under_flush = radix_tree_tag_get(&node->tree->nodes, node->node_id,
+					    SSDFS_BTREE_NODE_TOWRITE_TAG);
+	spin_unlock(&node->tree->nodes_lock);
+
+	if (is_under_flush) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("node %u is under flush\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return false;
 	}
 
 	spin_lock(&node->content.protection.cno_lock);
@@ -4236,6 +4249,31 @@ void clear_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node)
 			   state);
 		/* FALLTHRU */
 	};
+}
+
+/*
+ * is_ssdfs_btree_node_content_freed() - check that node keeps no content
+ * @node: node object
+ */
+bool is_ssdfs_btree_node_content_freed(struct ssdfs_btree_node *node)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (atomic_read(&node->state)) {
+	case SSDFS_BTREE_NODE_UNKNOWN_STATE:
+	case SSDFS_BTREE_NODE_NONE_CONTENT:
+	case SSDFS_BTREE_NODE_CONTENT_PREPARED:
+	case SSDFS_BTREE_NODE_CONTENT_UNDER_FREE:
+		return true;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return false;
 }
 
 /*
