@@ -25,6 +25,9 @@
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
 
+#include <kunit/visibility.h>
+#include <kunit/static_stub.h>
+
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
@@ -118,6 +121,35 @@ static int ssdfs_report_zone(struct blk_zone *zone,
 }
 
 /*
+ * ssdfs_zns_track_zone_open() - account for a newly opened zone
+ * @open_zones: pointer on the counter of currently opened zones
+ * @max_open_zones: open zones limitation (upper bound)
+ *
+ * This function increments @open_zones unless it has already reached
+ * @max_open_zones.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EBUSY       - open zones limit is exhausted.
+ */
+VISIBLE_IF_KUNIT
+int ssdfs_zns_track_zone_open(atomic_t *open_zones, u32 max_open_zones)
+{
+	u32 prev = atomic_fetch_add_unless(open_zones, 1, max_open_zones);
+
+	if (prev >= max_open_zones) {
+		SSDFS_WARN("open zones limit achieved: "
+			   "open_zones %u\n", prev);
+		return -EBUSY;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_zns_track_zone_open);
+
+/*
  * ssdfs_zns_open_zone() - open zone
  * @sb: superblock object
  * @offset: offset in bytes from partition's begin
@@ -127,7 +159,6 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	sector_t zone_size = fsi->erasesize >> SECTOR_SHIFT;
-	u32 open_zones;
 	unsigned int nofs_flags;
 	int err;
 
@@ -145,22 +176,17 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to open zone: "
 			  "zone_sector %llu, zone_size %llu, "
-			  "open_zones %u, max_open_zones %u, "
-			  "err %d\n",
+			  "max_open_zones %u, err %d\n",
 			  zone_sector, zone_size,
-			  open_zones, fsi->device.zns.max_open_zones,
+			  fsi->device.zns.max_open_zones,
 			  err);
 		return err;
 	}
 
-	open_zones = atomic_inc_return(&fsi->device.zns.open_zones);
-	if (open_zones > fsi->device.zns.max_open_zones) {
-		atomic_dec(&fsi->device.zns.open_zones);
-
-		SSDFS_WARN("open zones limit achieved: "
-			   "open_zones %u\n", open_zones);
-		return -EBUSY;
-	}
+	err = ssdfs_zns_track_zone_open(&fsi->device.zns.open_zones,
+					fsi->device.zns.max_open_zones);
+	if (unlikely(err))
+		return err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("AFTER: open_zones %d\n",
@@ -487,12 +513,20 @@ u64 ssdfs_zns_zone_write_pointer(struct super_block *sb, loff_t offset)
  * @offset: offset in bytes from partition's begin
  * @op: direction of I/O
  * @op_flags: request op flags
+ *
+ * This is the entry point that actually builds and submits a bio
+ * against @sb->s_bdev. A KUnit test can redirect the whole function
+ * via kunit_activate_static_stub(), which lets ssdfs_zns_write_block()
+ * and ssdfs_zns_write_blocks() be exercised end-to-end without ever
+ * touching bio_alloc()/bio_set_dev() (and therefore without needing a
+ * real zoned struct block_device behind @sb->s_bdev).
  */
-static int ssdfs_zns_sync_folio_request(struct super_block *sb,
-					struct folio *folio,
-					sector_t zone_start,
-					loff_t offset,
-					unsigned int op, int op_flags)
+VISIBLE_IF_KUNIT
+int ssdfs_zns_sync_folio_request(struct super_block *sb,
+				 struct folio *folio,
+				 sector_t zone_start,
+				 loff_t offset,
+				 unsigned int op, int op_flags)
 {
 	struct bio *bio;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -501,6 +535,10 @@ static int ssdfs_zns_sync_folio_request(struct super_block *sb,
 	int res;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
+
+	KUNIT_STATIC_STUB_REDIRECT(ssdfs_zns_sync_folio_request,
+				   sb, folio, zone_start, offset,
+				   op, op_flags);
 
 	op |= REQ_OP_ZONE_APPEND | REQ_IDLE;
 
@@ -567,6 +605,7 @@ finish_sync_folio_request:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_zns_sync_folio_request);
 
 /*
  * ssdfs_zns_sync_batch_request() - submit folio batch request
@@ -576,12 +615,15 @@ finish_sync_folio_request:
  * @offset: offset in bytes from partition's begin
  * @op: direction of I/O
  * @op_flags: request op flags
+ *
+ * See ssdfs_zns_sync_folio_request() for why this is redirectable.
  */
-static int ssdfs_zns_sync_batch_request(struct super_block *sb,
-					struct folio_batch *batch,
-					sector_t zone_start,
-					loff_t offset,
-					unsigned int op, int op_flags)
+VISIBLE_IF_KUNIT
+int ssdfs_zns_sync_batch_request(struct super_block *sb,
+				 struct folio_batch *batch,
+				 sector_t zone_start,
+				 loff_t offset,
+				 unsigned int op, int op_flags)
 {
 	struct bio *bio;
 	int i;
@@ -591,6 +633,10 @@ static int ssdfs_zns_sync_batch_request(struct super_block *sb,
 	int res;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
+
+	KUNIT_STATIC_STUB_REDIRECT(ssdfs_zns_sync_batch_request,
+				   sb, batch, zone_start, offset,
+				   op, op_flags);
 
 	op |= REQ_OP_ZONE_APPEND | REQ_IDLE;
 
@@ -669,6 +715,7 @@ finish_sync_batch_request:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_zns_sync_batch_request);
 
 /*
  * ssdfs_zns_read_block() - read logical block from the volume
@@ -832,6 +879,69 @@ int ssdfs_zns_read(struct super_block *sb, u32 block_size,
 }
 
 /*
+ * ssdfs_zns_decide_write_permission() - decide what a zone snapshot means
+ * @zone: zone snapshot, as retrieved by blkdev_report_zones()
+ * @zone_sector: sector being checked for write eligibility
+ *
+ * RETURN:
+ * [SSDFS_ZNS_WRITE_OK]			- zone is writable.
+ * [SSDFS_ZNS_WRITE_NEEDS_BDEV_CHECK]	- call ssdfs_bdev_can_write_block().
+ * [SSDFS_ZNS_WRITE_NEEDS_REOPEN]	- caller should reopen the zone.
+ * [SSDFS_ZNS_WRITE_DENIED]		- zone cannot be written.
+ */
+VISIBLE_IF_KUNIT
+int ssdfs_zns_decide_write_permission(struct blk_zone *zone,
+				      sector_t zone_sector)
+{
+	switch (zone->type) {
+	case BLK_ZONE_TYPE_CONVENTIONAL:
+		return SSDFS_ZNS_WRITE_NEEDS_BDEV_CHECK;
+
+	default:
+		/*
+		 * BLK_ZONE_TYPE_SEQWRITE_REQ
+		 * BLK_ZONE_TYPE_SEQWRITE_PREF
+		 *
+		 * continue logic
+		 */
+		break;
+	}
+
+	switch (zone->cond) {
+	case BLK_ZONE_COND_NOT_WP:
+		return SSDFS_ZNS_WRITE_NEEDS_BDEV_CHECK;
+
+	case BLK_ZONE_COND_EMPTY:
+		/* can write */
+		return SSDFS_ZNS_WRITE_OK;
+
+	case BLK_ZONE_COND_CLOSED:
+		return SSDFS_ZNS_WRITE_NEEDS_REOPEN;
+
+	case BLK_ZONE_COND_READONLY:
+	case BLK_ZONE_COND_FULL:
+	case BLK_ZONE_COND_OFFLINE:
+		return SSDFS_ZNS_WRITE_DENIED;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	if (zone_sector < zone->wp) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("cannot be written: "
+			  "zone_sector %llu, zone->wp %llu\n",
+			  zone_sector, zone->wp);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return SSDFS_ZNS_WRITE_DENIED;
+	}
+
+	return SSDFS_ZNS_WRITE_OK;
+}
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_zns_decide_write_permission);
+
+/*
  * ssdfs_zns_can_write_block() - check that logical block can be written
  * @sb: superblock object
  * @block_size: block size in bytes
@@ -887,35 +997,12 @@ static int ssdfs_zns_can_write_block(struct super_block *sb, u32 block_size,
 		  zone.reset, zone.capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	switch (zone.type) {
-	case BLK_ZONE_TYPE_CONVENTIONAL:
+	switch (ssdfs_zns_decide_write_permission(&zone, zone_sector)) {
+	case SSDFS_ZNS_WRITE_NEEDS_BDEV_CHECK:
 		return ssdfs_bdev_can_write_block(sb, block_size,
 						  offset, need_check);
 
-	default:
-		/*
-		 * BLK_ZONE_TYPE_SEQWRITE_REQ
-		 * BLK_ZONE_TYPE_SEQWRITE_PREF
-		 *
-		 * continue logic
-		 */
-		break;
-	}
-
-	switch (zone.cond) {
-	case BLK_ZONE_COND_NOT_WP:
-		return ssdfs_bdev_can_write_block(sb, block_size,
-						  offset, need_check);
-
-	case BLK_ZONE_COND_EMPTY:
-		/* can write */
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("zone is empty: offset %llu\n",
-			  offset);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
-
-	case BLK_ZONE_COND_CLOSED:
+	case SSDFS_ZNS_WRITE_NEEDS_REOPEN:
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is closed: offset %llu\n",
 			  offset);
@@ -935,39 +1022,14 @@ static int ssdfs_zns_can_write_block(struct super_block *sb, u32 block_size,
 
 		return 0;
 
-	case BLK_ZONE_COND_READONLY:
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("zone is READ-ONLY: offset %llu\n",
-			  offset);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -EIO;
-
-	case BLK_ZONE_COND_FULL:
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("zone is full: offset %llu\n",
-			  offset);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -EIO;
-
-	case BLK_ZONE_COND_OFFLINE:
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("zone is offline: offset %llu\n",
-			  offset);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -EIO;
-
-	default:
-		/* continue logic */
-		break;
-	}
-
-	if (zone_sector < zone.wp) {
+	case SSDFS_ZNS_WRITE_DENIED:
 		err = -EIO;
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("cannot be written: "
-			  "zone_sector %llu, zone.wp %llu\n",
-			  zone_sector, zone.wp);
-#endif /* CONFIG_SSDFS_DEBUG */
+		break;
+
+	case SSDFS_ZNS_WRITE_OK:
+	default:
+		err = 0;
+		break;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -991,6 +1053,25 @@ static int ssdfs_zns_can_write_block(struct super_block *sb, u32 block_size,
 }
 
 /*
+ * ssdfs_zns_calc_zone_start() - calculate start sector of the zone
+ * @offset: offset in bytes from partition's begin
+ * @erasesize: erase block size in bytes
+ *
+ * This function converts a byte @offset into the start sector of the
+ * zone it belongs to. It is used by ssdfs_zns_write_block() and
+ * ssdfs_zns_write_blocks() to derive the REQ_OP_ZONE_APPEND target
+ * sector.
+ */
+VISIBLE_IF_KUNIT
+sector_t ssdfs_zns_calc_zone_start(loff_t offset, u32 erasesize)
+{
+	loff_t zone_start = (offset / erasesize) * erasesize;
+
+	return (sector_t)(zone_start >> SECTOR_SHIFT);
+}
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_zns_calc_zone_start);
+
+/*
  * ssdfs_zns_write_block() - write logical block to volume
  * @sb: superblock object
  * @offset: offset in bytes from partition's begin
@@ -1011,7 +1092,7 @@ int ssdfs_zns_write_block(struct super_block *sb, loff_t offset,
 			  struct folio *folio, u8 write_stream)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-	loff_t zone_start;
+	sector_t zone_start;
 #ifdef CONFIG_SSDFS_DEBUG
 	struct blk_zone zone;
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
@@ -1043,8 +1124,7 @@ int ssdfs_zns_write_block(struct super_block *sb, loff_t offset,
 	ssdfs_folio_lock(folio);
 	atomic_inc(&fsi->pending_bios);
 
-	zone_start = (offset / fsi->erasesize) * fsi->erasesize;
-	zone_start >>= SECTOR_SHIFT;
+	zone_start = ssdfs_zns_calc_zone_start(offset, fsi->erasesize);
 
 	err = ssdfs_zns_sync_folio_request(sb, folio, zone_start, offset,
 					   REQ_OP_WRITE, REQ_SYNC);
@@ -1110,7 +1190,7 @@ int ssdfs_zns_write_blocks(struct super_block *sb, loff_t offset,
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct folio *folio;
-	loff_t zone_start;
+	sector_t zone_start;
 	int i;
 #ifdef CONFIG_SSDFS_DEBUG
 	struct blk_zone zone;
@@ -1159,8 +1239,7 @@ int ssdfs_zns_write_blocks(struct super_block *sb, loff_t offset,
 
 	atomic_inc(&fsi->pending_bios);
 
-	zone_start = (offset / fsi->erasesize) * fsi->erasesize;
-	zone_start >>= SECTOR_SHIFT;
+	zone_start = ssdfs_zns_calc_zone_start(offset, fsi->erasesize);
 
 	err = ssdfs_zns_sync_batch_request(sb, batch, zone_start, offset,
 					   REQ_OP_WRITE, REQ_SYNC);
@@ -1211,44 +1290,33 @@ int ssdfs_zns_write_blocks(struct super_block *sb, loff_t offset,
 }
 
 /*
- * ssdfs_zns_trim() - initiate background erase operation
- * @sb: superblock object
+ * ssdfs_zns_calc_trim_range() - calculate sector range for trim operation
  * @offset: offset in bytes from partition's begin
  * @len: size in bytes
+ * @erase_size: erase block size in bytes
+ * @start_sector: start sector of the range [out]
+ * @sectors_count: number of sectors in the range [out]
  *
- * This function tries to initiate background erase operation.
+ * This function validates that @len is aligned on @erase_size and that
+ * [@offset, @offset + @len) covers at least one page, then converts
+ * @offset/@erase_size into the [@start_sector, @start_sector +
+ * @sectors_count) sector range used for REQ_OP_ZONE_RESET.
  *
  * RETURN:
  * [success]
  * [failure] - error code:
  *
- * %-EROFS       - file system in RO mode.
- * %-EFAULT      - erase operation error.
+ * %-ERANGE      - @len isn't aligned on @erase_size, or resulting
+ *                 range of pages is empty.
  */
-static int ssdfs_zns_trim(struct super_block *sb, loff_t offset, size_t len)
+VISIBLE_IF_KUNIT
+int ssdfs_zns_calc_trim_range(loff_t offset, size_t len, u32 erase_size,
+			      sector_t *start_sector,
+			      sector_t *sectors_count)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-	u32 erase_size = fsi->erasesize;
 	loff_t page_start, page_end;
 	u32 pages_count;
 	u32 remainder;
-	sector_t start_sector;
-	sector_t sectors_count;
-	unsigned int nofs_flags;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
-		  sb, (unsigned long long)offset, len);
-
-	div_u64_rem((u64)len, (u64)erase_size, &remainder);
-	BUG_ON(remainder);
-	div_u64_rem((u64)offset, (u64)erase_size, &remainder);
-	BUG_ON(remainder);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (sb->s_flags & SB_RDONLY)
-		return -EROFS;
 
 	div_u64_rem((u64)len, (u64)erase_size, &remainder);
 	if (remainder) {
@@ -1267,8 +1335,57 @@ static int ssdfs_zns_trim(struct super_block *sb, loff_t offset, size_t len)
 		return -ERANGE;
 	}
 
-	start_sector = offset >> SECTOR_SHIFT;
-	sectors_count = fsi->erasesize >> SECTOR_SHIFT;
+	*start_sector = offset >> SECTOR_SHIFT;
+	*sectors_count = erase_size >> SECTOR_SHIFT;
+
+	return 0;
+}
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_zns_calc_trim_range);
+
+/*
+ * ssdfs_zns_trim() - initiate background erase operation
+ * @sb: superblock object
+ * @offset: offset in bytes from partition's begin
+ * @len: size in bytes
+ *
+ * This function tries to initiate background erase operation.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EROFS       - file system in RO mode.
+ * %-EFAULT      - erase operation error.
+ */
+static int ssdfs_zns_trim(struct super_block *sb, loff_t offset, size_t len)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	u32 erase_size = fsi->erasesize;
+	sector_t start_sector;
+	sector_t sectors_count;
+#ifdef CONFIG_SSDFS_DEBUG
+	u32 remainder;
+#endif /* CONFIG_SSDFS_DEBUG */
+	unsigned int nofs_flags;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
+		  sb, (unsigned long long)offset, len);
+
+	div_u64_rem((u64)len, (u64)erase_size, &remainder);
+	BUG_ON(remainder);
+	div_u64_rem((u64)offset, (u64)erase_size, &remainder);
+	BUG_ON(remainder);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (sb->s_flags & SB_RDONLY)
+		return -EROFS;
+
+	err = ssdfs_zns_calc_trim_range(offset, len, erase_size,
+					&start_sector, &sectors_count);
+	if (unlikely(err))
+		return err;
 
 	nofs_flags = memalloc_nofs_save();
 	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_RESET,
@@ -1343,3 +1460,4 @@ const struct ssdfs_device_ops ssdfs_zns_devops = {
 	.mark_peb_bad		= ssdfs_zns_mark_peb_bad,
 	.sync			= ssdfs_zns_sync,
 };
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_zns_devops);

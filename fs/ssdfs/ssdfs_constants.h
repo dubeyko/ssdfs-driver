@@ -212,4 +212,11 @@ enum {
 	SSDFS_CHILD_LOCK,
 };
 
+enum {
+	SSDFS_ZNS_WRITE_OK,			/* zone can be written as is */
+	SSDFS_ZNS_WRITE_NEEDS_BDEV_CHECK,	/* delegate to bdev logic */
+	SSDFS_ZNS_WRITE_NEEDS_REOPEN,		/* zone must be reopened */
+	SSDFS_ZNS_WRITE_DENIED,			/* zone cannot be written */
+};
+
 #endif /* _SSDFS_CONSTANTS_H */

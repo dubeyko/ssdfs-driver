@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.88 [September 19, 2026]
+    (*) Introduce Kunit-based ZNS block device interface's unit-tests.
+
 v.5.87 [September 12, 2026]
     (*) Implement on-demand policy of segment bitmaps's fragments
         and segment objects pre-fetching.

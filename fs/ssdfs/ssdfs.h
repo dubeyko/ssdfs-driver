@@ -86,6 +86,7 @@ struct ssdfs_mount_context {
 	unsigned long s_mount_opts;
 };
 
+struct blk_zone;
 struct ssdfs_peb_info;
 struct ssdfs_peb_container;
 struct ssdfs_segment_info;
@@ -159,6 +160,26 @@ int ssdfs_bdev_calc_trim_range(loff_t offset, size_t len, u32 erase_size,
 u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset);
 u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset);
 u64 ssdfs_zns_zone_write_pointer(struct super_block *sb, loff_t offset);
+
+#if IS_ENABLED(CONFIG_KUNIT)
+sector_t ssdfs_zns_calc_zone_start(loff_t offset, u32 erasesize);
+int ssdfs_zns_calc_trim_range(loff_t offset, size_t len, u32 erase_size,
+			      sector_t *start_sector,
+			      sector_t *sectors_count);
+int ssdfs_zns_track_zone_open(atomic_t *open_zones, u32 max_open_zones);
+int ssdfs_zns_decide_write_permission(struct blk_zone *zone,
+				      sector_t zone_sector);
+int ssdfs_zns_sync_folio_request(struct super_block *sb,
+				 struct folio *folio,
+				 sector_t zone_start,
+				 loff_t offset,
+				 unsigned int op, int op_flags);
+int ssdfs_zns_sync_batch_request(struct super_block *sb,
+				 struct folio_batch *batch,
+				 sector_t zone_start,
+				 loff_t offset,
+				 unsigned int op, int op_flags);
+#endif /* IS_ENABLED(CONFIG_KUNIT) */
 
 /* dir.c */
 bool ssdfs_empty_dir(struct inode *dir);
