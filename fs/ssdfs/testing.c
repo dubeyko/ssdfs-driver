@@ -4163,14 +4163,14 @@ int ssdfs_do_shared_dictionary_testing(struct ssdfs_fs_info *fsi,
 	u32 i;
 	int err = 0;
 
-	table = ssdfs_kzalloc(SSDFS_MAX_NAME_LEN, GFP_KERNEL | __GFP_ZERO);
+	table = ssdfs_kzalloc(SSDFS_MAX_NAME_LEN + 1, GFP_KERNEL | __GFP_ZERO);
 	if (!table) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate table buffer\n");
 		goto free_allocated_memory;
 	}
 
-	name = ssdfs_kzalloc(SSDFS_MAX_NAME_LEN, GFP_KERNEL | __GFP_ZERO);
+	name = ssdfs_kzalloc(SSDFS_MAX_NAME_LEN + 1, GFP_KERNEL | __GFP_ZERO);
 	if (!name) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate name buffer\n");
@@ -4270,7 +4270,7 @@ int ssdfs_testing_xattr_tree_add(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_btree_search *search;
-	unsigned char name[SSDFS_MAX_NAME_LEN];
+	unsigned char name[SSDFS_MAX_NAME_LEN + 1];
 	u64 ino;
 	void *blob = NULL;
 	int err = 0;
@@ -4334,7 +4334,7 @@ int ssdfs_testing_xattr_tree_check(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_btree_search *search;
-	unsigned char name[SSDFS_MAX_NAME_LEN];
+	unsigned char name[SSDFS_MAX_NAME_LEN + 1];
 	u64 ino;
 	int err = 0;
 
@@ -4381,7 +4381,7 @@ int ssdfs_testing_xattr_tree_resize_blob(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_btree_search *search;
-	unsigned char name[SSDFS_MAX_NAME_LEN];
+	unsigned char name[SSDFS_MAX_NAME_LEN + 1];
 	u64 ino;
 	void *blob = NULL;
 	u64 name_hash;
@@ -4472,7 +4472,7 @@ int ssdfs_testing_xattr_tree_delete(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_btree_search *search;
-	unsigned char name[SSDFS_MAX_NAME_LEN];
+	unsigned char name[SSDFS_MAX_NAME_LEN + 1];
 	u64 ino;
 	u64 name_hash;
 	int err = 0;
@@ -4530,7 +4530,7 @@ int ssdfs_do_xattr_tree_testing(struct ssdfs_fs_info *fsi,
 	u64 threshold = env->xattr_tree.xattrs_number;
 	u64 per_1_percent = 0;
 	u64 message_threshold = 0;
-	unsigned char table[SSDFS_MAX_NAME_LEN];
+	unsigned char table[SSDFS_MAX_NAME_LEN + 1];
 	u64 i;
 	int err = 0;
 

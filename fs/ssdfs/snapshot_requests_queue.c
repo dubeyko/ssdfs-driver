@@ -827,7 +827,7 @@ int ssdfs_execute_list_snapshot_rules_request(struct ssdfs_fs_info *fsi,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !snr);
+	BUG_ON(!fsi || !snr);
 
 	SSDFS_DBG("SNAPSHOT INFO: ");
 	SSDFS_DBG("name %s, ", snr->info.name);

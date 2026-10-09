@@ -53,12 +53,14 @@ enum {
  * @objects: array of pointers on current segment objects
  * @buffer: buffer for all current segment objects
  * @lock_buffer: array of current segments' locks
+ * @seg_ids: array of current segment IDs
  */
 struct ssdfs_current_segs_array {
 	struct rw_semaphore lock;
 	struct ssdfs_current_segment *objects[SSDFS_CUR_SEGS_COUNT];
 	u8 buffer[sizeof(struct ssdfs_current_segment) * SSDFS_CUR_SEGS_COUNT];
 	struct mutex lock_buffer[SSDFS_CUR_SEG_LOCK_COUNT];
+	__le64 seg_ids[SSDFS_CUR_SEGS_COUNT];
 };
 
 /*

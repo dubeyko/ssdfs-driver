@@ -175,6 +175,7 @@ int __ssdfs_extents_btree_node_get_fork(struct ssdfs_fs_info *fsi,
 					u32 node_size,
 					u16 item_index,
 					struct ssdfs_raw_fork *fork);
+int ssdfs_extents_tree_migrate_inline2generic(struct ssdfs_inode_info *ii);
 
 void ssdfs_debug_extents_btree_object(struct ssdfs_extents_btree_info *tree);
 

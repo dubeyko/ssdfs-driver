@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.89 [October 08, 2026]
+    (*) Fix multiple issue for generic/013 test-case of xfstests.
+
 v.5.88 [September 19, 2026]
     (*) Introduce Kunit-based ZNS block device interface's unit-tests.
 

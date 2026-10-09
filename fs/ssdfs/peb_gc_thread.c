@@ -1621,14 +1621,16 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 	for (count = 0; count < 2; count++) {
 		int err1, err2;
 
-		err1 = ssdfs_peb_prepare_range_migration(pebc, 1,
+		err1 = ssdfs_peb_prepare_range_migration(pebc,
+						SSDFS_EXTENT_LEN_MAX,
 						SSDFS_BLK_PRE_ALLOCATED);
 		if (err1 && err1 != -ENODATA) {
 			err = err1;
 			break;
 		}
 
-		err2 = ssdfs_peb_prepare_range_migration(pebc, 1,
+		err2 = ssdfs_peb_prepare_range_migration(pebc,
+						SSDFS_EXTENT_LEN_MAX,
 						SSDFS_BLK_VALID);
 		if (err2 && err2 != -ENODATA) {
 			err = err2;
@@ -3523,13 +3525,12 @@ sleep_failed_gc_thread:
 int ssdfs_btree_node_gc_thread_func(void *data)
 {
 	struct ssdfs_fs_info *fsi = data;
-	struct list_head *this, *next;
+	struct list_head *this;
 	struct ssdfs_btree_node *node = NULL;
 	wait_queue_head_t *wait_queue;
 	int thread_type = SSDFS_BTREE_NODE_GC_THREAD;
 	u64 timeout = BTREE_NODE_GC_THREAD_WAKEUP_TIMEOUT;
 	int state;
-	bool need2free = false;
 	u64 freed_nodes = 0;
 	int err = 0;
 
@@ -3574,42 +3575,40 @@ finish_thread:
 
 destroy_btree_nodes:
 	spin_lock(&fsi->btree_nodes.lock);
-	list_for_each_safe(this, next, &fsi->btree_nodes.list) {
+	list_for_each(this, &fsi->btree_nodes.list) {
 		node = list_entry(this, struct ssdfs_btree_node, list);
 
-		ssdfs_btree_node_get(node);
+		if (!is_it_time_free_btree_node_content(node))
+			continue;
 
-		if (is_it_time_free_btree_node_content(node)) {
-			state = atomic_cmpxchg(&node->state,
-					SSDFS_BTREE_NODE_INITIALIZED,
-					SSDFS_BTREE_NODE_CONTENT_UNDER_FREE);
-			if (state != SSDFS_BTREE_NODE_INITIALIZED)
-				need2free = false;
-			else
-				need2free = true;
-		} else
-			need2free = false;
+		state = atomic_cmpxchg(&node->state,
+				SSDFS_BTREE_NODE_INITIALIZED,
+				SSDFS_BTREE_NODE_CONTENT_UNDER_FREE);
+		if (state != SSDFS_BTREE_NODE_INITIALIZED)
+			continue;
 
+		/*
+		 * Node in SSDFS_BTREE_NODE_CONTENT_UNDER_FREE state
+		 * cannot be excluded from the list. Other nodes can be
+		 * deleted while the lock is released. So, the iteration
+		 * has to continue from this node only.
+		 */
 		spin_unlock(&fsi->btree_nodes.lock);
 
-		if (need2free) {
-			down_write(&node->full_lock);
+		down_write(&node->full_lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("btree_node_free_content_space: node_id %u\n",
-				  node->node_id);
+		SSDFS_DBG("btree_node_free_content_space: node_id %u\n",
+			  node->node_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			ssdfs_btree_node_free_content_space(node);
-			atomic_set(&node->state, SSDFS_BTREE_NODE_NONE_CONTENT);
-			up_write(&node->full_lock);
-			need2free = false;
-			freed_nodes++;
-		}
-
-		ssdfs_btree_node_put(node);
+		ssdfs_btree_node_free_content_space(node);
 
 		spin_lock(&fsi->btree_nodes.lock);
+		atomic_set(&node->state, SSDFS_BTREE_NODE_NONE_CONTENT);
+		up_write(&node->full_lock);
+		wake_up_all(&node->wait_queue);
+		freed_nodes++;
 	}
 	spin_unlock(&fsi->btree_nodes.lock);
 

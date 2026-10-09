@@ -6019,7 +6019,7 @@ int ssdfs_extract_name(struct ssdfs_btree_node *node,
 		}
 
 		str_len = name->prefix.desc.str_len;
-		if (str_len >= SSDFS_MAX_NAME_LEN) {
+		if (str_len > SSDFS_MAX_NAME_LEN) {
 			SSDFS_ERR("invalid prefix len %u\n",
 				  str_len);
 			return -EIO;
@@ -6036,7 +6036,7 @@ int ssdfs_extract_name(struct ssdfs_btree_node *node,
 		name->len = str_len;
 
 		str_len = name->right_name.desc.str_len;
-		if ((name->len + str_len) >= SSDFS_MAX_NAME_LEN) {
+		if ((name->len + str_len) > SSDFS_MAX_NAME_LEN) {
 			SSDFS_ERR("invalid suffix len %u\n",
 				  str_len);
 			return -EIO;
@@ -6055,7 +6055,7 @@ int ssdfs_extract_name(struct ssdfs_btree_node *node,
 
 	case SSDFS_FULL_NAME:
 		str_len = name->right_name.desc.str_len;
-		if (str_len >= SSDFS_MAX_NAME_LEN) {
+		if (str_len > SSDFS_MAX_NAME_LEN) {
 			SSDFS_ERR("invalid suffix len %u\n",
 				  str_len);
 			return -EIO;
@@ -6880,7 +6880,7 @@ int ssdfs_check_hash_table_area(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	for (i = 0; i < area->index_count; i++) {
 		struct ssdfs_shdict_htbl_item desc;
-		unsigned char name[SSDFS_MAX_NAME_LEN] = {0};
+		unsigned char name[SSDFS_MAX_NAME_LEN + 1] = {0};
 		u64 found_hash;
 		u64 calculated_hash;
 		int err;

@@ -40,6 +40,7 @@
 #include "btree.h"
 #include "xattr_tree.h"
 #include "shared_dictionary.h"
+#include "extents_tree.h"
 #include "dentries_tree.h"
 #include "xattr.h"
 
@@ -623,11 +624,10 @@ ssize_t ssdfs_listxattr_inline_tree(struct inode *inode,
 
 	dict = fsi->shdictree;
 	if (!dict) {
+		err = -ERANGE;
 		SSDFS_ERR("shared dictionary is absent\n");
-		return -ERANGE;
+		goto finish_tree_processing;
 	}
-
-	down_read(&ii->lock);
 
 	if (!ii->xattrs_tree) {
 		err = -ERANGE;
@@ -654,8 +654,6 @@ ssize_t ssdfs_listxattr_inline_tree(struct inode *inode,
 	}
 
 finish_tree_processing:
-	up_read(&ii->lock);
-
 	if (err == -ENOENT) {
 		err = 0;
 		goto clean_up;
@@ -732,11 +730,10 @@ ssize_t ssdfs_listxattr_generic_tree(struct inode *inode,
 
 	dict = fsi->shdictree;
 	if (!dict) {
+		err = -ERANGE;
 		SSDFS_ERR("shared dictionary is absent\n");
-		return -ERANGE;
+		goto finish_get_start_hash;
 	}
-
-	down_read(&ii->lock);
 
 	if (!ii->xattrs_tree) {
 		err = -ERANGE;
@@ -758,8 +755,6 @@ ssize_t ssdfs_listxattr_generic_tree(struct inode *inode,
 	}
 
 finish_get_start_hash:
-	up_read(&ii->lock);
-
 	if (err == -ENOENT) {
 		err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -780,8 +775,6 @@ finish_get_start_hash:
 			goto clean_up;
 		}
 		cond_resched();
-
-		down_read(&ii->lock);
 
 		err = ssdfs_xattrs_tree_find_leaf_node(ii->xattrs_tree,
 							start_hash,
@@ -833,8 +826,6 @@ finish_get_start_hash:
 		}
 
 finish_tree_processing:
-		up_read(&ii->lock);
-
 		if (err == -ENOENT) {
 			err = 0;
 			goto clean_up;
@@ -893,11 +884,9 @@ finish_tree_processing:
 
 		start_hash = end_hash + 1;
 
-		down_read(&ii->lock);
 		err = ssdfs_xattrs_tree_get_next_hash(ii->xattrs_tree,
 						      search,
 						      &start_hash);
-		up_read(&ii->lock);
 
 		ssdfs_btree_search_forget_parent_node(search);
 		ssdfs_btree_search_forget_child_node(search);
@@ -939,27 +928,27 @@ ssize_t ssdfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		  inode->i_ino, buffer, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	down_read(&ii->lock);
+
 	private_flags = atomic_read(&ii->private_flags);
 
-	switch (private_flags) {
-	case SSDFS_INODE_HAS_INLINE_XATTR:
-	case SSDFS_INODE_HAS_XATTR_BTREE:
+	if (private_flags & SSDFS_INODE_HAS_INLINE_XATTR ||
+	    private_flags & SSDFS_INODE_HAS_XATTR_BTREE) {
 		/* xattrs tree exists */
-		break;
-
-	default:
+	} else {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("xattrs tree is absent: "
 			  "ino %llu\n",
 			  inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
+		goto finish_listxattr;
 	}
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
+		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate btree search object\n");
-		return -ENOMEM;
+		goto finish_listxattr;
 	}
 
 	if (!ii->xattrs_tree) {
@@ -1002,6 +991,8 @@ ssize_t ssdfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 
 clean_up:
 	ssdfs_btree_search_free(search);
+finish_listxattr:
+	up_read(&ii->lock);
 
 	return err < 0 ? err : copied;
 }
@@ -1303,21 +1294,21 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("name_index %d, name %s, value %p, size %zu\n",
-		  name_index, name, value, size);
+	SSDFS_DBG("ino %llu, name_index %d, name %s, value %p, "
+		  "size %zu\n",
+		  inode->i_ino, name_index, name,
+		  value, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	name_len = strlen(name);
 	if (name_len > SSDFS_MAX_NAME_LEN)
 		return -ERANGE;
 
+	down_read(&ii->lock);
+
 	private_flags = atomic_read(&ii->private_flags);
-
-	switch (private_flags) {
-	case SSDFS_INODE_HAS_INLINE_XATTR:
-	case SSDFS_INODE_HAS_XATTR_BTREE:
-		down_read(&ii->lock);
-
+	if (private_flags & SSDFS_INODE_HAS_INLINE_XATTR ||
+	    private_flags & SSDFS_INODE_HAS_XATTR_BTREE) {
 		if (!ii->xattrs_tree) {
 			err = -ERANGE;
 			SSDFS_WARN("xattrs tree is absent!!!\n");
@@ -1336,7 +1327,6 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 		err = ssdfs_xattrs_tree_find(ii->xattrs_tree,
 					     name, name_len,
 					     search);
-
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("inode %llu hasn't xattr %s\n",
@@ -1472,20 +1462,17 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 
 xattr_is_not_available:
 		ssdfs_btree_search_free(search);
-
-finish_search_xattr:
-		up_read(&ii->lock);
-		break;
-
-	default:
+	} else {
 		err = -ENODATA;
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("xattrs tree is absent: "
 			  "ino %llu\n",
 			  inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
-		break;
 	}
+
+finish_search_xattr:
+	up_read(&ii->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished: err %zd\n", err);
@@ -1521,9 +1508,10 @@ int __ssdfs_setxattr(struct inode *inode, int name_index, const char *name,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("name_index %d, name %s, value %p, "
+	SSDFS_DBG("ino %llu, name_index %d, name %s, value %p, "
 		  "size %zu, flags %#x\n",
-		  name_index, name, value, size, flags);
+		  inode->i_ino, name_index, name,
+		  value, size, flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (value == NULL)
@@ -1533,28 +1521,37 @@ int __ssdfs_setxattr(struct inode *inode, int name_index, const char *name,
 	if (name_len > SSDFS_MAX_NAME_LEN)
 		return -ERANGE;
 
+	down_write(&ii->lock);
+
 	private_flags = atomic_read(&ii->private_flags);
-
-	switch (private_flags) {
-	case SSDFS_INODE_HAS_INLINE_XATTR:
-	case SSDFS_INODE_HAS_XATTR_BTREE:
-		down_read(&ii->lock);
-
+	if (private_flags & SSDFS_INODE_HAS_INLINE_XATTR ||
+	    private_flags & SSDFS_INODE_HAS_XATTR_BTREE) {
 		if (!ii->xattrs_tree) {
 			err = -ERANGE;
 			SSDFS_WARN("xattrs tree is absent!!!\n");
 			goto finish_setxattr;
 		}
-		break;
-
-	default:
-		down_write(&ii->lock);
-
+	} else {
 		if (ii->xattrs_tree) {
 			err = -ERANGE;
 			SSDFS_WARN("xattrs tree exists unexpectedly!!!\n");
 			goto finish_create_xattrs_tree;
 		} else {
+			if (S_ISDIR(inode->i_mode)) {
+				err =
+				  ssdfs_dentries_tree_migrate_inline2generic(ii);
+			} else {
+				err =
+				  ssdfs_extents_tree_migrate_inline2generic(ii);
+			}
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to migrate inline to generic tree: "
+					  "ino %llu, err %d\n",
+					  inode->i_ino, err);
+				goto finish_create_xattrs_tree;
+			}
+
 			err = ssdfs_xattrs_tree_create(fsi, ii);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to create the xattrs tree: "
@@ -1568,11 +1565,8 @@ int __ssdfs_setxattr(struct inode *inode, int name_index, const char *name,
 		}
 
 finish_create_xattrs_tree:
-		downgrade_write(&ii->lock);
-
 		if (unlikely(err))
 			goto finish_setxattr;
-		break;
 	}
 
 	search = ssdfs_btree_search_alloc();
@@ -1625,6 +1619,18 @@ finish_create_xattrs_tree:
 				  inode->i_ino, name, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto clean_up;
+		} else if (err == -EEXIST) {
+			/*
+			 * Xattr already exists. It is the normal outcome
+			 * for XATTR_CREATE requested for an already
+			 * existing xattr.
+			 */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to create xattr: "
+				  "ino %llu, name %s, err %d\n",
+				  inode->i_ino, name, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto clean_up;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create xattr: "
 				  "ino %llu, name %s, err %d\n",
@@ -1639,6 +1645,18 @@ finish_create_xattrs_tree:
 						value, size,
 						search);
 		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to replace xattr: "
+				  "ino %llu, name %s, err %d\n",
+				  inode->i_ino, name, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto clean_up;
+		} else if (err == -ENODATA) {
+			/*
+			 * Xattr doesn't exist. It is the normal
+			 * outcome for XATTR_REPLACE requested for
+			 * a not existing xattr.
+			 */
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to replace xattr: "
 				  "ino %llu, name %s, err %d\n",
@@ -1700,7 +1718,7 @@ clean_up:
 	ssdfs_btree_search_free(search);
 
 finish_setxattr:
-	up_read(&ii->lock);
+	up_write(&ii->lock);
 
 	return err;
 }

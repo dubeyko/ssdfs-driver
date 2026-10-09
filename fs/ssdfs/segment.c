@@ -2756,12 +2756,25 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 						&peb_index, NULL, &pos);
 	if (IS_ERR_OR_NULL(po_desc)) {
 		err = (po_desc == NULL ? -ERANGE : PTR_ERR(po_desc));
-		SSDFS_ERR("fail to convert: "
-			  "seg %llu, ino %llu, logical_offset %llu, "
-			  "logical_blk %u, err %d\n",
-			  si->seg_id, req->extent.ino,
-			  req->extent.logical_offset,
-			  logical_blk, err);
+
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to convert: "
+				  "seg %llu, ino %llu, logical_offset %llu, "
+				  "logical_blk %u, err %d\n",
+				  si->seg_id, req->extent.ino,
+				  req->extent.logical_offset,
+				  logical_blk, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		} else {
+			SSDFS_ERR("fail to convert: "
+				  "seg %llu, ino %llu, logical_offset %llu, "
+				  "logical_blk %u, err %d\n",
+				  si->seg_id, req->extent.ino,
+				  req->extent.logical_offset,
+				  logical_blk, err);
+		}
+
 		return err;
 	}
 
@@ -3898,6 +3911,7 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 	}
 
 	inode_add_bytes(inode, data_bytes);
+	mark_inode_dirty(inode);
 
 	ii = SSDFS_I(inode);
 	etree = SSDFS_EXTREE(ii);
@@ -4206,8 +4220,11 @@ int ssdfs_segment_allocate_data_extent(struct ssdfs_current_segment *cur_seg,
 		}
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to reserve logical extent: "
-			  "seg %llu, err %d\n",
-			  cur_seg->real_seg->seg_id, err);
+			  "ino %llu, logical_offset %llu, "
+			  "seg %llu, blks_count %u, err %d\n",
+			  batch->requested_extent.ino,
+			  batch->requested_extent.logical_offset,
+			  cur_seg->real_seg->seg_id, blks_count, err);
 		goto finish_allocate_extent;
 	} else {
 		if (reserved_blks != blks_count) {
@@ -7763,7 +7780,6 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 
 	switch (req->private.class) {
 	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
-	case SSDFS_MIGRATE_RANGE:
 		ssdfs_requests_queue_add_head_inc(si->fsi, rq, req);
 		break;
 

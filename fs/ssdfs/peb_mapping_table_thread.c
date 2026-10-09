@@ -2807,6 +2807,8 @@ bool is_it_time_process_pre_erase_pebs(struct ssdfs_peb_mapping_table *tbl)
 	 is_unmount_in_progress(tbl->fsi) || \
 	 is_it_time_process_pre_erase_pebs(tbl) || \
 	 !is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue))
+#define MAPTBL_THREAD_UNMOUNT_WAKE_CONDITION() \
+	(kthread_should_stop())
 #define MAPTBL_THREAD_RDONLY_WAKE_CONDITION() \
 	(kthread_should_stop())
 #define MAPTBL_FAILED_THREAD_WAKE_CONDITION() \
@@ -2910,7 +2912,7 @@ repeat:
 		goto sleep_read_only_maptbl_thread;
 
 	if (is_unmount_in_progress(fsi))
-		goto sleep_maptbl_thread;
+		goto sleep_during_unmount_in_progress;
 
 	if (!has_maptbl_pre_erase_pebs(tbl) &&
 	    is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue)) {
@@ -3043,6 +3045,12 @@ sleep_maptbl_thread:
 		}
 	}
 	remove_wait_queue(wait_queue, &wait);
+	goto repeat;
+
+sleep_during_unmount_in_progress:
+	wait_event_interruptible_timeout(*wait_queue,
+					 MAPTBL_THREAD_UNMOUNT_WAKE_CONDITION(),
+					 SSDFS_DEFAULT_TIMEOUT);
 	goto repeat;
 
 sleep_read_only_maptbl_thread:

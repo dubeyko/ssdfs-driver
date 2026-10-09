@@ -304,7 +304,7 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	if (err == -EAGAIN) {
 		err = 0;
 		SSDFS_DBG("logical extent processed partially\n");
-	} else if (err == -ENOENT) {
+	} else if (err == -ENODATA) {
 		SSDFS_DBG("fork is absent: "
 			  "ino %llu, logical_offset %llu, "
 			  "data_bytes %u, cno %llu, "
@@ -581,7 +581,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 	switch (read_mode) {
 	case SSDFS_CURRENT_THREAD_READ:
 		err = ssdfs_read_block_by_current_thread(fsi, inode, req);
-		if (err == -ENOENT) {
+		if (err == -ENODATA) {
 			SSDFS_DBG("empty block has been prepared\n");
 
 			for (i = 0; i < folio_batch_count(batch); i++) {
@@ -851,7 +851,7 @@ static
 int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_request *req)
 {
-	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_segment_search_state seg_search;
 	wait_queue_head_t *wait;
 	int res;
@@ -868,7 +868,6 @@ int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
 	if (unlikely(err)) {
 		SSDFS_ERR("read request failed: "
 			  "err %d\n", err);
-		goto free_request;
 	}
 
 	ssdfs_segment_search_state_init(&seg_search,
@@ -877,12 +876,18 @@ int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
 
 	si = ssdfs_grab_segment(fsi, &seg_search);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
-		err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+		int err2 = (si == NULL ? -ENOMEM : PTR_ERR(si));
+
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",
 			  req->place.start.seg_id,
-			  err);
-		goto finish_wait;
+			  err2);
+		si = NULL;
+
+		if (!err)
+			err = err2;
+
+		goto free_request;
 	}
 
 	wait = &si->wait_queue[SSDFS_PEB_READ_THREAD];
@@ -897,7 +902,8 @@ int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
 			    atomic_read(&req->private.refs_count) == 0,
 			    SSDFS_DEFAULT_TIMEOUT);
 		if (res < 0) {
-			err = res;
+			if (!err)
+				err = res;
 			WARN_ON(1);
 		} else if (res > 1) {
 			/*
@@ -905,7 +911,8 @@ int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
 			 */
 		} else {
 			/* timeout is elapsed */
-			err = -ERANGE;
+			if (!err)
+				err = -ERANGE;
 			WARN_ON(1);
 		}
 	}
@@ -915,7 +922,6 @@ int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
 free_request:
 	ssdfs_request_free(req, si);
 
-finish_wait:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -940,10 +946,10 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_request *req = NULL;
-	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_segment_search_state seg_search;
 	loff_t data_bytes = 0;
-	int i;
+	int i, j;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1044,6 +1050,7 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 	if (!is_ssdfs_segment_ready_for_requests(si)) {
 		err = ssdfs_wait_segment_init_end(si);
 		if (unlikely(err)) {
+			ssdfs_segment_put_object(si);
 			SSDFS_ERR("segment initialization failed: "
 				  "seg %llu, ino %llu, err %d\n",
 				  si->seg_id, req->extent.ino, err);
@@ -1052,7 +1059,17 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 	}
 
 	err = ssdfs_segment_read_block_async(si, SSDFS_REQ_ASYNC_NO_FREE, req);
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		ssdfs_segment_put_object(si);
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to issue read request: "
+			  "ino %llu, logical_offset %llu, size %u, err %d\n",
+			  req->extent.ino, req->extent.logical_offset,
+			  req->extent.data_bytes, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto fail_issue_read_request;
+	} else if (unlikely(err)) {
+		ssdfs_segment_put_object(si);
 		SSDFS_ERR("read request failed: "
 			  "ino %llu, logical_offset %llu, size %u, err %d\n",
 			  req->extent.ino, req->extent.logical_offset,
@@ -1069,8 +1086,27 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 	return req;
 
 fail_issue_read_request:
+	for (i = 0; i < req->result.content.count; i++) {
+		struct ssdfs_content_block *block =
+					&req->result.content.blocks[i].new_state;
+
+		for (j = 0; j < folio_batch_count(&block->batch); j++) {
+			struct folio *folio = block->batch.folios[j];
+
+			if (!folio)
+				continue;
+
+			ssdfs_folio_unlock(folio);
+			ssdfs_folio_put(folio);
+		}
+
+		folio_batch_reinit(&block->batch);
+	}
+
+	req->result.content.count = 0;
+
 	ssdfs_put_request(req);
-	ssdfs_request_free(req, si);
+	ssdfs_request_free(req, NULL);
 
 	return ERR_PTR(err);
 }
@@ -1135,6 +1171,20 @@ int ssdfs_readahead_block(struct ssdfs_readahead_env *env)
 		if (err == -EAGAIN) {
 			err = 0;
 			SSDFS_DBG("logical extent processed partially\n");
+		} else if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("fork is absent: "
+				  "ino %llu, logical_offset %llu, "
+				  "data_bytes %u, cno %llu, "
+				  "parent_snapshot %llu, err %d\n",
+				  env->requested.ino,
+				  env->requested.logical_offset,
+				  env->requested.data_bytes,
+				  env->requested.cno,
+				  env->requested.parent_snapshot,
+				  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto fail_readahead_block;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare volume extent: "
 				  "ino %llu, logical_offset %llu, "
@@ -1196,9 +1246,14 @@ fail_readahead_block:
 	for (i = 0; i < folio_batch_count(&env->batch); i++) {
 		folio = env->batch.folios[i];
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		/*
+		 * ssdfs_issue_read_request() moves the folios it manages
+		 * to consume into the segment request and clears the slot
+		 * here. Such folios are released by the request's own
+		 * failure/completion path, so skip the emptied slots.
+		 */
+		if (!folio)
+			continue;
 
 		__ssdfs_memzero_folio(folio, 0, folio_size(folio),
 					folio_size(folio));
@@ -1206,6 +1261,8 @@ fail_readahead_block:
 		folio_clear_uptodate(folio);
 		ssdfs_folio_unlock(folio);
 		ssdfs_folio_put(folio);
+
+		env->batch.folios[i] = NULL;
 	}
 
 	return err;
@@ -1376,7 +1433,13 @@ void ssdfs_readahead(struct readahead_control *rac)
 
 try_readahead_block:
 		err = ssdfs_readahead_block(&env);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("hole has been found: "
+				  "index %u, err %d\n",
+				  env.count, err);
+			err = 0;
+			continue;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to process block: "
 				  "index %u, err %d\n",
 				  env.count, err);
@@ -2677,6 +2740,55 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
 	return err;
 }
 
+/*
+ * ssdfs_discard_dirty_folios_batch() - unlock and discard batch's folios
+ * @fsi: pointer on shared file system object
+ * @batch: dirty folios batch
+ *
+ * This method is used to recover from a failure to submit
+ * a write request for the whole @batch (e.g. async request
+ * submission failed after every folio in the batch has
+ * already been put under writeback and had its dirty bit
+ * cleared by ssdfs_issue_write_request()). Without this
+ * cleanup the folios would stay locked and marked under
+ * writeback forever because nothing else is going to unlock
+ * them or call folio_end_writeback() on their behalf, and
+ * any later attempt to write back or sync the same folios
+ * would hang forever waiting on the folio lock/writeback bit.
+ */
+static
+void ssdfs_discard_dirty_folios_batch(struct ssdfs_fs_info *fsi,
+				      struct ssdfs_dirty_folios_batch *batch)
+{
+	int i, j;
+
+	for (i = 0; i < batch->content.count; i++) {
+		struct ssdfs_content_block *blk_state =
+						&batch->content.blocks[i];
+		u32 batch_size = folio_batch_count(&blk_state->batch);
+
+		for (j = 0; j < batch_size; j++) {
+			struct folio *folio = blk_state->batch.folios[j];
+
+			if (!folio)
+				continue;
+
+			if (!folio_test_locked(folio)) {
+				SSDFS_WARN("folio %p, folio_test_locked %#x\n",
+					   folio, folio_test_locked(folio));
+				ssdfs_folio_lock(folio);
+			}
+
+			clear_folio_new(folio);
+			folio_mark_uptodate(folio);
+			folio_clear_dirty(folio);
+
+			ssdfs_folio_unlock(folio);
+			ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
+		}
+	}
+}
+
 static
 int ssdfs_issue_write_request(struct writeback_control *wbc,
 			      struct ssdfs_segment_request_pool *pool,
@@ -2877,6 +2989,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 			SSDFS_ERR("fail to write async: "
 				  "ino %llu, err %d\n",
 				  ino, err);
+			ssdfs_discard_dirty_folios_batch(fsi, batch);
 			goto finish_issue_write_request;
 		}
 	} else if (wbc->sync_mode == WB_SYNC_ALL) {

@@ -5251,9 +5251,14 @@ static int ssdfs_init_caches(void)
 	ssdfs_zero_name_info_cache_ptr();
 	ssdfs_zero_seg_object_info_cache_ptr();
 
-	ssdfs_inode_cachep = kmem_cache_create("ssdfs_inode_cache",
+	ssdfs_inode_cachep = kmem_cache_create_usercopy("ssdfs_inode_cache",
 					sizeof(struct ssdfs_inode_info), 0,
 					SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
+					offsetof(struct ssdfs_inode_info,
+						 raw_inode) +
+					offsetof(struct ssdfs_inode, internal),
+					sizeof_field(struct ssdfs_inode,
+						     internal),
 					ssdfs_init_inode_once);
 	if (!ssdfs_inode_cachep) {
 		SSDFS_ERR("unable to create inode cache\n");

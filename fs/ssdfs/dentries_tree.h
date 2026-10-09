@@ -144,6 +144,7 @@ int ssdfs_dentries_tree_find_leaf_node(struct ssdfs_dentries_btree_info *tree,
 int ssdfs_dentries_tree_extract_range(struct ssdfs_dentries_btree_info *tree,
 				      u16 start_index, u16 count,
 				      struct ssdfs_btree_search *search);
+int ssdfs_dentries_tree_migrate_inline2generic(struct ssdfs_inode_info *ii);
 
 void ssdfs_debug_dentries_btree_object(struct ssdfs_dentries_btree_info *tree);
 

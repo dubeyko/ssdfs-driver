@@ -93,7 +93,7 @@ struct ssdfs_snapshot_rule_details {
  * @buf_size: size of buffer in bytes
  */
 struct ssdfs_snapshot_info {
-	char name[SSDFS_MAX_NAME_LEN];
+	char name[SSDFS_MAX_NAME_LEN + 1];
 	u8 uuid[SSDFS_UUID_SIZE];
 
 	int mode;

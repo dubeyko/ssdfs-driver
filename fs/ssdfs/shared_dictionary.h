@@ -42,7 +42,7 @@ struct ssdfs_names_queue {
 struct ssdfs_name_descriptor {
 	u64 hash;
 	size_t len;
-	unsigned char str_buf[SSDFS_MAX_NAME_LEN];
+	unsigned char str_buf[SSDFS_MAX_NAME_LEN + 1];
 };
 
 /*

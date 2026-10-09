@@ -7888,7 +7888,7 @@ bool does_peb_require_move_data_out(struct ssdfs_peb_info *pebi,
 	u32 migrated_blks_per_page;
 	u32 predicted_blks_per_page;
 	u32 threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
-	u32 free_space_25_percentage;
+	u32 free_space_40_percentage;
 	bool need_move_out = false;
 	u32 i;
 	int err;
@@ -7988,16 +7988,22 @@ bool does_peb_require_move_data_out(struct ssdfs_peb_info *pebi,
 	else
 		free_data_blocks = fsi->pages_per_peb - start_block;
 
-	free_space_25_percentage = (fsi->pages_per_peb * 25) / 100;
+	free_space_40_percentage = (fsi->pages_per_peb * 40) / 100;
 
-	if (free_data_blocks > free_space_25_percentage) {
+	if (free_data_blocks > free_space_40_percentage) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("DON'T MOVE DATA OUT: "
-			  "peb %llu, free_data_blocks %u, "
-			  "free_space_25_percentage %u\n",
+			  "peb %llu, current_log.start_block %u, "
+			  "current_log.free_data_blocks %u, "
+			  "pages_per_peb %u, start_block %u, "
+			  "free_data_blocks %u, "
+			  "free_space_40_percentage %u\n",
 			  pebi->peb_id,
+			  pebi->current_log.start_block,
+			  pebi->current_log.free_data_blocks,
+			  fsi->pages_per_peb, start_block,
 			  free_data_blocks,
-			  free_space_25_percentage);
+			  free_space_40_percentage);
 #endif /* CONFIG_SSDFS_DEBUG */
 		need_move_out = false;
 		goto finish_make_decision;
@@ -9735,14 +9741,16 @@ int __ssdfs_prepare_move_flush_request(struct ssdfs_peb_info *pebi,
 			  src->place.start.seg_id,
 			  logical_blk, len);
 #endif /* CONFIG_SSDFS_DEBUG */
-	} else if (unlikely(err)) {
+	} else if (unlikely(res)) {
+		err = res;
 		SSDFS_ERR("fail to migrate extent: "
 			  "peb %llu, ino %llu, logical_offset %llu, "
-			  "extent (seg_id %llu, logical_blk %u, len %u)\n",
+			  "extent (seg_id %llu, logical_blk %u, len %u), "
+			  "err %d\n",
 			  pebi->peb_id,
 			  src->extent.ino, logical_offset,
 			  src->place.start.seg_id,
-			  logical_blk, len);
+			  logical_blk, len, err);
 		return err;
 	}
 

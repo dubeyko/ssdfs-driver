@@ -314,7 +314,7 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!rwsem_is_locked(&dir_ii->lock));
 
-	SSDFS_DBG("Created ino %llu with mode %o, nlink %d, nrpages %ld\n",
+	SSDFS_DBG("Create ino %llu with mode %o, nlink %d, nrpages %ld\n",
 		  inode->i_ino, inode->i_mode,
 		  inode->i_nlink, inode->i_mapping->nrpages);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -419,18 +419,14 @@ static int ssdfs_add_nondir(struct inode *dir, struct dentry *dentry,
 		  inode->i_nlink, inode->i_mapping->nrpages);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	down_write(&dir_ii->lock);
 	private_flags = atomic_read(&dir_ii->private_flags);
-
 	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
-	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
-		down_read(&dir_ii->lock);
+	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE)
 		err = ssdfs_add_link(dir, dentry, inode);
-		up_read(&dir_ii->lock);
-	} else {
-		down_write(&dir_ii->lock);
+	else
 		err = ssdfs_add_link(dir, dentry, inode);
-		up_write(&dir_ii->lock);
-	}
+	up_write(&dir_ii->lock);
 
 	if (err) {
 		inode_dec_link_count(inode);
@@ -701,18 +697,14 @@ static int ssdfs_link(struct dentry *old_dentry, struct inode *dir,
 	inode_inc_link_count(inode);
 	ihold(inode);
 
+	down_write(&dir_ii->lock);
 	private_flags = atomic_read(&dir_ii->private_flags);
-
 	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
-	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
-		down_read(&dir_ii->lock);
+	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE)
 		err = ssdfs_add_link(dir, dentry, inode);
-		up_read(&dir_ii->lock);
-	} else {
-		down_write(&dir_ii->lock);
+	else
 		err = ssdfs_add_link(dir, dentry, inode);
-		up_write(&dir_ii->lock);
-	}
+	up_write(&dir_ii->lock);
 
 	if (err) {
 		inode_dec_link_count(inode);
@@ -744,25 +736,22 @@ static int ssdfs_make_empty(struct inode *inode, struct inode *parent)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("Created ino %llu with mode %o, nlink %d, nrpages %ld\n",
+	SSDFS_DBG("Create ino %llu with mode %o, nlink %d, nrpages %ld\n",
 		  inode->i_ino, inode->i_mode,
 		  inode->i_nlink, inode->i_mapping->nrpages);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	private_flags = atomic_read(&ii->private_flags);
+	down_write(&ii->lock);
 
+	private_flags = atomic_read(&ii->private_flags);
 	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
 	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
-		down_read(&ii->lock);
-
 		if (!ii->dentries_tree) {
 			err = -ERANGE;
 			SSDFS_WARN("dentries tree absent!!!\n");
 			goto finish_make_empty_dir;
 		}
 	} else {
-		down_write(&ii->lock);
-
 		if (ii->dentries_tree) {
 			err = -ERANGE;
 			SSDFS_WARN("dentries tree exists unexpectedly!!!\n");
@@ -781,8 +770,6 @@ static int ssdfs_make_empty(struct inode *inode, struct inode *parent)
 		}
 
 finish_create_dentries_tree:
-		downgrade_write(&ii->lock);
-
 		if (unlikely(err))
 			goto finish_make_empty_dir;
 	}
@@ -819,7 +806,7 @@ free_search_object:
 	ssdfs_btree_search_free(search);
 
 finish_make_empty_dir:
-	up_read(&ii->lock);
+	up_write(&ii->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
@@ -866,18 +853,14 @@ static int __ssdfs_mkdir(struct mnt_idmap *idmap,
 	if (err)
 		goto out_fail;
 
+	down_write(&dir_ii->lock);
 	private_flags = atomic_read(&dir_ii->private_flags);
-
 	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
-	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
-		down_read(&dir_ii->lock);
+	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE)
 		err = ssdfs_add_link(dir, dentry, inode);
-		up_read(&dir_ii->lock);
-	} else {
-		down_write(&dir_ii->lock);
+	else
 		err = ssdfs_add_link(dir, dentry, inode);
-		up_write(&dir_ii->lock);
-	}
+	up_write(&dir_ii->lock);
 
 	if (err)
 		goto out_fail;
@@ -950,12 +933,11 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	trace_ssdfs_unlink_enter(dir, dentry);
 
-	private_flags = atomic_read(&ii->private_flags);
+	down_write(&ii->lock);
 
+	private_flags = atomic_read(&ii->private_flags);
 	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
 	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
-		down_read(&ii->lock);
-
 		if (!ii->dentries_tree) {
 			err = -ERANGE;
 			SSDFS_WARN("dentries tree absent!!!\n");
@@ -991,17 +973,16 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 
 dentry_is_not_available:
 		ssdfs_btree_search_free(search);
-
-finish_delete_dentry:
-		up_read(&ii->lock);
-
-		if (unlikely(err))
-			goto finish_unlink;
 	} else {
 		err = -ENOENT;
 		SSDFS_ERR("dentries tree is absent\n");
-		goto finish_unlink;
 	}
+
+finish_delete_dentry:
+	up_write(&ii->lock);
+
+	if (unlikely(err))
+		goto finish_unlink;
 
 	mark_inode_dirty(dir);
 	mark_inode_dirty(inode);
@@ -1149,7 +1130,8 @@ static void unlock_4_inodes(struct inode *inode1, struct inode *inode2,
 /*
  * Regular rename.
  */
-static int ssdfs_rename_target(struct inode *old_dir,
+static int ssdfs_rename_target(struct mnt_idmap *idmap,
+				struct inode *old_dir,
 				struct dentry *old_dentry,
 				struct inode *new_dir,
 				struct dentry *new_dentry,
@@ -1157,9 +1139,13 @@ static int ssdfs_rename_target(struct inode *old_dir,
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(old_dir->i_sb);
 	struct ssdfs_inode_info *old_dir_ii = SSDFS_I(old_dir);
+	struct ssdfs_inode_info *new_dir_ii = SSDFS_I(new_dir);
 	struct inode *old_inode = d_inode(old_dentry);
 	struct ssdfs_inode_info *old_ii = SSDFS_I(old_inode);
 	struct inode *new_inode = d_inode(new_dentry);
+	struct ssdfs_dentries_btree_info *target_tree;
+	struct inode *whiteout = NULL;
+	bool whiteout_added = false;
 	struct ssdfs_btree_search *search;
 	struct qstr dotdot = QSTR_INIT("..", 2);
 	u64 old_ino, old_parent_ino;
@@ -1223,6 +1209,22 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	}
 #endif /* CONFIG_SSDFS_QUOTA */
 
+	if (flags & RENAME_WHITEOUT) {
+		whiteout = ssdfs_new_inode(idmap, old_dir,
+					   S_IFCHR | WHITEOUT_MODE,
+					   old_name);
+		if (IS_ERR(whiteout)) {
+			err = PTR_ERR(whiteout);
+			whiteout = NULL;
+			SSDFS_ERR("fail to create whiteout inode: err %d\n",
+				  err);
+			goto out_free;
+		}
+
+		init_special_inode(whiteout, whiteout->i_mode, WHITEOUT_DEV);
+		mark_inode_dirty(whiteout);
+	}
+
 	lock_4_inodes(old_dir, new_dir, old_inode, new_inode);
 
 	err = ssdfs_inode_by_name(old_dir, old_name, &old_ino);
@@ -1263,12 +1265,10 @@ static int ssdfs_rename_target(struct inode *old_dir,
 		goto finish_target_rename;
 	}
 
-	if (flags & RENAME_WHITEOUT) {
-		/* TODO: implement support */
-		SSDFS_WARN("TODO: implement support of RENAME_WHITEOUT\n");
-	}
-
 	time = current_time(old_dir);
+
+	target_tree = old_dir == new_dir ?
+			old_dir_ii->dentries_tree : new_dir_ii->dentries_tree;
 
 	/* Unlink destination if it already exists */
 	if (d_really_is_positive(new_dentry)) {
@@ -1277,9 +1277,15 @@ static int ssdfs_rename_target(struct inode *old_dir,
 			goto finish_target_rename;
 		}
 
+		if (!target_tree) {
+			err = -ERANGE;
+			SSDFS_ERR("new dir hasn't dentries tree\n");
+			goto finish_target_rename;
+		}
+
 		name_hash = ssdfs_generate_name_hash(&new_dentry->d_name);
 
-		err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
+		err = ssdfs_dentries_tree_delete(target_tree,
 						 name_hash,
 						 new_inode->i_ino,
 						 search);
@@ -1295,19 +1301,110 @@ static int ssdfs_rename_target(struct inode *old_dir,
 		mark_inode_dirty(new_inode);
 	}
 
-	name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
+	if (old_dir == new_dir) {
+		name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
 
-	err = ssdfs_dentries_tree_change(old_dir_ii->dentries_tree,
-					 name_hash,
-					 old_inode->i_ino,
-					 &new_dentry->d_name,
-					 old_ii,
-					 search);
-	if (unlikely(err)) {
-		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-				"fail to update dentry: err %d\n",
-				err);
-		goto finish_target_rename;
+		err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
+						 name_hash,
+						 old_inode->i_ino,
+						 search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to delete the dentry: "
+					"name_hash %llx, ino %llu, err %d\n",
+					name_hash, old_inode->i_ino, err);
+			goto finish_target_rename;
+		}
+
+		err = ssdfs_add_link(new_dir, new_dentry, old_inode);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to add the dentry: "
+					"ino %llu, err %d\n",
+					old_inode->i_ino, err);
+			goto finish_target_rename;
+		}
+	} else {
+		/*
+		 * Moving the entry across directories: the two directories
+		 * own separate dentries trees, so the entry has to be
+		 * removed from old_dir's tree and added into new_dir's tree
+		 * (possibly creating it), instead of being renamed in place.
+		 */
+		name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
+
+		err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
+						 name_hash,
+						 old_inode->i_ino,
+						 search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to delete the dentry: "
+					"name_hash %llx, ino %llu, err %d\n",
+					name_hash, old_inode->i_ino, err);
+			goto finish_target_rename;
+		}
+
+		err = ssdfs_add_link(new_dir, new_dentry, old_inode);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to add the dentry: "
+					"ino %llu, err %d\n",
+					old_inode->i_ino, err);
+			goto finish_target_rename;
+		}
+
+		old_ii->parent_ino = new_dir->i_ino;
+
+		if (S_ISDIR(old_inode->i_mode)) {
+			/* re-target the moved directory's ".." entry */
+			name_hash = ssdfs_generate_name_hash(&dotdot);
+
+			err = ssdfs_dentries_tree_delete(old_ii->dentries_tree,
+							 name_hash,
+							 old_dir->i_ino,
+							 search);
+			if (unlikely(err)) {
+				ssdfs_fs_error(fsi->sb, __FILE__, __func__,
+						__LINE__,
+						"fail to delete the dentry: "
+						"name_hash %llx, ino %llu, "
+						"err %d\n",
+						name_hash, old_dir->i_ino, err);
+				goto finish_target_rename;
+			}
+
+			err = ssdfs_dentries_tree_add(old_ii->dentries_tree,
+						      &dotdot,
+						      new_dir_ii,
+						      search);
+			if (unlikely(err)) {
+				ssdfs_fs_error(fsi->sb, __FILE__, __func__,
+						__LINE__,
+						"fail to add the dentry: "
+						"err %d\n", err);
+				goto finish_target_rename;
+			}
+
+			inode_inc_link_count(new_dir);
+			inode_dec_link_count(old_dir);
+		}
+	}
+
+	if (flags & RENAME_WHITEOUT) {
+		err = ssdfs_dentries_tree_add(old_dir_ii->dentries_tree,
+					      old_name,
+					      SSDFS_I(whiteout),
+					      search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to add whiteout dentry: "
+					"err %d\n", err);
+			goto finish_target_rename;
+		}
+
+		whiteout_added = true;
+		inode_set_ctime_to_ts(whiteout, time);
 	}
 
 	inode_set_ctime_to_ts(old_inode, time);
@@ -1315,13 +1412,22 @@ static int ssdfs_rename_target(struct inode *old_dir,
 
 	inode_set_mtime_to_ts(old_dir, time);
 	inode_set_ctime_to_ts(old_dir, time);
+	mark_inode_dirty(old_dir);
 
 finish_target_rename:
 	unlock_4_inodes(old_dir, new_dir, old_inode, new_inode);
 
-#ifdef CONFIG_SSDFS_QUOTA
+	if (whiteout) {
+		if (whiteout_added)
+			mark_inode_dirty(whiteout);
+		else
+			clear_nlink(whiteout);
+
+		unlock_new_inode(whiteout);
+		iput(whiteout);
+	}
+
 out_free:
-#endif /* CONFIG_SSDFS_QUOTA */
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
 	fscrypt_free_filename(&old_fname);
 
@@ -1474,58 +1580,90 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 
 	name_hash = ssdfs_generate_name_hash(&dotdot);
 
-	/* update ".." directory entry info of old dentry */
+	/* re-target ".." directory entry info of old dentry */
 	if (S_ISDIR(old_inode->i_mode)) {
-		err = ssdfs_dentries_tree_change(old_ii->dentries_tree,
+		err = ssdfs_dentries_tree_delete(old_ii->dentries_tree,
 						 name_hash, old_dir->i_ino,
-						 &dotdot, new_dir_ii,
 						 search);
 		if (unlikely(err)) {
 			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-					"fail to update dentry: err %d\n",
+					"fail to delete dentry: err %d\n",
+					err);
+			goto finish_cross_rename;
+		}
+
+		err = ssdfs_dentries_tree_add(old_ii->dentries_tree,
+					      &dotdot, new_dir_ii,
+					      search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to add dentry: err %d\n",
 					err);
 			goto finish_cross_rename;
 		}
 	}
 
-	/* update ".." directory entry info of new dentry */
+	/* re-target ".." directory entry info of new dentry */
 	if (S_ISDIR(new_inode->i_mode)) {
-		err = ssdfs_dentries_tree_change(new_ii->dentries_tree,
+		err = ssdfs_dentries_tree_delete(new_ii->dentries_tree,
 						 name_hash, new_dir->i_ino,
-						 &dotdot, old_dir_ii,
 						 search);
 		if (unlikely(err)) {
 			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-					"fail to update dentry: err %d\n",
+					"fail to delete dentry: err %d\n",
+					err);
+			goto finish_cross_rename;
+		}
+
+		err = ssdfs_dentries_tree_add(new_ii->dentries_tree,
+					      &dotdot, old_dir_ii,
+					      search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to add dentry: err %d\n",
 					err);
 			goto finish_cross_rename;
 		}
 	}
 
-	/* update directory entry info of old dir inode */
+	/* detach old dir inode's entry and new dir inode's entry */
 	name_hash = ssdfs_generate_name_hash(old_name);
 
-	err = ssdfs_dentries_tree_change(old_dir_ii->dentries_tree,
+	err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
 					 name_hash, old_inode->i_ino,
-					 new_name, new_ii,
 					 search);
 	if (unlikely(err)) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-				"fail to update dentry: err %d\n",
+				"fail to delete dentry: err %d\n",
 				err);
 		goto finish_cross_rename;
 	}
 
-	/* update directory entry info of new dir inode */
 	name_hash = ssdfs_generate_name_hash(new_name);
 
-	err = ssdfs_dentries_tree_change(new_dir_ii->dentries_tree,
+	err = ssdfs_dentries_tree_delete(new_dir_ii->dentries_tree,
 					 name_hash, new_inode->i_ino,
-					 old_name, old_ii,
 					 search);
 	if (unlikely(err)) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-				"fail to update dentry: err %d\n",
+				"fail to delete dentry: err %d\n",
+				err);
+		goto finish_cross_rename;
+	}
+
+	/* re-attach the entries with the inodes swapped */
+	err = ssdfs_add_link(old_dir, old_dentry, new_inode);
+	if (unlikely(err)) {
+		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+				"fail to add dentry: err %d\n",
+				err);
+		goto finish_cross_rename;
+	}
+
+	err = ssdfs_add_link(new_dir, new_dentry, old_inode);
+	if (unlikely(err)) {
+		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+				"fail to add dentry: err %d\n",
 				err);
 		goto finish_cross_rename;
 	}
@@ -1619,8 +1757,8 @@ static int ssdfs_rename(struct mnt_idmap *idmap,
 					  new_dir, new_dentry);
 	}
 
-	return ssdfs_rename_target(old_dir, old_dentry, new_dir, new_dentry,
-				   flags);
+	return ssdfs_rename_target(idmap, old_dir, old_dentry, new_dir,
+				   new_dentry, flags);
 }
 
 static

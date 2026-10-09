@@ -3502,8 +3502,7 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 		return -EEXIST;
 	}
 
-	if (search->request.start.hash == U64_MAX ||
-	    search->request.end.hash == U64_MAX) {
+	if (search->request.start.hash == U64_MAX) {
 		SSDFS_ERR("invalid hash range in the request: "
 			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
@@ -5055,6 +5054,7 @@ int __ssdfs_btree_find_range(struct ssdfs_btree *tree,
 	case SSDFS_BTREE_SEARCH_FIND_RANGE:
 	case SSDFS_BTREE_SEARCH_ADD_RANGE:
 	case SSDFS_BTREE_SEARCH_DELETE_RANGE:
+	case SSDFS_BTREE_SEARCH_DELETE_ALL:
 	case SSDFS_BTREE_SEARCH_INVALIDATE_TAIL:
 		/* expected state */
 		break;
@@ -6674,7 +6674,30 @@ int ssdfs_btree_delete_item(struct ssdfs_btree *tree,
 	down_read(&tree->lock);
 
 	err = __ssdfs_btree_find_item(tree, search);
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		switch (tree->type) {
+		case SSDFS_EXTENTS_BTREE:
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("hole case: "
+				  "request (start_hash %llx, end_hash %llx),"
+				  "err %d\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+
+		default:
+			SSDFS_ERR("fail to find item: "
+				  "start_hash %llx, end_hash %llx, err %d\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+			break;
+		}
+
+		goto finish_delete_item;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find item: "
 			  "start_hash %llx, end_hash %llx, err %d\n",
 			  search->request.start.hash,
@@ -6699,6 +6722,29 @@ try_delete_item:
 			goto finish_delete_item;
 		} else
 			goto try_delete_item;
+	} else if (err == -ENODATA) {
+		switch (tree->type) {
+		case SSDFS_EXTENTS_BTREE:
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("hole case: "
+				  "request (start_hash %llx, end_hash %llx),"
+				  "err %d\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+
+		default:
+			SSDFS_ERR("fail to delete item: "
+				  "start_hash %llx, end_hash %llx, err %d\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+			break;
+		}
+
+		goto finish_delete_item;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to delete item: "
 			  "start_hash %llx, end_hash %llx, err %d\n",
@@ -6975,6 +7021,30 @@ finish_delete_range:
 		/* the range have to be deleted in the next node */
 		err = 0;
 		need_continue_deletion = true;
+	} else if (err == -ENODATA) {
+		switch (tree->type) {
+		case SSDFS_EXTENTS_BTREE:
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("hole case: "
+				  "request (start_hash %llx, end_hash %llx),"
+				  "err %d\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+
+		default:
+			SSDFS_ERR("fail to delete range: "
+				  "start_hash %llx, end_hash %llx, err %d\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+			break;
+		}
+
+		up_read(&tree->lock);
+		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to delete range: "
 			  "start_hash %llx, end_hash %llx, err %d\n",

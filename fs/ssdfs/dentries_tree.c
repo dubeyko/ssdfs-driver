@@ -652,7 +652,8 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 	private_flags = atomic_read(&tree->owner->private_flags);
 
 	dentries_capacity = SSDFS_INLINE_DENTRIES_COUNT;
-	if (private_flags & SSDFS_INODE_HAS_XATTR_BTREE)
+	if (private_flags & (SSDFS_INODE_HAS_XATTR_BTREE |
+			     SSDFS_INODE_HAS_INLINE_XATTR))
 		dentries_capacity -= SSDFS_INLINE_DENTRIES_PER_AREA;
 	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
 		SSDFS_ERR("the dentries tree is generic\n");
@@ -668,9 +669,6 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 	} else if (dentries_count == 0) {
 		SSDFS_DBG("empty tree\n");
 		return -EFAULT;
-	} else if (dentries_count < dentries_capacity) {
-		SSDFS_WARN("dentries_count %lld, dentries_capacity %lld\n",
-			   dentries_count, dentries_capacity);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -851,6 +849,68 @@ recover_inline_tree:
 	tree->generic_tree = NULL;
 
 	atomic64_set(&tree->dentries_count, dentries_count);
+
+	return err;
+}
+
+/*
+ * ssdfs_dentries_tree_migrate_inline2generic() - migrate inline to generic tree
+ * @ii: pointer on in-core SSDFS inode
+ *
+ * This method tries to convert the inline tree into generic one.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_dentries_tree_migrate_inline2generic(struct ssdfs_inode_info *ii)
+{
+	struct ssdfs_dentries_btree_info *tree;
+	s64 dentries_count;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ii);
+	BUG_ON(!rwsem_is_locked(&ii->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tree = SSDFS_DTREE(ii);
+	if (!tree) {
+		/* no dentries tree: nothing to do */
+		return 0;
+	}
+
+	if (atomic_read(&tree->type) != SSDFS_INLINE_DENTRIES_ARRAY) {
+		/* already a generic tree: nothing to do */
+		return 0;
+	}
+
+	down_write(&tree->lock);
+
+	dentries_count = atomic64_read(&tree->dentries_count);
+
+	if (dentries_count <= SSDFS_INLINE_DENTRIES_PER_AREA) {
+		/*
+		 * The inline dentries fit into the first private area,
+		 * so the second private area is still free for an xattr.
+		 */
+		goto finish_move_dentries;
+	}
+
+	err = ssdfs_migrate_inline2generic_tree(tree);
+	if (err == -EFAULT) {
+		/* empty tree: nothing to move */
+		err = 0;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to convert inline dentries tree into generic: "
+			  "ino %llu, err %d\n",
+			  ii->vfs_inode.i_ino, err);
+	}
+
+finish_move_dentries:
+	up_write(&tree->lock);
 
 	return err;
 }
@@ -1936,7 +1996,8 @@ ssdfs_dentries_tree_add_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 	private_flags = atomic_read(&tree->owner->private_flags);
 
 	dentries_capacity = SSDFS_INLINE_DENTRIES_COUNT;
-	if (private_flags & SSDFS_INODE_HAS_XATTR_BTREE)
+	if (private_flags & (SSDFS_INODE_HAS_XATTR_BTREE |
+			     SSDFS_INODE_HAS_INLINE_XATTR))
 		dentries_capacity -= SSDFS_INLINE_DENTRIES_PER_AREA;
 	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
 		SSDFS_ERR("the dentries tree is generic\n");
@@ -2648,6 +2709,8 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3185,7 +3248,8 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_dentries_btree_info *tree)
 	private_flags = atomic_read(&tree->owner->private_flags);
 
 	dentries_capacity = SSDFS_INLINE_DENTRIES_COUNT;
-	if (private_flags & SSDFS_INODE_HAS_XATTR_BTREE)
+	if (private_flags & (SSDFS_INODE_HAS_XATTR_BTREE |
+			     SSDFS_INODE_HAS_INLINE_XATTR))
 		dentries_capacity -= SSDFS_INLINE_DENTRIES_PER_AREA;
 
 	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES) {
@@ -3667,6 +3731,8 @@ int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3973,7 +4039,8 @@ int __ssdfs_inline_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 		private_flags = atomic_read(&tree->owner->private_flags);
 
 		dentries_capacity = SSDFS_INLINE_DENTRIES_COUNT;
-		if (private_flags & SSDFS_INODE_HAS_XATTR_BTREE)
+		if (private_flags & (SSDFS_INODE_HAS_XATTR_BTREE |
+				     SSDFS_INODE_HAS_INLINE_XATTR))
 			dentries_capacity -= SSDFS_INLINE_DENTRIES_PER_AREA;
 		if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
 			err = -ERANGE;
@@ -7806,6 +7873,29 @@ void ssdfs_initialize_lookup_table(struct ssdfs_btree_node *node)
 }
 
 /*
+ * is_position_valid_for_hash_collision() - is position valid for collision?
+ */
+static inline
+bool is_position_valid_for_hash_collision(struct ssdfs_btree_search *search,
+					  struct ssdfs_dir_entry *dentry,
+					  u64 hash1, u64 hash2, u64 ino)
+{
+	bool is_hash_collision = false;
+	bool has_request_valid_ino = false;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search || !dentry);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	is_hash_collision = hash1 == hash2;
+	has_request_valid_ino =
+		search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO;
+
+	return is_hash_collision && has_request_valid_ino &&
+		le64_to_cpu(dentry->ino) < ino;
+}
+
+/*
  * __ssdfs_dentries_btree_node_insert_range() - insert range into node
  * @node: pointer on node object
  * @search: search object
@@ -7840,6 +7930,7 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 	u64 cur_hash;
 	u64 old_hash;
 	u16 inline_names = 0;
+	u64 ino;
 	int i;
 	int err = 0;
 
@@ -8034,10 +8125,19 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 		}
 
 		cur_hash = le64_to_cpu(dentry.hash_code);
+		ino = search->request.start.ino;
 
 		if (cur_hash < start_hash) {
 			/*
 			 * expected state
+			 */
+		} else if (is_position_valid_for_hash_collision(search,
+								&dentry,
+								cur_hash,
+								start_hash,
+								ino)) {
+			/*
+			 * hash collision case
 			 */
 		} else {
 			SSDFS_ERR("invalid range: item_index %u, "
@@ -8078,10 +8178,19 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 		}
 
 		cur_hash = le64_to_cpu(dentry.hash_code);
+		ino = search->request.end.ino;
 
 		if (end_hash < cur_hash) {
 			/*
 			 * expected state
+			 */
+		} else if (is_position_valid_for_hash_collision(search,
+								&dentry,
+								cur_hash,
+								end_hash,
+								ino)) {
+			/*
+			 * hash collision case
 			 */
 		} else {
 			SSDFS_ERR("invalid range: item_index %u, "

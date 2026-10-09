@@ -276,7 +276,20 @@ void ssdfs_btree_nodes_list_delete(struct ssdfs_btree_nodes_list *bnl,
 		  node->node_id, atomic_read(&node->height),
 		  atomic_read(&node->type));
 
+	/*
+	 * GC thread frees the node's content with released list's lock
+	 * and continues the list iteration from this node. The node
+	 * cannot be excluded from the list until GC thread finishes.
+	 */
 	spin_lock(&bnl->lock);
+	while (atomic_read(&node->state) ==
+				SSDFS_BTREE_NODE_CONTENT_UNDER_FREE) {
+		spin_unlock(&bnl->lock);
+		wait_event(node->wait_queue,
+			   atomic_read(&node->state) !=
+				SSDFS_BTREE_NODE_CONTENT_UNDER_FREE);
+		spin_lock(&bnl->lock);
+	}
 	list_del(&node->list);
 	spin_unlock(&bnl->lock);
 }
@@ -11398,7 +11411,9 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 
 		default:
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(search->result.raw_buf.place.ptr);
+			if (search->result.raw_buf.state ==
+					SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER)
+				BUG_ON(search->result.raw_buf.place.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_btree_search_free_result_buf(search);
@@ -11471,7 +11486,9 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 
 		default:
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(search->result.raw_buf.place.ptr);
+			if (search->result.raw_buf.state ==
+					SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER)
+				BUG_ON(search->result.raw_buf.place.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_btree_search_free_result_buf(search);
@@ -11530,7 +11547,9 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 
 		default:
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(search->result.raw_buf.place.ptr);
+			if (search->result.raw_buf.state ==
+					SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER)
+				BUG_ON(search->result.raw_buf.place.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_btree_search_free_result_buf(search);
@@ -12849,18 +12868,49 @@ int ssdfs_btree_node_change_item(struct ssdfs_btree_search *search)
 static inline
 int ssdfs_btree_node_check_result_for_delete(struct ssdfs_btree_search *search)
 {
+	struct ssdfs_btree_node *node;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	switch (search->result.state) {
-	case SSDFS_BTREE_SEARCH_VALID_ITEM:
-		/* expected state */
+	node = search->node.child;
+	if (!node) {
+		SSDFS_WARN("child node is NULL\n");
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node->tree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (node->tree->type) {
+	case SSDFS_EXTENTS_BTREE:
+		switch (search->result.state) {
+		case SSDFS_BTREE_SEARCH_VALID_ITEM:
+			/* expected state */
+		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+		case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+			/* hole case */
+			break;
+
+		default:
+			SSDFS_WARN("invalid search result state\n");
+			return -ERANGE;
+		}
 		break;
 
 	default:
-		SSDFS_WARN("invalid search result state\n");
-		return -ERANGE;
+		switch (search->result.state) {
+		case SSDFS_BTREE_SEARCH_VALID_ITEM:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("invalid search result state\n");
+			return -ERANGE;
+		}
+		break;
 	}
 
 	return 0;
@@ -12987,17 +13037,34 @@ int ssdfs_btree_node_delete_item(struct ssdfs_btree_search *search)
 	ssdfs_btree_node_finish_request_cno(node);
 
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to delete item: "
-			  "node %u, "
-			  "request (start_hash %llx, end_hash %llx), "
-			  "err %d\n",
-			  node->node_id,
-			  search->request.start.hash,
-			  search->request.end.hash,
-			  err);
+		switch (node->tree->type) {
+		case SSDFS_EXTENTS_BTREE:
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("hole case: node %u, "
+				  "request (start_hash %llx, end_hash %llx),"
+				  "err %d\n",
+				  node->node_id,
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
 
-		search->result.state = SSDFS_BTREE_SEARCH_FAILURE;
-		search->result.err = err;
+		default:
+			SSDFS_ERR("fail to delete item: "
+				  "node %u, "
+				  "request (start_hash %llx, end_hash %llx), "
+				  "err %d\n",
+				  node->node_id,
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+
+			search->result.state = SSDFS_BTREE_SEARCH_FAILURE;
+			search->result.err = err;
+			break;
+		}
+
 		return err;
 	}
 
@@ -13186,17 +13253,34 @@ int ssdfs_btree_node_delete_range(struct ssdfs_btree_search *search)
 	ssdfs_btree_node_finish_request_cno(node);
 
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to delete range: "
-			  "node %u, "
-			  "request (start_hash %llx, end_hash %llx), "
-			  "err %d\n",
-			  node->node_id,
-			  search->request.start.hash,
-			  search->request.end.hash,
-			  err);
+		switch (node->tree->type) {
+		case SSDFS_EXTENTS_BTREE:
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("hole case: node %u, "
+				  "request (start_hash %llx, end_hash %llx),"
+				  "err %d\n",
+				  node->node_id,
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
 
-		search->result.state = SSDFS_BTREE_SEARCH_FAILURE;
-		search->result.err = err;
+		default:
+			SSDFS_ERR("fail to delete range: "
+				  "node %u, "
+				  "request (start_hash %llx, end_hash %llx), "
+				  "err %d\n",
+				  node->node_id,
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  err);
+
+			search->result.state = SSDFS_BTREE_SEARCH_FAILURE;
+			search->result.err = err;
+			break;
+		}
+
 		return err;
 	}
 

@@ -443,8 +443,26 @@ static int ssdfs_read_inode(struct inode *inode)
 				goto unlock_mutable_fields;
 			}
 		}
-	} else if (S_ISLNK(inode->i_mode) ||
-		   S_ISCHR(inode->i_mode) ||
+	} else if (S_ISLNK(inode->i_mode)) {
+		if (private_flags & SSDFS_INODE_HAS_INLINE_EXTENTS ||
+		    private_flags & SSDFS_INODE_HAS_EXTENTS_BTREE) {
+			err = ssdfs_extents_tree_create(fsi, ii);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to create the extents tree: "
+					  "ino %llu, err %d\n",
+					  inode->i_ino, err);
+				goto unlock_mutable_fields;
+			}
+
+			err = ssdfs_extents_tree_init(fsi, ii);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to init the extents tree: "
+					  "ino %llu, err %d\n",
+					  inode->i_ino, err);
+				goto unlock_mutable_fields;
+			}
+		}
+	} else if (S_ISCHR(inode->i_mode) ||
 		   S_ISBLK(inode->i_mode) ||
 		   S_ISFIFO(inode->i_mode) ||
 		   S_ISSOCK(inode->i_mode)) {
@@ -1114,7 +1132,8 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 	ssdfs_init_raw_inode(ii);
 
-	if (S_ISREG(inode->i_mode) && ii->extents_tree) {
+	if ((S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) &&
+							ii->extents_tree) {
 		err = ssdfs_extents_tree_flush(fsi, ii);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to flush extents tree: "

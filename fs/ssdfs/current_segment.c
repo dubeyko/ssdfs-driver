@@ -644,6 +644,7 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 
 	cur_seg->real_seg = si;
 	cur_seg->seg_id = si->seg_id;
+	fsi->cur_segs->seg_ids[cur_seg->type] = cpu_to_le64(si->seg_id);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segment %llu added as current segment: seg_type %#x\n",
@@ -659,6 +660,7 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
  */
 void ssdfs_current_segment_remove(struct ssdfs_current_segment *cur_seg)
 {
+	struct ssdfs_fs_info *fsi;
 	int state;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -672,6 +674,8 @@ void ssdfs_current_segment_remove(struct ssdfs_current_segment *cur_seg)
 		SSDFS_WARN("current segment container is empty\n");
 		return;
 	}
+
+	fsi = cur_seg->fsi;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg %llu, log_pages %u, create_threads %u, seg_type %#x\n",
@@ -692,6 +696,8 @@ void ssdfs_current_segment_remove(struct ssdfs_current_segment *cur_seg)
 
 	ssdfs_segment_put_object(cur_seg->real_seg);
 	cur_seg->real_seg = NULL;
+	cur_seg->seg_id = U64_MAX;
+	fsi->cur_segs->seg_ids[cur_seg->type] = cpu_to_le64(U64_MAX);
 }
 
 /******************************************************************************
@@ -726,8 +732,10 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 
 	init_rwsem(&fsi->cur_segs->lock);
 
-	for (i = 0; i < SSDFS_CUR_SEG_LOCK_COUNT; i++)
+	for (i = 0; i < SSDFS_CUR_SEG_LOCK_COUNT; i++) {
 		mutex_init(&fsi->cur_segs->lock_buffer[i]);
+		fsi->cur_segs->seg_ids[i] = cpu_to_le64(U64_MAX);
+	}
 
 	for (i = 0; i < SSDFS_CUR_SEGS_COUNT; i++) {
 		struct ssdfs_segment_search_state search_state;
@@ -747,6 +755,7 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 		ssdfs_current_segment_init(fsi, i, seg,
 					   CUR_SEG2LOCK(fsi, i),
 					   object);
+		fsi->cur_segs->seg_ids[i] = cpu_to_le64(seg);
 
 		if (seg == U64_MAX)
 			continue;

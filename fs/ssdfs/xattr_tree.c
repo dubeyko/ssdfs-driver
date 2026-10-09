@@ -1182,9 +1182,11 @@ int __ssdfs_xattrs_tree_find(struct ssdfs_xattrs_btree_info *tree,
 		up_read(&tree->lock);
 
 		if (err == -ENODATA) {
-			SSDFS_ERR("unable to find the inline xattr: "
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find the xattr: "
 				  "err %d\n",
 				  err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the inline xattr: "
 				  "err %d\n",
@@ -1743,11 +1745,44 @@ finish_copy:
 		}
 	}
 
-	err = ssdfs_segment_add_xattr_blob_async(fsi, req, &seg_id, &extent);
+	err = ssdfs_segment_add_xattr_blob_sync(fsi, req, &seg_id, &extent);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add external blob: "
 			  "size %zu, err %d\n",
 			  size, err);
+		goto finish_save_external_blob;
+	}
+
+	err = SSDFS_WAIT_COMPLETION(&req->result.wait);
+	if (unlikely(err)) {
+		SSDFS_ERR("xattr blob write request failed: "
+			  "size %zu, err %d\n",
+			  size, err);
+		goto finish_save_external_blob;
+	}
+
+	switch (atomic_read(&req->result.state)) {
+	case SSDFS_REQ_FINISHED:
+		/* do nothing */
+		break;
+
+	case SSDFS_REQ_FAILED:
+		err = req->result.err;
+
+		if (!err) {
+			SSDFS_ERR("error code is absent: req %p\n", req);
+			err = -ERANGE;
+		}
+
+		SSDFS_ERR("xattr blob write request failed: "
+			  "size %zu, err %d\n",
+			  size, err);
+		goto finish_save_external_blob;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid result's state %#x\n",
+			  atomic_read(&req->result.state));
 		goto finish_save_external_blob;
 	}
 
@@ -1759,6 +1794,9 @@ finish_copy:
 	desc->extent.seg_id = cpu_to_le64(seg_id);
 	desc->extent.logical_blk = cpu_to_le32(extent.start_lblk);
 	desc->extent.len = cpu_to_le32(extent.len);
+
+	ssdfs_put_request(req);
+	ssdfs_request_free(req, NULL);
 
 	return 0;
 
@@ -2477,10 +2515,6 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_xattrs_btree_info *tree)
 	} else if (tree->inline_count == 0) {
 		SSDFS_DBG("empty tree\n");
 		return -EFAULT;
-	} else if (tree->inline_count < tree->inline_capacity) {
-		SSDFS_WARN("inline_count %u, inline_capacity %u\n",
-			   tree->inline_count,
-			   tree->inline_capacity);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3339,7 +3373,19 @@ int ssdfs_xattrs_tree_change(struct ssdfs_xattrs_btree_info *tree,
 		down_write(&tree->lock);
 
 		err = ssdfs_xattrs_tree_find_inline_xattr(tree, search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			/*
+			 * Xattr is absent. It is the normal state
+			 * of the request for the case of replacing
+			 * a not existing xattr.
+			 */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find the inline xattr: "
+				  "name_hash %llx, err %d\n",
+				  name_hash, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_change_inline_xattr;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the inline xattr: "
 				  "name_hash %llx, err %d\n",
 				  name_hash, err);
@@ -3375,7 +3421,19 @@ finish_change_inline_xattr:
 		down_read(&tree->lock);
 
 		err = ssdfs_btree_find_item(tree->generic_tree, search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			/*
+			 * Xattr is absent. It is the normal state
+			 * of the request for the case of replacing
+			 * a not existing xattr.
+			 */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find the xattr: "
+				  "name_hash %llx, err %d\n",
+				  name_hash, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_change_generic_xattr;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the xattr: "
 				  "name_hash %llx, err %d\n",
 				  name_hash, err);
@@ -4341,9 +4399,16 @@ int ssdfs_xattrs_tree_delete_all(struct ssdfs_xattrs_btree_info *tree)
 	case SSDFS_INLINE_XATTR_ARRAY:
 		down_write(&tree->lock);
 		err = ssdfs_delete_all_inline_xattrs(tree);
+		if (!err || err == -ENOENT)
+			atomic_set(&tree->state, SSDFS_XATTR_BTREE_INITIALIZED);
 		up_write(&tree->lock);
 
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("xattrs tree is already empty\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to delete all inline xattrs: "
 				  "err %d\n",
 				  err);
@@ -4353,9 +4418,16 @@ int ssdfs_xattrs_tree_delete_all(struct ssdfs_xattrs_btree_info *tree)
 	case SSDFS_PRIVATE_XATTR_BTREE:
 		down_write(&tree->lock);
 		err = ssdfs_btree_delete_all(tree->generic_tree);
+		if (!err || err == -ENOENT)
+			atomic_set(&tree->state, SSDFS_XATTR_BTREE_INITIALIZED);
 		up_write(&tree->lock);
 
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("xattrs tree is already empty\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to delete the all xattrs: "
 				  "err %d\n",
 				  err);
