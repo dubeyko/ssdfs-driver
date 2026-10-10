@@ -3153,6 +3153,7 @@ int ssdfs_define_current_mapping_leb(struct ssdfs_fs_info *fsi,
 {
 	struct completion *init_end;
 	u64 seg_id;
+	u64 start_leb;
 	u64 end_leb;
 	int err;
 
@@ -3168,15 +3169,21 @@ try_next_range:
 		return -ENOENT;
 	}
 
+	start_leb = *cur_leb;
+
 	err = ssdfs_maptbl_recommend_search_range(fsi, cur_leb,
 						  &end_leb, &init_end);
-	if (err == -EAGAIN) {
+	/* every iteration moves the search beyond one more fragment */
+	while (err == -EAGAIN) {
 		err = SSDFS_WAIT_COMPLETION(init_end);
 		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
 		}
+
+		/* the previous call has changed *cur_leb */
+		*cur_leb = start_leb;
 
 		err = ssdfs_maptbl_recommend_search_range(fsi, cur_leb,
 							  &end_leb, &init_end);

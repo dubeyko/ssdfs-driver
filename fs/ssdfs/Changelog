@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.90 [October 09, 2026]
+    (*) Introduce support of overflow metadata extents for segment
+        bitmap and PEB mapping table.
+
 v.5.89 [October 08, 2026]
     (*) Fix multiple issue for generic/013 test-case of xfstests.
 

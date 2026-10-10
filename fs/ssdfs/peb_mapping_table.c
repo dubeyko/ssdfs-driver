@@ -592,7 +592,8 @@ static
 int ssdfs_maptbl_define_segment_counts(struct ssdfs_peb_mapping_table *tbl)
 {
 	u32 segs_count1 = 0, segs_count2 = 0;
-	int i;
+	u32 total_rows;
+	u32 i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -601,45 +602,56 @@ int ssdfs_maptbl_define_segment_counts(struct ssdfs_peb_mapping_table *tbl)
 	SSDFS_DBG("tbl %p\n", tbl);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < SSDFS_MAPTBL_RESERVED_EXTENTS; i++) {
-		struct ssdfs_meta_area_extent *extent;
+	total_rows = ssdfs_meta_extents_total_rows(&tbl->extents,
+						   SSDFS_MAPTBL_SEG_COPY_MAX);
+
+	for (i = 0; i < total_rows; i++) {
+		struct ssdfs_meta_area_extent extent;
 		u32 len1 = 0, len2 = 0;
 
-		extent = &tbl->extents[i][SSDFS_MAIN_MAPTBL_SEG];
-
-		err = CHECK_META_EXTENT_TYPE(extent);
+		err = ssdfs_meta_extents_get(&tbl->extents,
+					     SSDFS_MAPTBL_SEG_COPY_MAX,
+					     SSDFS_MAIN_MAPTBL_SEG,
+					     i,
+					     &extent);
+		if (!err)
+			err = CHECK_META_EXTENT_TYPE(&extent);
 		if (err == -ENODATA) {
 			/* do nothing */
 			break;
 		} else if (unlikely(err)) {
 			SSDFS_WARN("invalid meta area extent: "
-				   "index %d, err %d\n",
+				   "index %u, err %d\n",
 				   i, err);
 			return err;
 		}
 
-		len1 = le32_to_cpu(extent->len);
+		len1 = le32_to_cpu(extent.len);
 
 		if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY) {
-			extent = &tbl->extents[i][SSDFS_COPY_MAPTBL_SEG];
-
-			err = CHECK_META_EXTENT_TYPE(extent);
+			err = ssdfs_meta_extents_get(&tbl->extents,
+						     SSDFS_MAPTBL_SEG_COPY_MAX,
+						     SSDFS_COPY_MAPTBL_SEG,
+						     i,
+						     &extent);
+			if (!err)
+				err = CHECK_META_EXTENT_TYPE(&extent);
 			if (err == -ENODATA) {
 				SSDFS_ERR("empty copy meta area extent: "
-					  "index %d\n", i);
+					  "index %u\n", i);
 				return -EIO;
 			} else if (unlikely(err)) {
 				SSDFS_WARN("invalid meta area extent: "
-					   "index %d, err %d\n",
+					   "index %u, err %d\n",
 					   i, err);
 				return err;
 			}
 
-			len2 = le32_to_cpu(extent->len);
+			len2 = le32_to_cpu(extent.len);
 
 			if (len1 != len2) {
 				SSDFS_ERR("different main and copy extents: "
-					  "index %d, len1 %u, len2 %u\n",
+					  "index %u, len1 %u, len2 %u\n",
 					  i, len1, len2);
 				return -EIO;
 			}
@@ -696,7 +708,8 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 	u8 create_threads;
 	struct ssdfs_segment_info *si = NULL;
 	void *result;
-	int i, j;
+	u32 total_rows;
+	u32 i, j;
 	u32 created_segs = 0;
 	int err;
 
@@ -712,26 +725,33 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 	log_pages = le16_to_cpu(fsi->vh->maptbl_log_pages);
 	create_threads = fsi->create_threads_per_seg;
 
-	for (i = 0; i < SSDFS_MAPTBL_RESERVED_EXTENTS; i++) {
-		struct ssdfs_meta_area_extent *extent;
+	total_rows = ssdfs_meta_extents_total_rows(&tbl->extents,
+						   SSDFS_MAPTBL_SEG_COPY_MAX);
+
+	for (i = 0; i < total_rows; i++) {
+		struct ssdfs_meta_area_extent extent;
 		u64 start_seg;
 		u32 len;
 
-		extent = &tbl->extents[i][array_type];
-
-		err = CHECK_META_EXTENT_TYPE(extent);
+		err = ssdfs_meta_extents_get(&tbl->extents,
+					     SSDFS_MAPTBL_SEG_COPY_MAX,
+					     array_type,
+					     i,
+					     &extent);
+		if (!err)
+			err = CHECK_META_EXTENT_TYPE(&extent);
 		if (err == -ENODATA) {
 			/* do nothing */
 			break;
 		} else if (unlikely(err)) {
 			SSDFS_WARN("invalid meta area extent: "
-				   "index %d, err %d\n",
+				   "index %u, err %d\n",
 				   i, err);
 			return err;
 		}
 
-		start_seg = le64_to_cpu(extent->start_id);
-		len = le32_to_cpu(extent->len);
+		start_seg = le64_to_cpu(extent.start_id);
+		len = le32_to_cpu(extent.len);
 
 		for (j = 0; j < len; j++) {
 			if (created_segs >= tbl->segs_count) {
@@ -1072,7 +1092,6 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	struct ssdfs_peb_mapping_table *ptr;
 	size_t maptbl_obj_size = sizeof(struct ssdfs_peb_mapping_table);
 	void *kaddr;
-	size_t bytes_count;
 	size_t bmap_bytes;
 	int array_type;
 	int i;
@@ -1135,12 +1154,17 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	atomic64_set(&ptr->last_peb_recover_cno,
 		     le64_to_cpu(fsi->vh->maptbl.last_peb_recover_cno));
 
-	bytes_count = sizeof(struct ssdfs_meta_area_extent);
-	bytes_count *= SSDFS_MAPTBL_RESERVED_EXTENTS;
-	bytes_count *= SSDFS_MAPTBL_SEG_COPY_MAX;
-	ssdfs_memcpy(ptr->extents, 0, bytes_count,
-		     fsi->vh->maptbl.extents, 0, bytes_count,
-		     bytes_count);
+	err = ssdfs_create_meta_extents_array(fsi,
+					SSDFS_MAPTBL_META_EXTENTS_INDEX,
+					&fsi->vh->maptbl.extents[0][0],
+					SSDFS_MAPTBL_RESERVED_EXTENTS,
+					SSDFS_MAPTBL_SEG_COPY_MAX,
+					&ptr->extents);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create maptbl's extents array: "
+			  "err %d\n", err);
+		goto free_maptbl_object;
+	}
 
 	mutex_init(&ptr->bmap_lock);
 	bmap_bytes = ptr->fragments_count + BITS_PER_LONG - 1;
@@ -1149,7 +1173,7 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	if (!ptr->dirty_bmap) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate dirty_bmap\n");
-		goto free_maptbl_object;
+		goto free_overflow_extents;
 	}
 
 	init_waitqueue_head(&ptr->wait_queue);
@@ -1253,6 +1277,9 @@ free_dirty_bmap:
 	ssdfs_map_tbl_kfree(fsi->maptbl->dirty_bmap);
 	fsi->maptbl->dirty_bmap = NULL;
 
+free_overflow_extents:
+	ssdfs_dynamic_array_destroy(&fsi->maptbl->extents);
+
 free_maptbl_object:
 	ssdfs_map_tbl_kfree(fsi->maptbl);
 	fsi->maptbl = NULL;
@@ -1287,6 +1314,8 @@ void ssdfs_maptbl_destroy(struct ssdfs_fs_info *fsi)
 
 	ssdfs_maptbl_destroy_segments(fsi->maptbl);
 	ssdfs_maptbl_destroy_fragments(fsi);
+
+	ssdfs_dynamic_array_destroy(&fsi->maptbl->extents);
 
 	ssdfs_map_tbl_kfree(fsi->maptbl->dirty_bmap);
 	fsi->maptbl->dirty_bmap = NULL;
@@ -2101,8 +2130,8 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 {
 	struct ssdfs_maptbl_sb_header *hdr;
 	int pre_erase_pebs;
-	size_t bytes_count;
 	u32 flags = 0;
+	u32 row, chain;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl);
@@ -2140,12 +2169,24 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 	hdr->pebs_per_stripe = cpu_to_le16(tbl->pebs_per_stripe);
 	hdr->stripes_per_fragment = cpu_to_le16(tbl->stripes_per_fragment);
 
-	bytes_count = sizeof(struct ssdfs_meta_area_extent);
-	bytes_count *= SSDFS_MAPTBL_RESERVED_EXTENTS;
-	bytes_count *= SSDFS_MAPTBL_SEG_COPY_MAX;
-	ssdfs_memcpy(hdr->extents, 0, bytes_count,
-		     tbl->fsi->vh->maptbl.extents, 0, bytes_count,
-		     bytes_count);
+	for (row = 0; row < SSDFS_MAPTBL_RESERVED_EXTENTS; row++) {
+		for (chain = 0; chain < SSDFS_MAPTBL_SEG_COPY_MAX; chain++) {
+			struct ssdfs_meta_area_extent extent;
+			int err;
+
+			err = ssdfs_meta_extents_get(&tbl->extents,
+						     SSDFS_MAPTBL_SEG_COPY_MAX,
+						     chain, row, &extent);
+			if (unlikely(err)) {
+				SSDFS_WARN("fail to get embedded extent: "
+					   "row %u, chain %u, err %d\n",
+					   row, chain, err);
+				continue;
+			}
+
+			hdr->extents[row][chain] = extent;
+		}
+	}
 }
 
 /*
@@ -14123,6 +14164,7 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	int i, j;
+	u32 total_rows;
 	size_t bytes_count;
 
 	BUG_ON(!tbl);
@@ -14139,18 +14181,30 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 		  tbl->pebs_per_fragment, tbl->pebs_per_stripe,
 		  tbl->stripes_per_fragment);
 
-	for (i = 0; i < MAPTBL_LIMIT1; i++) {
+	total_rows = ssdfs_meta_extents_total_rows(&tbl->extents,
+						   SSDFS_MAPTBL_SEG_COPY_MAX);
+
+	SSDFS_DBG("total_rows %u\n", total_rows);
+
+	for (i = 0; i < total_rows; i++) {
 		for (j = 0; j < MAPTBL_LIMIT2; j++) {
-			struct ssdfs_meta_area_extent *extent;
-			extent = &tbl->extents[i][j];
+			struct ssdfs_meta_area_extent extent;
+			int err;
+
+			err = ssdfs_meta_extents_get(&tbl->extents,
+						     SSDFS_MAPTBL_SEG_COPY_MAX,
+						     j, i, &extent);
+			if (unlikely(err))
+				continue;
+
 			SSDFS_DBG("extent[%d][%d]: "
 				  "start_id %llu, len %u, "
 				  "type %#x, flags %#x\n",
 				  i, j,
-				  le64_to_cpu(extent->start_id),
-				  le32_to_cpu(extent->len),
-				  le16_to_cpu(extent->type),
-				  le16_to_cpu(extent->flags));
+				  le64_to_cpu(extent.start_id),
+				  le32_to_cpu(extent.len),
+				  le16_to_cpu(extent.type),
+				  le16_to_cpu(extent.flags));
 		}
 	}
 

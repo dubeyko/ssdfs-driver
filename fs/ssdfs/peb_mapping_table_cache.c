@@ -109,7 +109,7 @@ void ssdfs_maptbl_cache_init(struct ssdfs_maptbl_cache *cache)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	init_rwsem(&cache->lock);
-	folio_batch_init(&cache->batch);
+	ssdfs_folio_vector_create(&cache->batch, get_order(PAGE_SIZE), 0);
 	atomic_set(&cache->bytes_count, 0);
 	ssdfs_peb_mapping_queue_init(&cache->pm_queue);
 }
@@ -125,7 +125,8 @@ void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache)
 	SSDFS_DBG("cache %p\n", cache);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_map_cache_folio_batch_release(&cache->batch);
+	ssdfs_folio_vector_release(&cache->batch);
+	ssdfs_folio_vector_destroy(&cache->batch);
 	ssdfs_peb_mapping_queue_remove_all(&cache->pm_queue);
 }
 
@@ -135,7 +136,8 @@ void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache)
  *
  * This method releases the folios accumulated in the cache's batch
  * without touching the PEB mappings queue. It is intended for use on
- * error paths.
+ * error paths. The batch's folio vector remains created (just empty),
+ * ready to be reused.
  */
 void ssdfs_maptbl_cache_forget_batch(struct ssdfs_maptbl_cache *cache)
 {
@@ -145,7 +147,7 @@ void ssdfs_maptbl_cache_forget_batch(struct ssdfs_maptbl_cache *cache)
 	SSDFS_DBG("cache %p\n", cache);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_map_cache_folio_batch_release(&cache->batch);
+	ssdfs_folio_vector_release(&cache->batch);
 }
 
 /*
@@ -1203,6 +1205,7 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 	struct ssdfs_leb2peb_pair *found;
 	void *kaddr;
 	u64 peb_id = U64_MAX;
+	u32 folios_count;
 	unsigned i;
 	int err = 0;
 
@@ -1222,12 +1225,13 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 
 	memset(pebr, 0xFF, sizeof(struct ssdfs_maptbl_peb_relation));
 
-	for (i = 0; i < folio_batch_count(&cache->batch); i++) {
-		folio = cache->batch.folios[i];
+	for (i = 0; i < ssdfs_folio_vector_count(&cache->batch); i++) {
+		folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			/* folio was removed: skip the empty slot */
+			continue;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);
@@ -1260,19 +1264,25 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 			folio_index = res->pebs[i].folio_index;
 			item_index = res->pebs[i].item_index;
 			found = &res->pebs[i].found;
+			folios_count = ssdfs_folio_vector_count(&cache->batch);
 
-			if (folio_index >= folio_batch_count(&cache->batch)) {
+			if (folio_index >= folios_count) {
 				err = -ERANGE;
 				SSDFS_ERR("invalid folio index %u\n",
 					  folio_index);
 				goto finish_leb_id_search;
 			}
 
-			folio = cache->batch.folios[folio_index];
+			folio = ssdfs_folio_vector_get(&cache->batch,
+							folio_index);
 
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+			if (!folio) {
+				err = -ERANGE;
+				SSDFS_ERR("folio is absent: "
+					  "folio_index %u\n",
+					  folio_index);
+				goto finish_leb_id_search;
+			}
 
 			ssdfs_folio_lock(folio);
 			kaddr = kmap_local_folio(folio, 0);
@@ -1382,11 +1392,11 @@ int ssdfs_maptbl_cache_convert_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cache || !pebr);
 	BUG_ON(atomic_read(&cache->bytes_count) == 0);
-	BUG_ON(folio_batch_count(&cache->batch) == 0);
+	BUG_ON(ssdfs_folio_vector_count(&cache->batch) == 0);
 	BUG_ON(atomic_read(&cache->bytes_count) >
-		(folio_batch_count(&cache->batch) * PAGE_SIZE));
+		(ssdfs_folio_vector_count(&cache->batch) * PAGE_SIZE));
 	BUG_ON(atomic_read(&cache->bytes_count) <=
-		((folio_batch_count(&cache->batch) - 1) * PAGE_SIZE));
+		((ssdfs_folio_vector_count(&cache->batch) - 1) * PAGE_SIZE));
 	BUG_ON(!rwsem_is_locked(&cache->lock));
 
 	SSDFS_DBG("cache %p, leb_id %llu, pebr %p\n",
@@ -1562,10 +1572,10 @@ int ssdfs_maptbl_cache_init_folio(struct ssdfs_maptbl_cache *cache,
 		  kaddr, sequence_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (sequence_id >= SSDFS_MAPTBL_CACHE_FRAGMENTS_MAX) {
+	if (sequence_id > U16_MAX) {
+		/* hdr->sequence_id is a __le16 field */
 		SSDFS_ERR("invalid sequence_id %u (max %u)\n",
-			  sequence_id,
-			  (unsigned)SSDFS_MAPTBL_CACHE_FRAGMENTS_MAX);
+			  sequence_id, U16_MAX);
 		return -EINVAL;
 	}
 
@@ -1588,7 +1598,7 @@ int ssdfs_maptbl_cache_init_folio(struct ssdfs_maptbl_cache *cache,
 	magic = (__le32 *)((u8 *)kaddr + hdr_size);
 	*magic = cpu_to_le32(SSDFS_MAPTBL_CACHE_PEB_STATE_MAGIC);
 
-	total_size = folio_batch_count(&cache->batch);
+	total_size = ssdfs_folio_vector_count(&cache->batch);
 	total_size *= PAGE_SIZE;
 
 	if (total_size != atomic_read(&cache->bytes_count)) {
@@ -1597,7 +1607,6 @@ int ssdfs_maptbl_cache_init_folio(struct ssdfs_maptbl_cache *cache,
 			  atomic_read(&cache->bytes_count));
 		return -ERANGE;
 	}
-
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("cache->bytes_count %d\n",
@@ -1958,8 +1967,10 @@ ssdfs_maptbl_cache_add_batch_folio(struct ssdfs_maptbl_cache *cache)
 	SSDFS_DBG("cache %p\n", cache);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio = ssdfs_map_cache_add_batch_folio(&cache->batch,
-						get_order(PAGE_SIZE));
+	ssdfs_folio_vector_inflate(&cache->batch,
+			ssdfs_folio_vector_count(&cache->batch) + 1);
+
+	folio = ssdfs_folio_vector_allocate(&cache->batch);
 	if (unlikely(IS_ERR_OR_NULL(folio))) {
 		err = !folio ? -ENOMEM : PTR_ERR(folio);
 		SSDFS_ERR("fail to add folio: err %d\n",
@@ -2006,10 +2017,11 @@ int ssdfs_maptbl_cache_add_folio(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	item_index = 0;
-	folio_index = folio_batch_count(&cache->batch);
+	folio_index = ssdfs_folio_vector_count(&cache->batch);
 
-	folio = ssdfs_map_cache_add_batch_folio(&cache->batch,
-						get_order(PAGE_SIZE));
+	ssdfs_folio_vector_inflate(&cache->batch, folio_index + 1);
+
+	folio = ssdfs_folio_vector_allocate(&cache->batch);
 	if (unlikely(IS_ERR_OR_NULL(folio))) {
 		err = !folio ? -ENOMEM : PTR_ERR(folio);
 		SSDFS_ERR("fail to add folio: err %d\n",
@@ -2442,13 +2454,17 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cache);
-	BUG_ON(folio_index >= folio_batch_count(&cache->batch));
+	BUG_ON(folio_index >= ssdfs_folio_vector_count(&cache->batch));
 
 	SSDFS_DBG("cache %p, folio_index %u, item_index %u\n",
 		  cache, folio_index, item_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio = cache->batch.folios[folio_index];
+	folio = ssdfs_folio_vector_get(&cache->batch, folio_index);
+	if (!folio) {
+		SSDFS_ERR("folio is absent: folio_index %u\n", folio_index);
+		return -ERANGE;
+	}
 
 	ssdfs_folio_lock(folio);
 	kaddr = kmap_local_folio(folio, 0);
@@ -2582,11 +2598,11 @@ int ssdfs_check_pre_deleted_peb_state(struct ssdfs_maptbl_cache *cache,
 		  cache, folio_index, item_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio = cache->batch.folios[folio_index];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+	folio = ssdfs_folio_vector_get(&cache->batch, folio_index);
+	if (!folio) {
+		SSDFS_ERR("folio is absent: folio_index %u\n", folio_index);
+		return -ERANGE;
+	}
 
 	ssdfs_folio_lock(folio);
 	kaddr = kmap_local_folio(folio, 0);
@@ -2682,6 +2698,7 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	struct folio *folio;
 	void *kaddr;
+	u32 folios_count;
 	u16 items_count;
 	int err = 0;
 
@@ -2727,14 +2744,16 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 	memset(&saved_pair, 0xFF, pair_size);
 	memset(&saved_state, 0xFF, peb_state_size);
 
-	for (; start_folio < folio_batch_count(&cache->batch); start_folio++) {
+	folios_count = ssdfs_folio_vector_count(&cache->batch);
+	for (; start_folio < folios_count; start_folio++) {
 		bool need_move_item = false;
 
-		folio = cache->batch.folios[start_folio];
+		folio = ssdfs_folio_vector_get(&cache->batch, start_folio);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			/* folio was removed: skip the empty slot */
+			continue;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);
@@ -2911,12 +2930,13 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 
 	down_write(&cache->lock);
 
-	for (i = 0; i < folio_batch_count(&cache->batch); i++) {
-		folio = cache->batch.folios[i];
+	for (i = 0; i < ssdfs_folio_vector_count(&cache->batch); i++) {
+		folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			/* folio was removed: skip the empty slot */
+			continue;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);
@@ -2937,14 +2957,14 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 			BUG();
 	}
 
-	if (i >= folio_batch_count(&cache->batch)) {
+	if (i >= ssdfs_folio_vector_count(&cache->batch)) {
 		if (err == -ENODATA) {
 			/* correct folio index */
-			i = folio_batch_count(&cache->batch) - 1;
+			i = ssdfs_folio_vector_count(&cache->batch) - 1;
 		} else {
 			err = -ERANGE;
 			SSDFS_ERR("i %u >= folios_count %u\n",
-				  i, folio_batch_count(&cache->batch));
+				  i, ssdfs_folio_vector_count(&cache->batch));
 			goto finish_leb_caching;
 		}
 	}
@@ -2961,14 +2981,16 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 		}
 	} else if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(i >= folio_batch_count(&cache->batch));
+		BUG_ON(i >= ssdfs_folio_vector_count(&cache->batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		folio = cache->batch.folios[i];
+		folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			err = -ERANGE;
+			SSDFS_ERR("folio is absent: folio_index %u\n", i);
+			goto finish_leb_caching;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);
@@ -2987,7 +3009,7 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 		}
 	} else if (err == -EFAULT) {
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(i >= folio_batch_count(&cache->batch));
+		BUG_ON(i >= ssdfs_folio_vector_count(&cache->batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_maptbl_cache_insert_leb(cache, i, item_index,
@@ -3050,12 +3072,17 @@ int __ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 		  peb_state, consistency);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio_index >= folio_batch_count(&cache->batch)) {
+	if (folio_index >= ssdfs_folio_vector_count(&cache->batch)) {
 		SSDFS_ERR("invalid folio index %u\n", folio_index);
 		return -ERANGE;
 	}
 
-	folio = cache->batch.folios[folio_index];
+	folio = ssdfs_folio_vector_get(&cache->batch, folio_index);
+	if (!folio) {
+		SSDFS_ERR("folio is absent: folio_index %u\n", folio_index);
+		return -ERANGE;
+	}
+
 	ssdfs_folio_lock(folio);
 	kaddr = kmap_local_folio(folio, 0);
 
@@ -4088,12 +4115,13 @@ finish_peb_state_change:
 		struct folio *folio;
 		void *kaddr;
 
-		for (i = 0; i < folio_batch_count(&cache->batch); i++) {
-			folio = cache->batch.folios[i];
+		for (i = 0; i < ssdfs_folio_vector_count(&cache->batch); i++) {
+			folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+			if (!folio) {
+				/* folio was removed: skip the empty slot */
+				continue;
+			}
 
 			ssdfs_folio_lock(folio);
 			kaddr = kmap_local_folio(folio, 0);
@@ -4232,12 +4260,13 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 
 	down_write(&cache->lock);
 
-	for (i = 0; i < folio_batch_count(&cache->batch); i++) {
-		folio = cache->batch.folios[i];
+	for (i = 0; i < ssdfs_folio_vector_count(&cache->batch); i++) {
+		folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			/* folio was removed: skip the empty slot */
+			continue;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);
@@ -4261,7 +4290,7 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (err == -EAGAIN || err == -E2BIG) {
-			if ((i + 1) == folio_batch_count(&cache->batch)) {
+			if ((i + 1) == ssdfs_folio_vector_count(&cache->batch)) {
 				err = -E2BIG;
 				break;
 			} else if (items_count < capacity) {
@@ -4289,7 +4318,7 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (item_index >= capacity) {
-		if ((i + 1) < folio_batch_count(&cache->batch)) {
+		if ((i + 1) < ssdfs_folio_vector_count(&cache->batch)) {
 			err = ssdfs_maptbl_cache_insert_leb(cache,
 							    i + 1, 0,
 							    &cur_pair,
@@ -4323,14 +4352,16 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 		}
 	} else {
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(i >= folio_batch_count(&cache->batch));
+		BUG_ON(i >= ssdfs_folio_vector_count(&cache->batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		folio = cache->batch.folios[i];
+		folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			err = -ERANGE;
+			SSDFS_ERR("folio is absent: folio_index %u\n", i);
+			goto finish_add_migration_peb;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);
@@ -4640,15 +4671,16 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 		return -EINVAL;
 	}
 
-	for (i = 0; i < folio_batch_count(&cache->batch); i++) {
+	for (i = 0; i < ssdfs_folio_vector_count(&cache->batch); i++) {
 		struct ssdfs_maptbl_cache_header *hdr;
 		int search_state;
 
-		folio = cache->batch.folios[i];
+		folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			/* folio was removed: skip the empty slot */
+			continue;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);
@@ -4756,12 +4788,13 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 			goto finish_exclude_migration_peb;
 		}
 
-		for (++i; i < folio_batch_count(&cache->batch); i++) {
-			folio = cache->batch.folios[i];
+		for (++i; i < ssdfs_folio_vector_count(&cache->batch); i++) {
+			folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+			if (!folio) {
+				/* folio was removed: skip the empty slot */
+				continue;
+			}
 
 			ssdfs_folio_lock(folio);
 			kaddr = kmap_local_folio(folio, 0);
@@ -4777,11 +4810,14 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 				goto finish_exclude_migration_peb;
 			}
 
-			folio = cache->batch.folios[i - 1];
+			folio = ssdfs_folio_vector_get(&cache->batch, i - 1);
 
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+			if (!folio) {
+				err = -ERANGE;
+				SSDFS_ERR("folio is absent: folio_index %u\n",
+					  i - 1);
+				goto finish_exclude_migration_peb;
+			}
 
 			ssdfs_folio_lock(folio);
 			kaddr = kmap_local_folio(folio, 0);
@@ -4823,7 +4859,7 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 			}
 		}
 
-		i = folio_batch_count(&cache->batch);
+		i = ssdfs_folio_vector_count(&cache->batch);
 		if (i == 0) {
 			err = -ERANGE;
 			SSDFS_ERR("invalid number of fragments %u\n", i);
@@ -4839,11 +4875,13 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 			goto finish_exclude_migration_peb;
 		}
 
-		folio = cache->batch.folios[i];
+		folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			err = -ERANGE;
+			SSDFS_ERR("folio is absent: folio_index %u\n", i);
+			goto finish_exclude_migration_peb;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);
@@ -4853,14 +4891,22 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 		ssdfs_folio_unlock(folio);
 
 		if (items_count == 0) {
-			cache->batch.folios[i] = NULL;
-			cache->batch.nr--;
+			folio = ssdfs_folio_vector_remove(&cache->batch, i);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = IS_ERR(folio) ? PTR_ERR(folio) : -ERANGE;
+				SSDFS_ERR("fail to remove folio: "
+					  "index %u, err %d\n",
+					  i, err);
+				goto finish_exclude_migration_peb;
+			}
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("folio %p, count %d\n",
 				  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+			ssdfs_map_cache_account_folio(folio);
+			ssdfs_folio_put(folio);
 			ssdfs_map_cache_free_folio(folio);
 
 			if (atomic_sub_return(PAGE_SIZE,
@@ -4901,11 +4947,14 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 			goto finish_exclude_migration_peb;
 		}
 
-		folio = cache->batch.folios[folio_index];
+		folio = ssdfs_folio_vector_get(&cache->batch, folio_index);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			err = -ERANGE;
+			SSDFS_ERR("folio is absent: folio_index %u\n",
+				  folio_index);
+			goto finish_exclude_migration_peb;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);
@@ -5030,12 +5079,13 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 		void *kaddr;
 		int i;
 
-		for (i = 0; i < folio_batch_count(&cache->batch); i++) {
-			folio = cache->batch.folios[i];
+		for (i = 0; i < ssdfs_folio_vector_count(&cache->batch); i++) {
+			folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+			if (!folio) {
+				/* folio was removed: skip the empty slot */
+				continue;
+			}
 
 			ssdfs_folio_lock(folio);
 			kaddr = kmap_local_folio(folio, 0);
@@ -5082,12 +5132,13 @@ int ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 		void *kaddr;
 		int i;
 
-		for (i = 0; i < folio_batch_count(&cache->batch); i++) {
-			folio = cache->batch.folios[i];
+		for (i = 0; i < ssdfs_folio_vector_count(&cache->batch); i++) {
+			folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+			if (!folio) {
+				/* folio was removed: skip the empty slot */
+				continue;
+			}
 
 			ssdfs_folio_lock(folio);
 			kaddr = kmap_local_folio(folio, 0);
@@ -5119,12 +5170,13 @@ void ssdfs_maptbl_cache_check_consistency(struct ssdfs_maptbl_cache *cache)
 	int i, j;
 
 	down_read(&cache->lock);
-	for (i = 0; i < folio_batch_count(&cache->batch); i++) {
-		folio = cache->batch.folios[i];
+	for (i = 0; i < ssdfs_folio_vector_count(&cache->batch); i++) {
+		folio = ssdfs_folio_vector_get(&cache->batch, i);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
+		if (!folio) {
+			/* folio was removed: skip the empty slot */
+			continue;
+		}
 
 		ssdfs_folio_lock(folio);
 		kaddr = kmap_local_folio(folio, 0);

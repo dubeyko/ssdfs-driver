@@ -25,7 +25,7 @@
 
 #include <linux/ssdfs_fs.h>
 
-#define SSDFS_MAPTBL_CACHE_FRAGMENTS_MAX	(FOLIO_BATCH_SIZE)
+#include "folio_vector.h"
 
 /*
  * struct ssdfs_maptbl_cache - maptbl cache
@@ -36,7 +36,7 @@
  */
 struct ssdfs_maptbl_cache {
 	struct rw_semaphore lock;
-	struct folio_batch batch;
+	struct ssdfs_folio_vector batch;
 	atomic_t bytes_count;
 
 	struct ssdfs_peb_mapping_queue pm_queue;

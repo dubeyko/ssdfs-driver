@@ -21,6 +21,8 @@
 
 #include "folio_vector.h"
 
+struct ssdfs_payload_content;
+
 /*
  * struct ssdfs_dynamic_array - dynamic array
  * @state: array state
@@ -93,11 +95,18 @@ int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
 				u32 index, void *ptr);
 int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 			    u32 index, void *ptr);
+int ssdfs_dynamic_array_set_content(struct ssdfs_dynamic_array *array,
+				    struct ssdfs_payload_content *payload);
 int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 				     void *copy_buf, size_t buf_size);
+int ssdfs_dynamic_array_copy_content_range(struct ssdfs_dynamic_array *array,
+					   u32 start_index, u32 count,
+					   void *copy_buf, size_t buf_size);
 void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
 					     u32 index, u32 *items_count);
 int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 					    u32 start_index, u32 shift);
+int ssdfs_dynamic_array_shift_content_left(struct ssdfs_dynamic_array *array,
+					   u32 start_index, u32 shift);
 
 #endif /* _SSDFS_DYNAMIC_ARRAY_H */

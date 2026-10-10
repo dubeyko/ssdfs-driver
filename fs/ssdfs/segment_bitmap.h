@@ -26,6 +26,7 @@
 #include "common_bitmap.h"
 #include "request_queue.h"
 #include "folio_array.h"
+#include "superblock_payload.h"
 
 /* Segment states */
 enum {
@@ -144,7 +145,8 @@ enum {
  * @fragments_per_seg: segbmap's fragments per segment
  * @fragments_per_peb: segbmap's fragments per PEB
  * @fragment_size: size of fragment in bytes
- * @extents: metadata extents that describe segment bitmap location
+ * @extents: metadata extents (rows of main and copy extents)
+ *          that describe segment bitmap location.
  * @segs_count: count of segment objects are used for segment bitmap
  * @segs: xarrays of pointers on segment objects (main and copy)
  * @search_lock: lock for search and change state operations
@@ -163,7 +165,7 @@ struct ssdfs_segment_bmap {
 	u16 fragments_per_seg;
 	u16 fragments_per_peb;
 	u16 fragment_size;
-	struct ssdfs_meta_area_extent extents[SEGBMAP_LIMIT1][SEGBMAP_LIMIT2];
+	struct ssdfs_dynamic_array extents;
 	u16 segs_count;
 	struct xarray segs[SSDFS_SEGBMAP_SEG_COPY_MAX];
 
@@ -383,6 +385,7 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	int i, j;
+	u32 total_rows;
 	size_t bytes;
 
 	BUG_ON(!bmap);
@@ -394,18 +397,27 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 		  bmap->fragments_count, bmap->fragments_per_seg,
 		  bmap->fragments_per_peb, bmap->fragment_size);
 
-	for (i = 0; i < SSDFS_SEGBMAP_RESERVED_EXTENTS; i++) {
-		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
-			struct ssdfs_meta_area_extent *extent;
+	total_rows = ssdfs_meta_extents_total_rows(&bmap->extents,
+						   SSDFS_SEGBMAP_SEG_COPY_MAX);
 
-			extent = &bmap->extents[i][j];
+	for (i = 0; i < total_rows; i++) {
+		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
+			struct ssdfs_meta_area_extent extent;
+			int err;
+
+			err = ssdfs_meta_extents_get(&bmap->extents,
+						     SSDFS_SEGBMAP_SEG_COPY_MAX,
+						     j, i, &extent);
+			if (unlikely(err))
+				continue;
+
 			SSDFS_DBG("extents[%d][%d]: start_id %llu, "
 				  "len %u, type %#x, flags %#x\n",
 				  i, j,
-				  le64_to_cpu(extent->start_id),
-				  le32_to_cpu(extent->len),
-				  le16_to_cpu(extent->type),
-				  le16_to_cpu(extent->flags));
+				  le64_to_cpu(extent.start_id),
+				  le32_to_cpu(extent.len),
+				  le16_to_cpu(extent.type),
+				  le16_to_cpu(extent.flags));
 		}
 	}
 

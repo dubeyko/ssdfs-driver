@@ -26,6 +26,7 @@
 #include <linux/xarray.h>
 
 #include "request_queue.h"
+#include "superblock_payload.h"
 
 #define SSDFS_MAPTBL_FIRST_PROTECTED_INDEX	0
 #define SSDFS_MAPTBL_PROTECTION_STEP		50
@@ -144,7 +145,8 @@ struct ssdfs_maptbl_area {
  * @pebs_per_fragment: count of PEB descriptors in fragment
  * @pebs_per_stripe: count of PEB descriptors in stripe
  * @stripes_per_fragment: count of stripes in fragment
- * @extents: metadata extents that describe mapping table location
+ * @extents: metadata extents (rows of main and copy extents)
+ *          that describe mapping table location.
  * @segs: xarrays of pointers on segment objects (main and copy)
  * @segs_count: count of segment objects are used for mapping table
  * @state: mapping table's state
@@ -174,7 +176,7 @@ struct ssdfs_peb_mapping_table {
 	u16 pebs_per_fragment;
 	u16 pebs_per_stripe;
 	u16 stripes_per_fragment;
-	struct ssdfs_meta_area_extent extents[MAPTBL_LIMIT1][MAPTBL_LIMIT2];
+	struct ssdfs_dynamic_array extents;
 	struct xarray segs[SSDFS_MAPTBL_SEG_COPY_MAX];
 	u16 segs_count;
 

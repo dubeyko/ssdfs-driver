@@ -853,7 +853,7 @@ int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 
 	err = ssdfs_maptbl_recommend_search_range(fsi, &start_leb,
 						  &end_leb, &init_end);
-	if (err == -EAGAIN) {
+	while (err == -EAGAIN) {
 		err = SSDFS_WAIT_COMPLETION(init_end);
 		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "

@@ -195,7 +195,8 @@ static
 int ssdfs_segbmap_define_segment_counts(struct ssdfs_segment_bmap *segbmap)
 {
 	u32 segs_count1 = 0, segs_count2 = 0;
-	int i;
+	u32 total_rows;
+	u32 i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -204,45 +205,56 @@ int ssdfs_segbmap_define_segment_counts(struct ssdfs_segment_bmap *segbmap)
 	SSDFS_DBG("segbmap %p\n", segbmap);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < SSDFS_SEGBMAP_RESERVED_EXTENTS; i++) {
-		struct ssdfs_meta_area_extent *extent;
+	total_rows = ssdfs_meta_extents_total_rows(&segbmap->extents,
+						   SSDFS_SEGBMAP_SEG_COPY_MAX);
+
+	for (i = 0; i < total_rows; i++) {
+		struct ssdfs_meta_area_extent extent;
 		u32 len1 = 0, len2 = 0;
 
-		extent = &segbmap->extents[i][SSDFS_MAIN_SEGBMAP_SEG];
-
-		err = CHECK_META_EXTENT_TYPE(extent);
+		err = ssdfs_meta_extents_get(&segbmap->extents,
+					     SSDFS_SEGBMAP_SEG_COPY_MAX,
+					     SSDFS_MAIN_SEGBMAP_SEG,
+					     i,
+					     &extent);
+		if (!err)
+			err = CHECK_META_EXTENT_TYPE(&extent);
 		if (err == -ENODATA) {
 			/* do nothing */
 			break;
 		} else if (unlikely(err)) {
 			SSDFS_WARN("invalid meta area extent: "
-				   "index %d, err %d\n",
+				   "index %u, err %d\n",
 				   i, err);
 			return err;
 		}
 
-		len1 = le32_to_cpu(extent->len);
+		len1 = le32_to_cpu(extent.len);
 
 		if (segbmap->flags & SSDFS_SEGBMAP_HAS_COPY) {
-			extent = &segbmap->extents[i][SSDFS_COPY_SEGBMAP_SEG];
-
-			err = CHECK_META_EXTENT_TYPE(extent);
+			err = ssdfs_meta_extents_get(&segbmap->extents,
+						     SSDFS_SEGBMAP_SEG_COPY_MAX,
+						     SSDFS_COPY_SEGBMAP_SEG,
+						     i,
+						     &extent);
+			if (!err)
+				err = CHECK_META_EXTENT_TYPE(&extent);
 			if (err == -ENODATA) {
 				SSDFS_ERR("empty copy meta area extent: "
-					  "index %d\n", i);
+					  "index %u\n", i);
 				return -EIO;
 			} else if (unlikely(err)) {
 				SSDFS_WARN("invalid meta area extent: "
-					   "index %d, err %d\n",
+					   "index %u, err %d\n",
 					   i, err);
 				return err;
 			}
 
-			len2 = le32_to_cpu(extent->len);
+			len2 = le32_to_cpu(extent.len);
 
 			if (len1 != len2) {
 				SSDFS_ERR("different main and copy extents: "
-					  "index %d, len1 %u, len2 %u\n",
+					  "index %u, len1 %u, len2 %u\n",
 					  i, len1, len2);
 				return -EIO;
 			}
@@ -294,7 +306,8 @@ int ssdfs_segbmap_define_seg_id(struct ssdfs_segment_bmap *segbmap,
 				u64 *seg_id)
 {
 	u32 cur_index = 0;
-	int i;
+	u32 total_rows;
+	u32 i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -304,26 +317,31 @@ int ssdfs_segbmap_define_seg_id(struct ssdfs_segment_bmap *segbmap,
 
 	*seg_id = U64_MAX;
 
-	for (i = 0; i < SSDFS_SEGBMAP_RESERVED_EXTENTS; i++) {
-		struct ssdfs_meta_area_extent *extent;
+	total_rows = ssdfs_meta_extents_total_rows(&segbmap->extents,
+						   SSDFS_SEGBMAP_SEG_COPY_MAX);
+
+	for (i = 0; i < total_rows; i++) {
+		struct ssdfs_meta_area_extent extent;
 		u64 start_seg;
 		u32 len;
 
-		extent = &segbmap->extents[i][array_type];
-
-		err = CHECK_META_EXTENT_TYPE(extent);
+		err = ssdfs_meta_extents_get(&segbmap->extents,
+					     SSDFS_SEGBMAP_SEG_COPY_MAX,
+					     array_type, i, &extent);
+		if (!err)
+			err = CHECK_META_EXTENT_TYPE(&extent);
 		if (err == -ENODATA) {
 			/* no more extents */
 			break;
 		} else if (unlikely(err)) {
 			SSDFS_WARN("invalid meta area extent: "
-				   "index %d, err %d\n",
+				   "index %u, err %d\n",
 				   i, err);
 			return err;
 		}
 
-		start_seg = le64_to_cpu(extent->start_id);
-		len = le32_to_cpu(extent->len);
+		start_seg = le64_to_cpu(extent.start_id);
+		len = le32_to_cpu(extent.len);
 
 		if (seg_index < cur_index + len) {
 			*seg_id = start_seg + (seg_index - cur_index);
@@ -1032,19 +1050,24 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto free_segbmap_object;
 	}
 
-	calculated = sizeof(struct ssdfs_meta_area_extent);
-	calculated *= SSDFS_SEGBMAP_RESERVED_EXTENTS;
-	calculated *= SSDFS_SEGBMAP_SEG_COPY_MAX;
-	ssdfs_memcpy(ptr->extents, 0, calculated,
-		     fsi->vh->segbmap.extents, 0, calculated,
-		     calculated);
+	err = ssdfs_create_meta_extents_array(fsi,
+					SSDFS_SEGBMAP_META_EXTENTS_INDEX,
+					&fsi->vh->segbmap.extents[0][0],
+					SSDFS_SEGBMAP_RESERVED_EXTENTS,
+					SSDFS_SEGBMAP_SEG_COPY_MAX,
+					&ptr->extents);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create segbmap's extents array: "
+			  "err %d\n", err);
+		goto free_segbmap_object;
+	}
 
 	init_rwsem(&ptr->search_lock);
 
 	err = ssdfs_segbmap_create_fragment_bitmaps(ptr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create fragment bitmaps\n");
-		goto free_segbmap_object;
+		goto free_overflow_extents;
 	}
 
 	err = ssdfs_create_folio_array(&ptr->folios,
@@ -1130,6 +1153,9 @@ destroy_folios:
 
 free_fragment_bmaps:
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
+
+free_overflow_extents:
+	ssdfs_dynamic_array_destroy(&fsi->segbmap->extents);
 
 free_segbmap_object:
 	ssdfs_seg_bmap_kfree(fsi->segbmap);
@@ -1459,6 +1485,8 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	ssdfs_destroy_folio_array(&fsi->segbmap->folios);
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
 	ssdfs_segbmap_destroy_fragment_descriptors(fsi->segbmap);
+
+	ssdfs_dynamic_array_destroy(&fsi->segbmap->extents);
 
 	up_write(&fsi->segbmap->search_lock);
 	up_write(&fsi->segbmap->resize_lock);
@@ -1865,7 +1893,7 @@ static
 void ssdfs_sb_segbmap_header_correct_state(struct ssdfs_segment_bmap *segbmap)
 {
 	struct ssdfs_segbmap_sb_header *hdr;
-	size_t bytes_count;
+	u32 row, chain;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
@@ -1887,12 +1915,24 @@ void ssdfs_sb_segbmap_header_correct_state(struct ssdfs_segment_bmap *segbmap)
 	hdr->flags = cpu_to_le16(segbmap->flags);
 	hdr->segs_count = cpu_to_le16(segbmap->segs_count);
 
-	bytes_count = sizeof(struct ssdfs_meta_area_extent);
-	bytes_count *= SSDFS_SEGBMAP_RESERVED_EXTENTS;
-	bytes_count *= SSDFS_SEGBMAP_SEG_COPY_MAX;
-	ssdfs_memcpy(hdr->extents, 0, bytes_count,
-		     segbmap->extents, 0, bytes_count,
-		     bytes_count);
+	for (row = 0; row < SSDFS_SEGBMAP_RESERVED_EXTENTS; row++) {
+		for (chain = 0; chain < SSDFS_SEGBMAP_SEG_COPY_MAX; chain++) {
+			struct ssdfs_meta_area_extent extent;
+			int err;
+
+			err = ssdfs_meta_extents_get(&segbmap->extents,
+						     SSDFS_SEGBMAP_SEG_COPY_MAX,
+						     chain, row, &extent);
+			if (unlikely(err)) {
+				SSDFS_WARN("fail to get embedded extent: "
+					   "row %u, chain %u, err %d\n",
+					   row, chain, err);
+				continue;
+			}
+
+			hdr->extents[row][chain] = extent;
+		}
+	}
 }
 
 /*

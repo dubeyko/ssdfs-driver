@@ -8,7 +8,7 @@ obj-$(CONFIG_SSDFS)			+= ssdfs.o
 
 #ccflags-$(CONFIG_SSDFS_DEBUG)		+= -DDEBUG
 
-ssdfs-y	:= super.o fs_error.o recovery.o \
+ssdfs-y	:= super.o fs_error.o recovery.o superblock_payload.o \
 		recovery_fast_search.o recovery_slow_search.o \
 		recovery_thread.o \
 		options.o folio_array.o folio_vector.o \
@@ -66,7 +66,8 @@ obj-$(CONFIG_SSDFS_KUNIT_TEST)			+= folio_vector_test.o \
 							compr_lzo_test.o \
 							compr_lz4_test.o \
 							compr_zstd_test.o \
-							block_bitmap_test.o
+							block_bitmap_test.o \
+							superblock_payload_test.o
 ifeq ($(CONFIG_SSDFS_BLOCK_DEVICE),y)
 obj-$(CONFIG_SSDFS_KUNIT_TEST)			+= dev_bdev_test.o \
 							dev_zns_test.o

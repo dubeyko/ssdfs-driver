@@ -82,6 +82,18 @@ struct ssdfs_blk2off_range {
 	u16 len;
 };
 
+/*
+ * struct ssdfs_buffer - memory buffer descriptor
+ * @ptr: pointer on buffer
+ * @offset: offset in bytes from the stream begin
+ * @size: buffer size in bytes
+ */
+struct ssdfs_buffer {
+	u8 *ptr;
+	u64 offset;
+	u32 size;
+};
+
 struct ssdfs_mount_context {
 	unsigned long s_mount_opts;
 };
