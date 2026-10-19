@@ -32,12 +32,16 @@
  * @lock: lock of maptbl cache
  * @batch: memory folios of maptbl cache
  * @bytes_count: count of bytes in maptbl cache
+ * @compr_type: compression type of maptbl cache's area (SSDFS_COMPR_*)
+ * @max_fragment_bytes: size of the biggest encoded fragment (0 - unknown)
  * @pm_queue: PEB mappings queue
  */
 struct ssdfs_maptbl_cache {
 	struct rw_semaphore lock;
 	struct ssdfs_folio_vector batch;
 	atomic_t bytes_count;
+	int compr_type;
+	u32 max_fragment_bytes;
 
 	struct ssdfs_peb_mapping_queue pm_queue;
 };

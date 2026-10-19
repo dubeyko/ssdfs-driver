@@ -29,6 +29,7 @@
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
+#include "compression.h"
 #include "folio_array.h"
 #include "peb_mapping_table.h"
 
@@ -111,6 +112,8 @@ void ssdfs_maptbl_cache_init(struct ssdfs_maptbl_cache *cache)
 	init_rwsem(&cache->lock);
 	ssdfs_folio_vector_create(&cache->batch, get_order(PAGE_SIZE), 0);
 	atomic_set(&cache->bytes_count, 0);
+	cache->compr_type = SSDFS_COMPR_NONE;
+	cache->max_fragment_bytes = 0;
 	ssdfs_peb_mapping_queue_init(&cache->pm_queue);
 }
 

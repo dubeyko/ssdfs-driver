@@ -205,14 +205,14 @@ int ssdfs_segbmap_define_segment_counts(struct ssdfs_segment_bmap *segbmap)
 	SSDFS_DBG("segbmap %p\n", segbmap);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	total_rows = ssdfs_meta_extents_total_rows(&segbmap->extents,
+	total_rows = ssdfs_meta_extents_total_rows(&segbmap->extents.array,
 						   SSDFS_SEGBMAP_SEG_COPY_MAX);
 
 	for (i = 0; i < total_rows; i++) {
 		struct ssdfs_meta_area_extent extent;
 		u32 len1 = 0, len2 = 0;
 
-		err = ssdfs_meta_extents_get(&segbmap->extents,
+		err = ssdfs_meta_extents_get(&segbmap->extents.array,
 					     SSDFS_SEGBMAP_SEG_COPY_MAX,
 					     SSDFS_MAIN_SEGBMAP_SEG,
 					     i,
@@ -232,7 +232,7 @@ int ssdfs_segbmap_define_segment_counts(struct ssdfs_segment_bmap *segbmap)
 		len1 = le32_to_cpu(extent.len);
 
 		if (segbmap->flags & SSDFS_SEGBMAP_HAS_COPY) {
-			err = ssdfs_meta_extents_get(&segbmap->extents,
+			err = ssdfs_meta_extents_get(&segbmap->extents.array,
 						     SSDFS_SEGBMAP_SEG_COPY_MAX,
 						     SSDFS_COPY_SEGBMAP_SEG,
 						     i,
@@ -317,7 +317,7 @@ int ssdfs_segbmap_define_seg_id(struct ssdfs_segment_bmap *segbmap,
 
 	*seg_id = U64_MAX;
 
-	total_rows = ssdfs_meta_extents_total_rows(&segbmap->extents,
+	total_rows = ssdfs_meta_extents_total_rows(&segbmap->extents.array,
 						   SSDFS_SEGBMAP_SEG_COPY_MAX);
 
 	for (i = 0; i < total_rows; i++) {
@@ -325,7 +325,7 @@ int ssdfs_segbmap_define_seg_id(struct ssdfs_segment_bmap *segbmap,
 		u64 start_seg;
 		u32 len;
 
-		err = ssdfs_meta_extents_get(&segbmap->extents,
+		err = ssdfs_meta_extents_get(&segbmap->extents.array,
 					     SSDFS_SEGBMAP_SEG_COPY_MAX,
 					     array_type, i, &extent);
 		if (!err)
@@ -1055,7 +1055,7 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 					&fsi->vh->segbmap.extents[0][0],
 					SSDFS_SEGBMAP_RESERVED_EXTENTS,
 					SSDFS_SEGBMAP_SEG_COPY_MAX,
-					&ptr->extents);
+					&ptr->extents.array);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create segbmap's extents array: "
 			  "err %d\n", err);
@@ -1155,7 +1155,7 @@ free_fragment_bmaps:
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
 
 free_overflow_extents:
-	ssdfs_dynamic_array_destroy(&fsi->segbmap->extents);
+	ssdfs_dynamic_array_destroy(&fsi->segbmap->extents.array);
 
 free_segbmap_object:
 	ssdfs_seg_bmap_kfree(fsi->segbmap);
@@ -1486,7 +1486,7 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
 	ssdfs_segbmap_destroy_fragment_descriptors(fsi->segbmap);
 
-	ssdfs_dynamic_array_destroy(&fsi->segbmap->extents);
+	ssdfs_dynamic_array_destroy(&fsi->segbmap->extents.array);
 
 	up_write(&fsi->segbmap->search_lock);
 	up_write(&fsi->segbmap->resize_lock);
@@ -1920,7 +1920,7 @@ void ssdfs_sb_segbmap_header_correct_state(struct ssdfs_segment_bmap *segbmap)
 			struct ssdfs_meta_area_extent extent;
 			int err;
 
-			err = ssdfs_meta_extents_get(&segbmap->extents,
+			err = ssdfs_meta_extents_get(&segbmap->extents.array,
 						     SSDFS_SEGBMAP_SEG_COPY_MAX,
 						     chain, row, &extent);
 			if (unlikely(err)) {

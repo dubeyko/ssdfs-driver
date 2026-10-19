@@ -20,25 +20,53 @@
  * struct ssdfs_payload_content - cached content of a payload area
  * @batch: folios that keep the area's on-disk encoded content
  * @bytes_count: size of the meaningful content in bytes
+ * @compr_type: compression type of the encoded content
+ * @max_fragment_bytes: size of the biggest encoded fragment in bytes
+ *                      (0 - the content isn't the fragments' chain)
  *
  * This is the on-disk encoded form of a superblock segment's payload
  * area (the PEB mapping table cache, or a metadata extents area).
+ *
+ * The PEB mapping table cache's content can be in two states:
+ * (1) SSDFS_COMPR_NONE - the sequence of the cache's fragments
+ *     (every fragment occupies its own memory page);
+ * (2) SSDFS_COMPR_ZLIB/LZO/LZ4/ZSTD - the chain of
+ *     struct ssdfs_maptbl_cache_table tables with compressed fragments.
  */
 struct ssdfs_payload_content {
 	struct ssdfs_folio_vector batch;
 	u32 bytes_count;
+	int compr_type;
+	u32 max_fragment_bytes;
+};
+
+/*
+ * Kinds of payload areas that are stored as fragments' chain
+ *
+ * The metadata extents area and the compressed PEB mapping table cache
+ * area have the same structure: the chain of tables (struct
+ * ssdfs_metadata_extents_table or struct ssdfs_maptbl_cache_table) and
+ * every table describes up to SSDFS_FRAGMENTS_CHAIN_MAX fragments.
+ * Both tables have the identical layout.
+ */
+enum {
+	SSDFS_META_EXTENTS_PAYLOAD,
+	SSDFS_MAPTBL_CACHE_PAYLOAD,
+	SSDFS_PAYLOAD_KIND_MAX
 };
 
 /*
  * struct ssdfs_payload_iterator - payload iterator
+ * @kind: kind of payload area
  * @cur_offset: current offset in payload
  * @fragment_id: current fragment ID
  * @area: area descriptor
- * @tbl: metadata extents table descriptor
+ * @tbl: fragments' chain table descriptor
  * @buffer: buffer descriptor
  * @raw_buf: raw buffer
  */
 struct ssdfs_payload_iterator {
+	int kind;
 	u32 cur_offset;
 	u8 fragment_id;
 
@@ -46,6 +74,44 @@ struct ssdfs_payload_iterator {
 	struct ssdfs_metadata_extents_table tbl;
 	struct ssdfs_buffer buffer;
 	u8 raw_buf[PAGE_SIZE];
+};
+
+/*
+ * struct ssdfs_meta_extents_area_info - known size of overflow extents area
+ * @is_known: is the size of the encoded area known?
+ * @compr_type: compression type the area has been encoded with
+ * @uncompr_bytes: size of the area in uncompressed state
+ * @bytes_count: size of the encoded area in bytes
+ *
+ * The overflow metadata extents of segment bitmap and PEB mapping table
+ * are defined during mkfs phase and the number of extents doesn't change
+ * later. So, the size of the encoded area is defined by the first
+ * encoding of the area and it is reused for the estimation of
+ * superblock segment's log size. The size is valid only for the same
+ * compression type and the same size of the uncompressed area.
+ */
+struct ssdfs_meta_extents_area_info {
+	bool is_known;
+	int compr_type;
+	u32 uncompr_bytes;
+	u32 bytes_count;
+};
+
+/*
+ * struct ssdfs_meta_extents - metadata extents of metadata structure
+ * @array: metadata extents array (every row, embedded and overflow)
+ * @area: known size of the encoded overflow extents area
+ *
+ * The segment bitmap and the PEB mapping table keep the rows of main
+ * and copy extents of their segments. The embedded rows are stored in
+ * the volume header and the overflow rows are stored in the payload
+ * area of superblock segment's log. The size of the encoded overflow
+ * area is kept for the estimation of superblock segment's log size
+ * (it is accessed under fsi->volume_sem).
+ */
+struct ssdfs_meta_extents {
+	struct ssdfs_dynamic_array array;
+	struct ssdfs_meta_extents_area_info area;
 };
 
 /*
@@ -190,12 +256,36 @@ int ssdfs_encode_meta_extents_payload(struct ssdfs_payload_content *snapshot,
 				      int compr_type,
 				      struct ssdfs_payload_content *payload);
 
+int ssdfs_encode_maptbl_cache_payload(struct ssdfs_payload_content *snapshot,
+				      int compr_type,
+				      struct ssdfs_payload_content *payload);
+
 int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi);
+int ssdfs_area_compr_type(u16 flags);
+int ssdfs_snapshot_maptbl_cache_payload(struct ssdfs_fs_info *fsi,
+					u32 inline_capacity,
+					struct ssdfs_payload_content *payload);
+u16 ssdfs_area_compression_flag(int compr_type);
 
 void ssdfs_define_sb_log_layout(struct ssdfs_sb_log_layout *layout);
 u32 ssdfs_maptbl_cache_area_size(struct ssdfs_folio_vector *vector);
+u32 ssdfs_maptbl_cache_max_payload_size(u32 cache_bytes);
+u32 ssdfs_maptbl_cache_payload_size(struct ssdfs_payload_content *payload);
+void ssdfs_define_sb_log_payload_layout(struct ssdfs_sb_log_payload *payload,
+					struct ssdfs_sb_log_layout *layout);
 u32 ssdfs_meta_extents_max_payload_size(struct ssdfs_dynamic_array *extents,
 					u32 embedded_rows, u32 chains_count);
+u32 ssdfs_meta_extents_estimate_area_size(struct ssdfs_meta_extents_area_info *info,
+					  u32 uncompr_bytes, int compr_type);
+u32 ssdfs_maptbl_cache_estimate_area_size(u32 fragments_count,
+					  u32 last_fragment_bytes,
+					  u32 max_fragment_bytes);
+int ssdfs_encode_payload_fragment(int compr_type,
+				  void *src, u32 uncompr_size,
+				  void *dst, u32 dst_size,
+				  u32 *encoded_size, bool *is_compressed);
+int ssdfs_estimate_sb_log_layout(struct super_block *sb,
+				 struct ssdfs_sb_log_layout *layout);
 int ssdfs_snapshot_sb_log_payload(struct super_block *sb,
 				  struct ssdfs_sb_log_payload *payload);
 void ssdfs_prepare_maptbl_cache_descriptor(struct ssdfs_metadata_descriptor *desc,

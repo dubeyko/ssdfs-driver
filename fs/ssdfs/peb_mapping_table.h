@@ -146,7 +146,6 @@ struct ssdfs_maptbl_area {
  * @pebs_per_stripe: count of PEB descriptors in stripe
  * @stripes_per_fragment: count of stripes in fragment
  * @extents: metadata extents (rows of main and copy extents)
- *          that describe mapping table location.
  * @segs: xarrays of pointers on segment objects (main and copy)
  * @segs_count: count of segment objects are used for mapping table
  * @state: mapping table's state
@@ -176,7 +175,7 @@ struct ssdfs_peb_mapping_table {
 	u16 pebs_per_fragment;
 	u16 pebs_per_stripe;
 	u16 stripes_per_fragment;
-	struct ssdfs_dynamic_array extents;
+	struct ssdfs_meta_extents extents;
 	struct xarray segs[SSDFS_MAPTBL_SEG_COPY_MAX];
 	u16 segs_count;
 

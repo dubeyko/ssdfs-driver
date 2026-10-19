@@ -322,12 +322,12 @@ static int ssdfs_remount_fs(struct fs_context *fc, struct super_block *sb)
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare sb log: err %d\n",
 				  err);
-		}
-
-		err = ssdfs_snapshot_sb_log_payload(sb, &payload);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to snapshot sb log's payload: err %d\n",
-				  err);
+		} else {
+			err = ssdfs_snapshot_sb_log_payload(sb, &payload);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to snapshot sb log's payload: "
+					  "err %d\n", err);
+			}
 		}
 
 		if (!err) {
@@ -353,12 +353,12 @@ static int ssdfs_remount_fs(struct fs_context *fc, struct super_block *sb)
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare sb log: err %d\n",
 				  err);
-		}
-
-		err = ssdfs_snapshot_sb_log_payload(sb, &payload);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to snapshot sb log's payload: err %d\n",
-				  err);
+		} else {
+			err = ssdfs_snapshot_sb_log_payload(sb, &payload);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to snapshot sb log's payload: "
+					  "err %d\n", err);
+			}
 		}
 
 		if (!err) {
@@ -829,52 +829,49 @@ static const struct super_operations ssdfs_super_operations = {
 };
 
 /*
- * ssdfs_define_sb_log_size() - define upper bound of sb log's size
+ * ssdfs_define_sb_log_size() - define size of sb log
  * @sb: superblock object
+ * @payload: snapshot of payload areas (NULL - estimate the size)
+ * @log_size: size of the log in pages [out]
  *
- * The payload areas are snapshotted after the place of the log has
- * been defined. So, this method uses the upper bound of every area's
- * size: the uncompressed size of the overflow extents and the whole
- * pages of the maptbl cache. The real log can be shorter and the next
- * log is placed right after the real log (see ssdfs_commit_sb_log()).
+ * If @payload is NULL, then the size of the log is estimated without
+ * taking the snapshot of the payload areas (see
+ * ssdfs_estimate_sb_log_layout()). Otherwise, the size of the log
+ * is defined by the real sizes of @payload's areas.
  *
- * RETURN: upper bound of the log's size in pages.
+ * RETURN:
+ * [success] - @log_size contains the size of the log in pages.
+ * [failure] - error code.
  */
-static u32 ssdfs_define_sb_log_size(struct super_block *sb)
+static int ssdfs_define_sb_log_size(struct super_block *sb,
+				    struct ssdfs_sb_log_payload *payload,
+				    u32 *log_size)
 {
-	struct ssdfs_fs_info *fsi;
-	struct ssdfs_sb_log_layout layout = {0};
+	struct ssdfs_sb_log_layout layout;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!sb);
+	BUG_ON(!sb || !log_size);
 
-	SSDFS_DBG("sb %p\n", sb);
+	SSDFS_DBG("sb %p, payload %p\n", sb, payload);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	fsi = SSDFS_FS_I(sb);
+	*log_size = 0;
 
-	if (fsi->segbmap) {
-		layout.size[SSDFS_SB_LOG_SEGBMAP_EXTENTS] =
-			ssdfs_meta_extents_max_payload_size(
-					&fsi->segbmap->extents,
-					SSDFS_SEGBMAP_RESERVED_EXTENTS,
-					SSDFS_SEGBMAP_SEG_COPY_MAX);
+	if (payload) {
+		ssdfs_define_sb_log_payload_layout(payload, &layout);
+	} else {
+		err = ssdfs_estimate_sb_log_layout(sb, &layout);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to estimate sb log's layout: "
+				  "err %d\n", err);
+			return err;
+		}
 	}
 
-	if (fsi->maptbl) {
-		layout.size[SSDFS_SB_LOG_MAPTBL_EXTENTS] =
-			ssdfs_meta_extents_max_payload_size(
-					&fsi->maptbl->extents,
-					SSDFS_MAPTBL_RESERVED_EXTENTS,
-					SSDFS_MAPTBL_SEG_COPY_MAX);
-	}
+	*log_size = layout.log_pages;
 
-	layout.size[SSDFS_SB_LOG_MAPTBL_CACHE] =
-		atomic_read(&fsi->maptbl_cache.bytes_count);
-
-	ssdfs_define_sb_log_layout(&layout);
-
-	return layout.log_pages;
+	return 0;
 }
 
 static inline
@@ -1065,11 +1062,11 @@ int ssdfs_write_padding_in_sb_segs_pair(struct super_block *sb,
 }
 
 static int ssdfs_define_next_sb_log_place(struct super_block *sb,
-					  struct ssdfs_peb_extent *last_sb_log)
+					  struct ssdfs_peb_extent *last_sb_log,
+					  u32 log_size)
 {
 	struct ssdfs_fs_info *fsi;
 	u32 offset;
-	u32 log_size;
 	u64 cur_peb, prev_peb;
 	u64 cur_leb;
 	u32 pages_per_peb;
@@ -1107,9 +1104,8 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 
 	offset = fsi->sbi.last_log.page_offset;
 
-	log_size = ssdfs_define_sb_log_size(sb);
-	if (log_size > pages_per_peb) {
-		SSDFS_ERR("log_size %u > pages_per_peb %u\n",
+	if (log_size == 0 || log_size > pages_per_peb) {
+		SSDFS_ERR("invalid log_size %u: pages_per_peb %u\n",
 			  log_size, pages_per_peb);
 		return -ERANGE;
 	}
@@ -2026,6 +2022,7 @@ static int ssdfs_snapshot_new_sb_pebs_array(struct super_block *sb)
 	struct ssdfs_requests_queue *rq;
 	u64 offset;
 	u32 log_blocks;
+	u32 pages_per_peb;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2038,6 +2035,12 @@ static int ssdfs_snapshot_new_sb_pebs_array(struct super_block *sb)
 
 	fsi->sb_snapi.need_snapshot_sb = true;
 
+	/*
+	 * Superblock snapshot segment uses 4KB page always.
+	 * It needs to calculate pages_per_peb value.
+	 */
+	pages_per_peb = fsi->erasesize / PAGE_SIZE;
+
 	last_log = &fsi->sb_snapi.last_log;
 	offset = last_log->page_offset + last_log->pages_count;
 	log_blocks = last_log->pages_count;
@@ -2047,12 +2050,12 @@ static int ssdfs_snapshot_new_sb_pebs_array(struct super_block *sb)
 		  last_log->page_offset, last_log->pages_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (offset > fsi->pages_per_peb) {
+	if (offset > pages_per_peb) {
 		SSDFS_ERR("last log has inconsistent state: "
 			  "offset %llu > pages_per_peb %u\n",
-			  offset, fsi->pages_per_peb);
+			  offset, pages_per_peb);
 		return -ERANGE;
-	} else if ((offset + log_blocks) > fsi->pages_per_peb) {
+	} else if ((offset + log_blocks) > pages_per_peb) {
 		req = ssdfs_request_alloc();
 		if (IS_ERR_OR_NULL(req)) {
 			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
@@ -2144,20 +2147,34 @@ static int ssdfs_move_on_next_sb_segs_pair(struct super_block *sb)
 	return 0;
 }
 
+/*
+ * __ssdfs_prepare_sb_log() - define place of sb log
+ * @sb: superblock object
+ * @payload: snapshot of payload areas (NULL - estimate the log's size)
+ * @last_sb_log: place of the log [out]
+ */
 static
-int ssdfs_prepare_sb_log(struct super_block *sb,
-			 struct ssdfs_peb_extent *last_sb_log)
+int __ssdfs_prepare_sb_log(struct super_block *sb,
+			   struct ssdfs_sb_log_payload *payload,
+			   struct ssdfs_peb_extent *last_sb_log)
 {
+	u32 log_size;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!sb || !last_sb_log);
 
-	SSDFS_DBG("sb %p, last_sb_log %p\n",
-		  sb, last_sb_log);
+	SSDFS_DBG("sb %p, payload %p, last_sb_log %p\n",
+		  sb, payload, last_sb_log);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_define_next_sb_log_place(sb, last_sb_log);
+	err = ssdfs_define_sb_log_size(sb, payload, &log_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define sb log size: err %d\n", err);
+		return err;
+	}
+
+	err = ssdfs_define_next_sb_log_place(sb, last_sb_log, log_size);
 	switch (err) {
 	case -EFBIG: /* current sb segment is exhausted */
 	case -EIO: /* current sb segment is corrupted */
@@ -2167,7 +2184,15 @@ int ssdfs_prepare_sb_log(struct super_block *sb,
 				  err);
 			return err;
 		}
-		err = ssdfs_define_next_sb_log_place(sb, last_sb_log);
+
+		err = ssdfs_define_sb_log_size(sb, payload, &log_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to define sb log size: err %d\n", err);
+			return err;
+		}
+
+		err = ssdfs_define_next_sb_log_place(sb, last_sb_log,
+						     log_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to define next sb log place: err %d\n",
 				  err);
@@ -2182,6 +2207,89 @@ int ssdfs_prepare_sb_log(struct super_block *sb,
 			return err;
 		}
 		break;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_prepare_sb_log() - define place of sb log
+ * @sb: superblock object
+ * @last_sb_log: place of the log [out]
+ *
+ * The place of the log is defined by the estimated size of the log
+ * because the payload areas are snapshotted later. The real log can be
+ * bigger than the estimated one. The commit checks that the real log
+ * fits into the PEB (see ssdfs_check_sb_log_place()).
+ */
+static
+int ssdfs_prepare_sb_log(struct super_block *sb,
+			 struct ssdfs_peb_extent *last_sb_log)
+{
+	return __ssdfs_prepare_sb_log(sb, NULL, last_sb_log);
+}
+
+/*
+ * ssdfs_check_sb_log_place() - check that the real log fits into the PEB
+ * @sb: superblock object
+ * @payload: snapshot of payload areas
+ * @last_sb_log: place of the log [in|out]
+ *
+ * The place of the log has been defined by the estimated size of
+ * the log (see ssdfs_prepare_sb_log()). If the real log is bigger
+ * than the estimated one and the real log doesn't fit into the rest
+ * of the PEB, then the place of the log is defined again by the real
+ * size of the log (the padding is written and the log is placed into
+ * the next superblock segments' pair).
+ *
+ * The caller has to hold fsi->volume_sem.
+ */
+static
+int ssdfs_check_sb_log_place(struct super_block *sb,
+			     struct ssdfs_sb_log_payload *payload,
+			     struct ssdfs_peb_extent *last_sb_log)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	struct ssdfs_sb_log_layout layout;
+	u32 pages_per_peb;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!sb || !payload || !last_sb_log);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	/*
+	 * Superblock segment uses 4KB page always.
+	 * It needs to calculate pages_per_peb value.
+	 */
+	pages_per_peb = fsi->erasesize / PAGE_SIZE;
+
+	ssdfs_define_sb_log_payload_layout(payload, &layout);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("page_offset %u, reserved pages %u, "
+		  "real log_pages %u, pages_per_peb %u\n",
+		  last_sb_log->page_offset, last_sb_log->pages_count,
+		  layout.log_pages, pages_per_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (last_sb_log->page_offset <= pages_per_peb &&
+	    layout.log_pages <= (pages_per_peb - last_sb_log->page_offset)) {
+		/* the real log fits into the PEB */
+		last_sb_log->pages_count = layout.log_pages;
+		return 0;
+	}
+
+	SSDFS_DBG("real log doesn't fit into the PEB: "
+		  "page_offset %u, reserved pages %u, "
+		  "real log_pages %u, pages_per_peb %u\n",
+		  last_sb_log->page_offset, last_sb_log->pages_count,
+		  layout.log_pages, pages_per_peb);
+
+	err = __ssdfs_prepare_sb_log(sb, payload, last_sb_log);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define place of sb log: err %d\n", err);
+		return err;
 	}
 
 	return 0;
@@ -2605,7 +2713,11 @@ loff_t ssdfs_sb_snapshot_log_offset(struct ssdfs_fs_info *fsi,
  * @folio: memory folio for the header's block
  *
  * The log of the initial snapshot segment consists of the segment
- * header and the log footer only.
+ * header and the log footer only. The header is the copy of the current
+ * superblock segment's header. But the initial snapshot segment doesn't
+ * keep the payload of superblock segment's log (PEB mapping table cache,
+ * metadata extents of segment bitmap and PEB mapping table). So, all
+ * metadata descriptors, except the log footer's one, are cleared.
  */
 static
 int ssdfs_write_sb_snapshot_header(struct super_block *sb,
@@ -2613,7 +2725,9 @@ int ssdfs_write_sb_snapshot_header(struct super_block *sb,
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct ssdfs_segment_header *hdr;
+	struct ssdfs_metadata_descriptor *footer_desc;
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
+	size_t footer_size = sizeof(struct ssdfs_log_footer);
 	loff_t peb_offset, offset;
 	int err;
 
@@ -2635,6 +2749,14 @@ int ssdfs_write_sb_snapshot_header(struct super_block *sb,
 	hdr->seg_type = cpu_to_le16(SSDFS_INITIAL_SNAPSHOT_SEG_TYPE);
 	hdr->seg_flags = cpu_to_le32(SSDFS_LOG_HAS_FOOTER);
 	hdr->log_pages = cpu_to_le16(2); /* header + footer */
+
+	memset(hdr->desc_array, 0, sizeof(hdr->desc_array));
+	/* offsets of metadata descriptors are relative to the PEB */
+	footer_desc = &hdr->desc_array[SSDFS_LOG_FOOTER_INDEX];
+	footer_desc->offset = cpu_to_le32((u32)(offset - peb_offset +
+						PAGE_SIZE));
+	footer_desc->size = cpu_to_le32(footer_size);
+
 	hdr->volume_hdr.check.bytes = cpu_to_le16(hdr_size);
 	hdr->volume_hdr.check.flags = cpu_to_le16(SSDFS_CRC32);
 	err = ssdfs_calculate_csum(&hdr->volume_hdr.check,
@@ -2963,13 +3085,6 @@ release_body:
  * @last_sb_log: place of the log
  * @payload: payload areas
  * @log_pages: real size of the committed log in pages [out]
- *
- * This method defines the log's layout by the real sizes of payload
- * areas and commits the log. The real log can be shorter or longer
- * than the space reserved by ssdfs_define_sb_log_size() (the payload
- * is snapshotted after the reservation): the log only has to fit into
- * the PEB (it is checked by __ssdfs_commit_sb_log()). The caller has
- * to place the next log right after the real log (@log_pages).
  */
 static int ssdfs_commit_sb_log(struct super_block *sb,
 				u64 timestamp, u64 cno,
@@ -2978,7 +3093,7 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 				u32 *log_pages)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-	struct ssdfs_sb_log_layout layout = {0};
+	struct ssdfs_sb_log_layout layout;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2992,14 +3107,7 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 
 	*log_pages = 0;
 
-	layout.size[SSDFS_SB_LOG_SEGBMAP_EXTENTS] =
-				payload->segbmap_meta_extents.bytes_count;
-	layout.size[SSDFS_SB_LOG_MAPTBL_EXTENTS] =
-				payload->maptbl_meta_extents.bytes_count;
-	layout.size[SSDFS_SB_LOG_MAPTBL_CACHE] =
-		ssdfs_maptbl_cache_area_size(&payload->maptbl_cache.batch);
-
-	ssdfs_define_sb_log_layout(&layout);
+	ssdfs_define_sb_log_payload_layout(payload, &layout);
 
 	if (fsi->sb_snapi.req != NULL) {
 		struct ssdfs_segment_request *req = fsi->sb_snapi.req;
@@ -3074,6 +3182,12 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 	    !ssdfs_test_opt(fsi->mount_opts, IGNORE_FS_STATE)) {
 		SSDFS_DBG("refuse commit superblock: fs erroneous state\n");
 		return 0;
+	}
+
+	err = ssdfs_check_sb_log_place(sb, payload, last_sb_log);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to check place of sb log: err %d\n", err);
+		return err;
 	}
 
 	mutex_lock(&fsi->tunefs_request.lock);
@@ -3902,12 +4016,12 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare sb log: err %d\n",
 				  err);
-		}
-
-		err = ssdfs_snapshot_sb_log_payload(sb, &payload);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to snapshot sb log's payload: err %d\n",
-				  err);
+		} else {
+			err = ssdfs_snapshot_sb_log_payload(sb, &payload);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to snapshot sb log's payload: err %d\n",
+					  err);
+			}
 		}
 
 		if (!err) {
@@ -4413,7 +4527,7 @@ static void ssdfs_quiesce(struct super_block *sb)
 		if (can_commit_super) {
 			err = ssdfs_snapshot_sb_log_payload(sb, &payload);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to snapshot log's payload: "
+				SSDFS_ERR("fail to snapshot sb log's payload: "
 					  "err %d\n", err);
 			} else {
 				err = ssdfs_commit_super(sb, SSDFS_VALID_FS,
@@ -4437,14 +4551,15 @@ static void ssdfs_quiesce(struct super_block *sb)
 
 			err = ssdfs_prepare_sb_log(sb, &last_sb_log);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare sb log: err %d\n",
-					  err);
-			}
-
-			err = ssdfs_snapshot_sb_log_payload(sb, &payload);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to snapshot log's payload: "
+				SSDFS_ERR("fail to prepare sb log: "
 					  "err %d\n", err);
+			} else {
+				err = ssdfs_snapshot_sb_log_payload(sb,
+								    &payload);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to snapshot sb log's "
+						  "payload: err %d\n", err);
+				}
 			}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL

@@ -146,7 +146,6 @@ enum {
  * @fragments_per_peb: segbmap's fragments per PEB
  * @fragment_size: size of fragment in bytes
  * @extents: metadata extents (rows of main and copy extents)
- *          that describe segment bitmap location.
  * @segs_count: count of segment objects are used for segment bitmap
  * @segs: xarrays of pointers on segment objects (main and copy)
  * @search_lock: lock for search and change state operations
@@ -165,7 +164,7 @@ struct ssdfs_segment_bmap {
 	u16 fragments_per_seg;
 	u16 fragments_per_peb;
 	u16 fragment_size;
-	struct ssdfs_dynamic_array extents;
+	struct ssdfs_meta_extents extents;
 	u16 segs_count;
 	struct xarray segs[SSDFS_SEGBMAP_SEG_COPY_MAX];
 
@@ -397,7 +396,7 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 		  bmap->fragments_count, bmap->fragments_per_seg,
 		  bmap->fragments_per_peb, bmap->fragment_size);
 
-	total_rows = ssdfs_meta_extents_total_rows(&bmap->extents,
+	total_rows = ssdfs_meta_extents_total_rows(&bmap->extents.array,
 						   SSDFS_SEGBMAP_SEG_COPY_MAX);
 
 	for (i = 0; i < total_rows; i++) {
@@ -405,7 +404,7 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 			struct ssdfs_meta_area_extent extent;
 			int err;
 
-			err = ssdfs_meta_extents_get(&bmap->extents,
+			err = ssdfs_meta_extents_get(&bmap->extents.array,
 						     SSDFS_SEGBMAP_SEG_COPY_MAX,
 						     j, i, &extent);
 			if (unlikely(err))

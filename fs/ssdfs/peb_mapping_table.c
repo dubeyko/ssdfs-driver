@@ -602,14 +602,14 @@ int ssdfs_maptbl_define_segment_counts(struct ssdfs_peb_mapping_table *tbl)
 	SSDFS_DBG("tbl %p\n", tbl);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	total_rows = ssdfs_meta_extents_total_rows(&tbl->extents,
+	total_rows = ssdfs_meta_extents_total_rows(&tbl->extents.array,
 						   SSDFS_MAPTBL_SEG_COPY_MAX);
 
 	for (i = 0; i < total_rows; i++) {
 		struct ssdfs_meta_area_extent extent;
 		u32 len1 = 0, len2 = 0;
 
-		err = ssdfs_meta_extents_get(&tbl->extents,
+		err = ssdfs_meta_extents_get(&tbl->extents.array,
 					     SSDFS_MAPTBL_SEG_COPY_MAX,
 					     SSDFS_MAIN_MAPTBL_SEG,
 					     i,
@@ -629,7 +629,7 @@ int ssdfs_maptbl_define_segment_counts(struct ssdfs_peb_mapping_table *tbl)
 		len1 = le32_to_cpu(extent.len);
 
 		if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY) {
-			err = ssdfs_meta_extents_get(&tbl->extents,
+			err = ssdfs_meta_extents_get(&tbl->extents.array,
 						     SSDFS_MAPTBL_SEG_COPY_MAX,
 						     SSDFS_COPY_MAPTBL_SEG,
 						     i,
@@ -725,7 +725,7 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 	log_pages = le16_to_cpu(fsi->vh->maptbl_log_pages);
 	create_threads = fsi->create_threads_per_seg;
 
-	total_rows = ssdfs_meta_extents_total_rows(&tbl->extents,
+	total_rows = ssdfs_meta_extents_total_rows(&tbl->extents.array,
 						   SSDFS_MAPTBL_SEG_COPY_MAX);
 
 	for (i = 0; i < total_rows; i++) {
@@ -733,7 +733,7 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 		u64 start_seg;
 		u32 len;
 
-		err = ssdfs_meta_extents_get(&tbl->extents,
+		err = ssdfs_meta_extents_get(&tbl->extents.array,
 					     SSDFS_MAPTBL_SEG_COPY_MAX,
 					     array_type,
 					     i,
@@ -1159,7 +1159,7 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 					&fsi->vh->maptbl.extents[0][0],
 					SSDFS_MAPTBL_RESERVED_EXTENTS,
 					SSDFS_MAPTBL_SEG_COPY_MAX,
-					&ptr->extents);
+					&ptr->extents.array);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create maptbl's extents array: "
 			  "err %d\n", err);
@@ -1278,7 +1278,7 @@ free_dirty_bmap:
 	fsi->maptbl->dirty_bmap = NULL;
 
 free_overflow_extents:
-	ssdfs_dynamic_array_destroy(&fsi->maptbl->extents);
+	ssdfs_dynamic_array_destroy(&fsi->maptbl->extents.array);
 
 free_maptbl_object:
 	ssdfs_map_tbl_kfree(fsi->maptbl);
@@ -1315,7 +1315,7 @@ void ssdfs_maptbl_destroy(struct ssdfs_fs_info *fsi)
 	ssdfs_maptbl_destroy_segments(fsi->maptbl);
 	ssdfs_maptbl_destroy_fragments(fsi);
 
-	ssdfs_dynamic_array_destroy(&fsi->maptbl->extents);
+	ssdfs_dynamic_array_destroy(&fsi->maptbl->extents.array);
 
 	ssdfs_map_tbl_kfree(fsi->maptbl->dirty_bmap);
 	fsi->maptbl->dirty_bmap = NULL;
@@ -2174,7 +2174,7 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 			struct ssdfs_meta_area_extent extent;
 			int err;
 
-			err = ssdfs_meta_extents_get(&tbl->extents,
+			err = ssdfs_meta_extents_get(&tbl->extents.array,
 						     SSDFS_MAPTBL_SEG_COPY_MAX,
 						     chain, row, &extent);
 			if (unlikely(err)) {
@@ -14181,7 +14181,7 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 		  tbl->pebs_per_fragment, tbl->pebs_per_stripe,
 		  tbl->stripes_per_fragment);
 
-	total_rows = ssdfs_meta_extents_total_rows(&tbl->extents,
+	total_rows = ssdfs_meta_extents_total_rows(&tbl->extents.array,
 						   SSDFS_MAPTBL_SEG_COPY_MAX);
 
 	SSDFS_DBG("total_rows %u\n", total_rows);
@@ -14191,7 +14191,7 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 			struct ssdfs_meta_area_extent extent;
 			int err;
 
-			err = ssdfs_meta_extents_get(&tbl->extents,
+			err = ssdfs_meta_extents_get(&tbl->extents.array,
 						     SSDFS_MAPTBL_SEG_COPY_MAX,
 						     j, i, &extent);
 			if (unlikely(err))
