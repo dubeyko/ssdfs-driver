@@ -644,7 +644,7 @@ int ssdfs_shextree_add(struct ssdfs_shared_extents_tree *tree,
 		return -ERANGE;
 	};
 
-	down_read(&tree->lock);
+	down_write(&tree->lock);
 
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
 	if (err == -ENODATA) {
@@ -715,7 +715,7 @@ int ssdfs_shextree_add(struct ssdfs_shared_extents_tree *tree,
 	}
 
 finish_add_shared_extent:
-	up_read(&tree->lock);
+	up_write(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -800,7 +800,7 @@ int ssdfs_shextree_change(struct ssdfs_shared_extents_tree *tree,
 		search->request.count = 1;
 	}
 
-	down_read(&tree->lock);
+	down_write(&tree->lock);
 
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
 	if (unlikely(err)) {
@@ -849,7 +849,7 @@ int ssdfs_shextree_change(struct ssdfs_shared_extents_tree *tree,
 	ssdfs_btree_search_forget_child_node(search);
 
 finish_change_shared_extent:
-	up_read(&tree->lock);
+	up_write(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -933,7 +933,7 @@ int ssdfs_shextree_ref_count_inc(struct ssdfs_shared_extents_tree *tree,
 		search->request.count = 1;
 	}
 
-	down_read(&tree->lock);
+	down_write(&tree->lock);
 
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
 	if (unlikely(err)) {
@@ -959,7 +959,7 @@ int ssdfs_shextree_ref_count_inc(struct ssdfs_shared_extents_tree *tree,
 	ssdfs_btree_search_forget_child_node(search);
 
 finish_change_shared_extent:
-	up_read(&tree->lock);
+	up_write(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -1043,7 +1043,7 @@ int ssdfs_shextree_ref_count_dec(struct ssdfs_shared_extents_tree *tree,
 		search->request.count = 1;
 	}
 
-	down_read(&tree->lock);
+	down_write(&tree->lock);
 
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
 	if (unlikely(err)) {
@@ -1069,7 +1069,7 @@ int ssdfs_shextree_ref_count_dec(struct ssdfs_shared_extents_tree *tree,
 	ssdfs_btree_search_forget_child_node(search);
 
 finish_change_shared_extent:
-	up_read(&tree->lock);
+	up_write(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -1151,7 +1151,7 @@ int ssdfs_shextree_delete(struct ssdfs_shared_extents_tree *tree,
 		search->request.count = 1;
 	}
 
-	down_read(&tree->lock);
+	down_write(&tree->lock);
 
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
 	if (unlikely(err)) {
@@ -1241,7 +1241,7 @@ int ssdfs_shextree_delete(struct ssdfs_shared_extents_tree *tree,
 	}
 
 finish_delete_shared_extent:
-	up_read(&tree->lock);
+	up_write(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");

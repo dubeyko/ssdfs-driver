@@ -1111,9 +1111,20 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 		return -ENOMEM;
 	}
 
-	ssdfs_btree_search_init(search);
+	down_write(&ii->lock);
 
-	err = ssdfs_inodes_btree_find(itree, ino, search);
+	down_read(&itree->tree_lock);
+
+	ssdfs_btree_search_init(search);
+	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+	search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	search->request.start.hash = ino;
+	search->request.end.hash = ino;
+	search->request.count = 1;
+
+	err = ssdfs_btree_find_item(&itree->generic_tree, search);
 	if (unlikely(err)) {
 #ifdef CONFIG_SSDFS_TESTING
 		err = 0;
@@ -1125,10 +1136,12 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 			  "ino %llu, err %d\n",
 			  ino, err);
 #endif /* CONFIG_SSDFS_TESTING */
-		goto free_search_object;
 	}
 
-	down_write(&ii->lock);
+	up_read(&itree->tree_lock);
+
+	if (unlikely(err))
+		goto finish_write_inode;
 
 	ssdfs_init_raw_inode(ii);
 
@@ -1205,6 +1218,25 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 	ri->checksum = ssdfs_crc32_le(ri, raw_inode_size);
 
+	down_read(&itree->tree_lock);
+
+	ssdfs_btree_search_init(search);
+	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+	search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	search->request.start.hash = ino;
+	search->request.end.hash = ino;
+	search->request.count = 1;
+
+	err = ssdfs_btree_find_item(&itree->generic_tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find inode: "
+			  "ino %llu, err %d\n",
+			  ino, err);
+		goto finish_change_inode;
+	}
+
 	switch (search->result.raw_buf.state) {
 	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
@@ -1216,13 +1248,13 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 		SSDFS_ERR("invalid result's buffer state: "
 			  "%#x\n",
 			  search->result.raw_buf.state);
-		goto finish_write_inode;
+		goto finish_change_inode;
 	}
 
 	if (!search->result.raw_buf.place.ptr) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid buffer\n");
-		goto finish_write_inode;
+		goto finish_change_inode;
 	}
 
 	if (search->result.raw_buf.size < raw_inode_size) {
@@ -1230,7 +1262,7 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 		SSDFS_ERR("buf_size %zu < raw_inode_size %zu\n",
 			  search->result.raw_buf.size,
 			  raw_inode_size);
-		goto finish_write_inode;
+		goto finish_change_inode;
 	}
 
 	if (search->result.raw_buf.items_count != 1) {
@@ -1244,6 +1276,38 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 		     ri,
 		     0, raw_inode_size,
 		     raw_inode_size);
+
+	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
+	search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	search->request.start.hash = ino;
+	search->request.end.hash = ino;
+	search->request.count = 1;
+
+	err = ssdfs_btree_change_item(&itree->generic_tree, search);
+
+	ssdfs_btree_search_forget_parent_node(search);
+	ssdfs_btree_search_forget_child_node(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change inode: ino %llu, err %d\n",
+			  ino, err);
+		goto finish_change_inode;
+	}
+
+	if (ino == SSDFS_ROOT_INO) {
+		spin_lock(&itree->lock);
+		ssdfs_memcpy(&itree->root_folder,
+			     0, sizeof(struct ssdfs_inode),
+			     search->result.raw_buf.place.ptr,
+			     0, search->result.raw_buf.size,
+			     sizeof(struct ssdfs_inode));
+		spin_unlock(&itree->lock);
+	}
+
+finish_change_inode:
+	up_read(&itree->tree_lock);
 
 finish_write_inode:
 	up_write(&ii->lock);
@@ -1270,14 +1334,6 @@ finish_write_inode:
 			     0, xattr_desc_size,
 			     xattr_desc_size);
 		up_write(&fsi->volume_sem);
-	}
-
-	err = ssdfs_inodes_btree_change(itree, ino, search);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to change inode: "
-			  "ino %llu, err %d\n",
-			  ino, err);
-		goto free_search_object;
 	}
 
 free_search_object:

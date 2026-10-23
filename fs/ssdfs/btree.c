@@ -4917,6 +4917,7 @@ try_find_item_again:
 			goto finish_search_item;
 		} else {
 			err = 0;
+			search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
 			SSDFS_DBG("search result is obsolete!!!\n");
 			goto try_find_node;
 		}

@@ -61,6 +61,7 @@ struct ssdfs_free_inode_range_queue {
 
 /*
  * struct ssdfs_inodes_btree_info - inodes btree info
+ * @tree_lock: inodes btree lock
  * @generic_tree: generic btree description
  * @lock: inodes btree lock
  * @root_folder: copy of root folder's inode
@@ -76,6 +77,7 @@ struct ssdfs_free_inode_range_queue {
  * @fsi: pointer on shared file system object
  */
 struct ssdfs_inodes_btree_info {
+	struct rw_semaphore tree_lock;
 	struct ssdfs_btree generic_tree;
 
 	spinlock_t lock;
@@ -160,9 +162,6 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 int ssdfs_inodes_btree_find(struct ssdfs_inodes_btree_info *tree,
 			    u64 ino,
 			    struct ssdfs_btree_search *search);
-int ssdfs_inodes_btree_change(struct ssdfs_inodes_btree_info *tree,
-				u64 ino,
-				struct ssdfs_btree_search *search);
 int ssdfs_inodes_btree_delete(struct ssdfs_inodes_btree_info *tree,
 				u64 ino);
 int ssdfs_inodes_btree_delete_range(struct ssdfs_inodes_btree_info *tree,

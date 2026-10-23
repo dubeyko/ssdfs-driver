@@ -143,10 +143,6 @@ SSDFS_BLK_BMAP_STATE_FLAGS_FNS(INITIALIZED, initialized)
  */
 SSDFS_BLK_BMAP_STATE_FLAGS_FNS(DIRTY, dirty)
 
-static
-int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
-			    u32 blk, int blk_state);
-
 bool ssdfs_block_bmap_dirtied(struct ssdfs_block_bmap *blk_bmap)
 {
 	return is_block_bmap_dirty(blk_bmap);
@@ -178,16 +174,10 @@ void ssdfs_block_bmap_set_dirty_state(struct ssdfs_block_bmap *blk_bmap)
 }
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_set_dirty_state);
 
-static inline
-bool is_cache_invalid(struct ssdfs_block_bmap *blk_bmap, int blk_state);
 static
 int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 				struct ssdfs_block_bmap_range *range,
 				int blk_state);
-static
-int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
-					 u32 start, u32 max_blk,
-					 int blk_state, u32 *found_blk);
 static
 int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 				u32 start, u32 max_blk, int blk_state,
@@ -449,7 +439,6 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
 	size_t bmap_bytes = 0;
 	size_t bmap_folios = 0;
-	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -527,12 +516,6 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 		return err;
 	}
 
-	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		ptr->last_search[i].folio_index = max_capacity;
-		ptr->last_search[i].offset = U16_MAX;
-		ptr->last_search[i].cache = 0;
-	}
-
 	err = ssdfs_block_bmap_init_clean_storage(ptr, bmap_folios);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init clean bmap's storage: "
@@ -555,13 +538,6 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 				  range.start, range.len, init_state, err);
 			goto destroy_block_bmap;
 		}
-	}
-
-	err = ssdfs_cache_block_state(ptr, 0, SSDFS_BLK_FREE);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to cache last free page: err %d\n",
-			  err);
-		goto destroy_block_bmap;
 	}
 
 	set_block_bmap_initialized(ptr);
@@ -945,7 +921,6 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 	u32 start_item;
 	int free_pages;
 	int calculated;
-	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -967,6 +942,35 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			  "blk_bmap %p, source %p\n",
 			  blk_bmap, source);
 		return -EINVAL;
+	}
+
+	/*
+	 * Re-initialization of the block bitmap destroys the storage.
+	 * Check and drop the initialized state before any change of
+	 * the bitmap's geometry or storage, so the bitmap is never
+	 * marked as initialized without the storage.
+	 */
+	if (is_block_bmap_initialized(blk_bmap)) {
+		if (is_block_bmap_dirty(blk_bmap)) {
+			SSDFS_WARN("block bitmap has been initialized\n");
+			return -ERANGE;
+		}
+
+		free_pages = ssdfs_block_bmap_get_free_pages(blk_bmap);
+		if (unlikely(free_pages < 0)) {
+			err = free_pages;
+			SSDFS_ERR("fail to define free pages: err %d\n",
+				  err);
+			return err;
+		}
+
+		if (free_pages != blk_bmap->allocation_pool) {
+			SSDFS_WARN("block bitmap has been initialized\n");
+			return -ERANGE;
+		}
+
+		ssdfs_block_bmap_storage_destroy(&blk_bmap->storage);
+		clear_block_bmap_initialized(blk_bmap);
 	}
 
 	if (flags & SSDFS_INFLATED_BLK_BMAP) {
@@ -1062,35 +1066,6 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		}
 	}
 
-	if (is_block_bmap_initialized(blk_bmap)) {
-		if (is_block_bmap_dirty(blk_bmap)) {
-			SSDFS_WARN("block bitmap has been initialized\n");
-			return -ERANGE;
-		}
-
-		free_pages = ssdfs_block_bmap_get_free_pages(blk_bmap);
-		if (unlikely(free_pages < 0)) {
-			err = free_pages;
-			SSDFS_ERR("fail to define free pages: err %d\n",
-				  err);
-			return err;
-		}
-
-		if (free_pages != blk_bmap->allocation_pool) {
-			SSDFS_WARN("block bitmap has been initialized\n");
-			return -ERANGE;
-		}
-
-		for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-			blk_bmap->last_search[i].folio_index = max_capacity;
-			blk_bmap->last_search[i].offset = U16_MAX;
-			blk_bmap->last_search[i].cache = 0;
-		}
-
-		ssdfs_block_bmap_storage_destroy(&blk_bmap->storage);
-		clear_block_bmap_initialized(blk_bmap);
-	}
-
 	if (ssdfs_folio_vector_count(source) == 0) {
 		SSDFS_ERR("fail to init because of empty folio vector\n");
 		return -EINVAL;
@@ -1130,20 +1105,6 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		return err;
 	}
 
-	if (last_free_blk == blk_bmap->items_capacity) {
-		err = ssdfs_cache_block_state(blk_bmap, last_free_blk - 1,
-						SSDFS_BLK_FREE);
-	} else {
-		err = ssdfs_cache_block_state(blk_bmap, last_free_blk,
-						SSDFS_BLK_FREE);
-	}
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to cache last free page %u, err %d\n",
-			  last_free_blk, err);
-		return err;
-	}
-
 	blk_bmap->used_blks = 0;
 	start_item = 0;
 
@@ -1176,16 +1137,14 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_init);
  * ssdfs_define_last_free_page() - define last free page
  * @blk_bmap: pointer on block bitmap
  * @found_blk: found last free page [out]
+ *
+ * This function searches the first free block in the storage.
  */
 static
 int ssdfs_define_last_free_page(struct ssdfs_block_bmap *blk_bmap,
 				u32 *found_blk)
 {
-	int cache_type;
-	struct ssdfs_last_bmap_search *last_search;
-	u32 first_cached_blk;
 	u32 max_blk;
-	u32 items_per_long = SSDFS_ITEMS_PER_LONG(SSDFS_BLK_STATE_BITS);
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1195,78 +1154,25 @@ int ssdfs_define_last_free_page(struct ssdfs_block_bmap *blk_bmap,
 	BUG_ON(!blk_bmap || !found_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	cache_type = SSDFS_GET_CACHE_TYPE(SSDFS_BLK_FREE);
 	max_blk = blk_bmap->items_capacity;
 
+	err = ssdfs_block_bmap_find_block(blk_bmap,
+					  0, max_blk,
+					  SSDFS_BLK_FREE,
+					  found_blk);
+	if (err == -ENODATA) {
+		*found_blk = blk_bmap->items_capacity;
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(cache_type >= SSDFS_SEARCH_TYPE_MAX);
+		SSDFS_DBG("unable to find last free block: "
+			  "found_blk %u\n",
+			  *found_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	if (is_cache_invalid(blk_bmap, SSDFS_BLK_FREE)) {
-		err = ssdfs_block_bmap_find_block(blk_bmap,
-						  0, max_blk,
-						  SSDFS_BLK_FREE,
-						  found_blk);
-		if (err == -ENODATA) {
-			*found_blk = blk_bmap->items_capacity;
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to find last free block: "
-				  "found_blk %u\n",
-				  *found_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_define_last_free_page;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find last free block: err %d\n",
-				  err);
-			return err;
-		}
-	} else {
-		last_search = &blk_bmap->last_search[cache_type];
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		first_cached_blk = SSDFS_FIRST_CACHED_BLOCK(last_search);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("first_cached_blk %u\n",
-			  first_cached_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_block_bmap_find_block_in_cache(blk_bmap,
-							   first_cached_blk,
-							   max_blk,
-							   SSDFS_BLK_FREE,
-							   found_blk);
-		if (err == -ENODATA) {
-			first_cached_blk += items_per_long;
-			err = ssdfs_block_bmap_find_block(blk_bmap,
-							  first_cached_blk,
-							  max_blk,
-							  SSDFS_BLK_FREE,
-							  found_blk);
-			if (err == -ENODATA) {
-				*found_blk = blk_bmap->items_capacity;
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to find last free block: "
-					  "found_blk %u\n",
-					  *found_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto finish_define_last_free_page;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to find last free block: err %d\n",
-					  err);
-				return err;
-			}
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find last free block: err %d\n",
-				  err);
-			return err;
-		}
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find last free block: err %d\n",
+			  err);
+		return err;
 	}
 
-finish_define_last_free_page:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last free block: %u\n", *found_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2037,240 +1943,117 @@ void ssdfs_block_bmap_unlock(struct ssdfs_block_bmap *blk_bmap)
 }
 
 /*
- * ssdfs_get_cache_type() - define cache type for block
- * @blk_bmap: pointer on block bitmap
- * @blk: block number
- *
- * RETURN:
- * [success] - cache type
- * [failure] - SSDFS_SEARCH_TYPE_MAX
- */
-static
-int ssdfs_get_cache_type(struct ssdfs_block_bmap *blk_bmap,
-			 u32 blk)
-{
-	int folio_index;
-	u16 offset;
-	int i;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap);
-
-	SSDFS_DBG("blk_bmap %p, block %u\n", blk_bmap, blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	folio_index = SSDFS_BLK2FOLIO(blk, SSDFS_BLK_STATE_BITS, &offset);
-
-	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		struct ssdfs_last_bmap_search *last;
-
-		last = &blk_bmap->last_search[i];
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("last->folio_index %d, folio_index %d, "
-			  "last->offset %u, offset %u, "
-			  "search_type %#x\n",
-			  last->folio_index, folio_index,
-			  last->offset, offset, i);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (last->folio_index == folio_index &&
-		    last->offset == offset)
-			return i;
-	}
-
-	return SSDFS_SEARCH_TYPE_MAX;
-}
-
-/*
- * is_block_state_cached() - check that block state is in cache
- * @blk_bmap: pointer on block bitmap
- * @blk: block number
- *
- * RETURN:
- * [true]  - block state is in cache
- * [false] - cache doesn't contain block state
- */
-static
-bool is_block_state_cached(struct ssdfs_block_bmap *blk_bmap,
-			   u32 blk)
-{
-	int cache_type;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap);
-
-	SSDFS_DBG("blk_bmap %p, block %u\n", blk_bmap, blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	cache_type = ssdfs_get_cache_type(blk_bmap, blk);
-
-	if (cache_type < 0) {
-		SSDFS_ERR("invalid cache type %d\n", cache_type);
-		return false;
-	}
-
-	if (cache_type >= SSDFS_SEARCH_TYPE_MAX)
-		return false;
-
-	return true;
-}
-
-/*
- * ssdfs_determine_cache_type() - detect type of cache for value
- * @cache: value for caching
- *
- * RETURN: suggested type of cache
- */
-static
-int ssdfs_determine_cache_type(unsigned long cache)
-{
-	size_t bytes_per_long = sizeof(cache);
-	size_t criterion = bytes_per_long / 2;
-	u8 bytes[SSDFS_BLK_STATE_MAX] = {0};
-	int i;
-
-	for (i = 0; i < bytes_per_long; i++) {
-		int cur_state = (int)((cache >> (i * BITS_PER_BYTE)) & 0xFF);
-
-		switch (cur_state) {
-		case SSDFS_FREE_STATES_BYTE:
-			bytes[SSDFS_BLK_FREE]++;
-			break;
-
-		case SSDFS_PRE_ALLOC_STATES_BYTE:
-			bytes[SSDFS_BLK_PRE_ALLOCATED]++;
-			break;
-
-		case SSDFS_VALID_STATES_BYTE:
-			bytes[SSDFS_BLK_VALID]++;
-			break;
-
-		case SSDFS_INVALID_STATES_BYTE:
-			bytes[SSDFS_BLK_INVALID]++;
-			break;
-
-		default:
-			/* mix of block states */
-			break;
-		};
-	}
-
-	if (bytes[SSDFS_BLK_FREE] > criterion)
-		return SSDFS_FREE_BLK_SEARCH;
-	else if (bytes[SSDFS_BLK_VALID] > criterion)
-		return SSDFS_VALID_BLK_SEARCH;
-
-	return SSDFS_OTHER_BLK_SEARCH;
-}
-
-/*
- * ssdfs_cache_block_state() - cache block state from folio vector
+ * __ssdfs_block_bmap_state_in_storage() - get/set state of block in storage
  * @blk_bmap: pointer on block bitmap
  * @blk: segment's block
- * @blk_state: state as hint for cache type determination
+ * @new_state: new state of @blk (SSDFS_BLK_STATE_MAX - read only)
  *
- * This function retrieves state of @blk from folio vector
- * and  save retrieved value for requested type of cache.
- * If @blk_state has SSDFS_BLK_STATE_MAX value then function
- * defines block state and to cache value in proper place.
+ * This function retrieves the state of @blk directly from
+ * the storage. If @new_state is not SSDFS_BLK_STATE_MAX, then
+ * the state of @blk is changed on @new_state in the storage.
+ * Use ssdfs_block_bmap_get_state_in_storage() or
+ * ssdfs_block_bmap_set_state_in_storage() instead of direct call.
  *
  * RETURN:
- * [success]
+ * [success] - state of @blk before the change
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input value.
- * %-EOPNOTSUPP - invalid folio index.
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
  */
 static
-int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
-			    u32 blk, int blk_state)
+int __ssdfs_block_bmap_state_in_storage(struct ssdfs_block_bmap *blk_bmap,
+					u32 blk, int new_state)
 {
 	struct ssdfs_folio_vector *array;
-	int folio_index;
-	u16 offset;
-	void *kaddr;
-	unsigned long cache;
-	int cache_type;
+	struct folio *folio;
+	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
+	u32 byte_index = blk / items_per_byte;
+	u32 shift = (blk % items_per_byte) * SSDFS_BLK_STATE_BITS;
+	int folio_index = byte_index / PAGE_SIZE;
+	u32 byte_offset = byte_index % PAGE_SIZE;
+	u8 *kaddr;
+	u8 *value;
+	int old_state;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
 
-	SSDFS_DBG("blk_bmap %p, block %u, state %#x\n",
-		  blk_bmap, blk, blk_state);
+	SSDFS_DBG("blk_bmap %p, block %u, new_state %#x, "
+		  "folio_index %d, byte_offset %u, shift %u\n",
+		  blk_bmap, blk, new_state,
+		  folio_index, byte_offset, shift);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (blk_state > SSDFS_BLK_STATE_MAX) {
-		SSDFS_ERR("invalid block state %#x\n", blk_state);
+	if (blk >= blk_bmap->items_capacity) {
+		SSDFS_ERR("invalid block %u, items_capacity %zu\n",
+			  blk, blk_bmap->items_capacity);
 		return -EINVAL;
 	}
 
-	if (is_block_state_cached(blk_bmap, blk)) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("block %u has been cached already\n", blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
+	if (new_state > SSDFS_BLK_STATE_MAX) {
+		SSDFS_ERR("invalid block state %#x\n", new_state);
+		return -EINVAL;
 	}
-
-	folio_index = SSDFS_BLK2FOLIO(blk, SSDFS_BLK_STATE_BITS, &offset);
 
 	switch (blk_bmap->storage.state) {
 	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
 		array = &blk_bmap->storage.array;
 
 		if (folio_index >= ssdfs_folio_vector_capacity(array)) {
-			SSDFS_ERR("invalid folio index %d\n", folio_index);
-			return -EOPNOTSUPP;
-		}
-
-		while (folio_index >= ssdfs_folio_vector_count(array)) {
-			struct folio *folio = ssdfs_folio_vector_allocate(array);
-			if (IS_ERR_OR_NULL(folio)) {
-				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
-				SSDFS_ERR("unable to allocate #%d folio\n",
-					  folio_index);
-				return -ENOENT;
-			}
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!ssdfs_folio_vector_get(array, folio_index));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = __ssdfs_memcpy_from_folio(&cache,
-						0, sizeof(unsigned long),
-						ssdfs_folio_vector_get(array,
-								folio_index),
-						offset, PAGE_SIZE,
-						sizeof(unsigned long));
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to copy: err %d\n", err);
-			return err;
-		}
-		break;
-
-	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-		if (folio_index > 0) {
-			SSDFS_ERR("invalid folio_index %d\n", folio_index);
+			SSDFS_ERR("invalid folio index %d, capacity %u\n",
+				  folio_index,
+				  ssdfs_folio_vector_capacity(array));
 			return -ERANGE;
 		}
 
-		kaddr = blk_bmap->storage.buf;
-		err = ssdfs_memcpy(&cache, 0, sizeof(unsigned long),
-				   kaddr, offset, blk_bmap->bytes_count,
-				   sizeof(unsigned long));
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to copy: err %d\n", err);
-			return err;
+		if (folio_index >= ssdfs_folio_vector_count(array)) {
+			/* not allocated folio contains free blocks only */
+			if (new_state == SSDFS_BLK_STATE_MAX)
+				return SSDFS_BLK_FREE;
+
+			while (folio_index >= ssdfs_folio_vector_count(array)) {
+				folio = ssdfs_folio_vector_allocate(array);
+				if (IS_ERR_OR_NULL(folio)) {
+					err = (folio == NULL ? -ENOMEM :
+							PTR_ERR(folio));
+					SSDFS_ERR("unable to allocate folio\n");
+					return err;
+				}
+			}
 		}
 
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("BITMAP DUMP: \n");
-		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr, blk_bmap->bytes_count);
-		SSDFS_DBG("\n");
-#endif /* CONFIG_SSDFS_DEBUG */
+		folio = ssdfs_folio_vector_get(array, folio_index);
+		if (!folio) {
+			SSDFS_ERR("folio %d is NULL\n", folio_index);
+			return -ERANGE;
+		}
+
+		kaddr = kmap_local_folio(folio, 0);
+		value = kaddr + byte_offset;
+		old_state = (*value >> shift) & SSDFS_BLK_STATE_MASK;
+		if (new_state != SSDFS_BLK_STATE_MAX) {
+			*value &= ~(SSDFS_BLK_STATE_MASK << shift);
+			*value |= (new_state & SSDFS_BLK_STATE_MASK) << shift;
+		}
+		kunmap_local(kaddr);
+		break;
+
+	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
+		if (byte_index >= blk_bmap->bytes_count) {
+			SSDFS_ERR("invalid byte_index %u, bytes_count %zu\n",
+				  byte_index, blk_bmap->bytes_count);
+			return -ERANGE;
+		}
+
+		value = (u8 *)blk_bmap->storage.buf + byte_index;
+		old_state = (*value >> shift) & SSDFS_BLK_STATE_MASK;
+		if (new_state != SSDFS_BLK_STATE_MAX) {
+			*value &= ~(SSDFS_BLK_STATE_MASK << shift);
+			*value |= (new_state & SSDFS_BLK_STATE_MASK) << shift;
+		}
 		break;
 
 	default:
@@ -2278,366 +2061,68 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 		return -ERANGE;
 	}
 
-	cache_type = ssdfs_determine_cache_type(cache);
-	BUG_ON(cache_type >= SSDFS_SEARCH_TYPE_MAX);
-
-	blk_bmap->last_search[cache_type].folio_index = folio_index;
-	blk_bmap->last_search[cache_type].offset = offset;
-	blk_bmap->last_search[cache_type].cache = cache;
-
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("last_search.cache %lx, cache_type %#x, "
-		  "folio_index %d, offset %u\n",
-		  cache, cache_type,
-		  folio_index, offset);
+	SSDFS_DBG("block %u, old_state %#x, new_state %#x\n",
+		  blk, old_state, new_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return 0;
+	return old_state;
 }
 
 /*
- * ssdfs_define_bits_shift_in_cache() - calculate bit shift of block in cache
- * @blk_bmap: pointer on block bitmap
- * @cache_type: type of cache
- * @blk: segment's block
- *
- * This function calculates bit shift of @blk in cache of
- * @cache_type.
- *
- * RETURN:
- * [success] - bit shift
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input value.
- */
-static
-int ssdfs_define_bits_shift_in_cache(struct ssdfs_block_bmap *blk_bmap,
-				     int cache_type, u32 blk)
-{
-	struct ssdfs_last_bmap_search *last_search;
-	u32 first_cached_block, diff;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap);
-
-	if (blk >= blk_bmap->items_capacity) {
-		SSDFS_ERR("invalid block %u\n", blk);
-		return -EINVAL;
-	}
-
-	if (cache_type < 0) {
-		SSDFS_ERR("invalid cache type %d\n", cache_type);
-		return -EINVAL;
-	}
-
-	SSDFS_DBG("blk_bmap %p, cache_type %#x, blk %u\n",
-		  blk_bmap, cache_type, blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (cache_type >= SSDFS_SEARCH_TYPE_MAX) {
-		SSDFS_ERR("cache doesn't contain block %u\n", blk);
-		return -EINVAL;
-	}
-
-	last_search = &blk_bmap->last_search[cache_type];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	first_cached_block = SSDFS_FIRST_CACHED_BLOCK(last_search);
-
-	if (first_cached_block > blk) {
-		SSDFS_ERR("first_cached_block %u > blk %u\n",
-			  first_cached_block, blk);
-		return -EINVAL;
-	}
-
-	diff = blk - first_cached_block;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (diff >= (U32_MAX / SSDFS_BLK_STATE_BITS)) {
-		SSDFS_ERR("invalid diff %u; blk %u, first_cached_block %u\n",
-			  diff, blk, first_cached_block);
-		return -EINVAL;
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	diff *= SSDFS_BLK_STATE_BITS;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (diff > (BITS_PER_LONG - SSDFS_BLK_STATE_BITS)) {
-		SSDFS_ERR("invalid diff %u; bits_per_long %u, "
-			  "bits_per_state %u\n",
-			  diff, BITS_PER_LONG, SSDFS_BLK_STATE_BITS);
-		return -EINVAL;
-	}
-
-	SSDFS_DBG("diff %u\n", diff);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return (int)diff;
-}
-
-/*
- * ssdfs_get_block_state_from_cache() - retrieve block state from cache
+ * ssdfs_block_bmap_get_state_in_storage() - get state of block in storage
  * @blk_bmap: pointer on block bitmap
  * @blk: segment's block
  *
- * This function retrieve state of @blk from cache.
+ * This function retrieves the state of @blk directly from the storage.
  *
  * RETURN:
- * [success] - state of block
+ * [success] - state of @blk
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input value.
+ * %-ERANGE     - internal error.
  */
-static
-int ssdfs_get_block_state_from_cache(struct ssdfs_block_bmap *blk_bmap,
-				     u32 blk)
+static inline
+int ssdfs_block_bmap_get_state_in_storage(struct ssdfs_block_bmap *blk_bmap,
+					  u32 blk)
 {
-	int cache_type;
-	struct ssdfs_last_bmap_search *last_search;
-	int shift;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap);
-
-	if (blk >= blk_bmap->items_capacity) {
-		SSDFS_ERR("invalid block %u\n", blk);
-		return -EINVAL;
-	}
-
-	SSDFS_DBG("blk_bmap %p, block %u\n", blk_bmap, blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	cache_type = ssdfs_get_cache_type(blk_bmap, blk);
-	shift = ssdfs_define_bits_shift_in_cache(blk_bmap, cache_type, blk);
-	if (unlikely(shift < 0)) {
-		SSDFS_ERR("fail to define bits shift: "
-			  "cache_type %d, blk %u, err %d\n",
-			  cache_type, blk, shift);
-		return shift;
-	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(cache_type >= SSDFS_SEARCH_TYPE_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	last_search = &blk_bmap->last_search[cache_type];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return (int)((last_search->cache >> shift) & SSDFS_BLK_STATE_MASK);
+	return __ssdfs_block_bmap_state_in_storage(blk_bmap, blk,
+						   SSDFS_BLK_STATE_MAX);
 }
 
 /*
- * ssdfs_set_block_state_in_cache() - set block state in cache
+ * ssdfs_block_bmap_set_state_in_storage() - set state of block in storage
  * @blk_bmap: pointer on block bitmap
  * @blk: segment's block
  * @blk_state: new state of @blk
  *
- * This function sets state @blk_state of @blk in cache.
+ * This function sets the state of @blk directly in the storage.
  *
  * RETURN:
  * [success]
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input value.
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
  */
-static
-int ssdfs_set_block_state_in_cache(struct ssdfs_block_bmap *blk_bmap,
-				   u32 blk, int blk_state)
+static inline
+int ssdfs_block_bmap_set_state_in_storage(struct ssdfs_block_bmap *blk_bmap,
+					  u32 blk, int blk_state)
 {
-	int cache_type;
-	int shift;
-	unsigned long value, *cached_value;
+	int res;
 
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap);
-
-	if (blk >= blk_bmap->items_capacity) {
-		SSDFS_ERR("invalid block %u\n", blk);
-		return -EINVAL;
-	}
-
-	if (blk_state > SSDFS_BLK_STATE_MAX) {
+	if (blk_state >= SSDFS_BLK_STATE_MAX) {
 		SSDFS_ERR("invalid block state %#x\n", blk_state);
 		return -EINVAL;
 	}
 
-	SSDFS_DBG("blk_bmap %p, block %u, blk_state %#x\n",
-		  blk_bmap, blk, blk_state);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	cache_type = ssdfs_get_cache_type(blk_bmap, blk);
-	shift = ssdfs_define_bits_shift_in_cache(blk_bmap, cache_type, blk);
-	if (unlikely(shift < 0)) {
-		SSDFS_ERR("fail to define bits shift: "
-			  "cache_type %d, blk %u, err %d\n",
-			  cache_type, blk, shift);
-		return shift;
-	}
-
-	value = blk_state & SSDFS_BLK_STATE_MASK;
-	value <<= shift;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(cache_type >= SSDFS_SEARCH_TYPE_MAX);
-
-	SSDFS_DBG("value %lx, cache %lx\n",
-		  value,
-		  blk_bmap->last_search[cache_type].cache);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	cached_value = &blk_bmap->last_search[cache_type].cache;
-	*cached_value &= ~((unsigned long)SSDFS_BLK_STATE_MASK << shift);
-	*cached_value |= value;
+	res = __ssdfs_block_bmap_state_in_storage(blk_bmap, blk, blk_state);
+	if (unlikely(res < 0))
+		return res;
 
 	return 0;
-}
-
-/*
- * ssdfs_save_cache_in_storage() - save cached values in storage
- * @blk_bmap: pointer on block bitmap
- *
- * This function saves cached values in storage.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input value.
- */
-static
-int ssdfs_save_cache_in_storage(struct ssdfs_block_bmap *blk_bmap)
-{
-	struct ssdfs_folio_vector *array;
-	void *kaddr;
-	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
-	int i;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap);
-
-	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		struct folio *folio;
-		int folio_index = blk_bmap->last_search[i].folio_index;
-		u16 offset = blk_bmap->last_search[i].offset;
-		unsigned long cache = blk_bmap->last_search[i].cache;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("search_type %d, folio_index %d, offset %u\n",
-			  i, folio_index, offset);
-		SSDFS_DBG("last_search.cache %lx\n", cache);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (folio_index == max_capacity || offset == U16_MAX)
-			continue;
-
-		switch (blk_bmap->storage.state) {
-		case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
-			array = &blk_bmap->storage.array;
-
-			if (folio_index >= ssdfs_folio_vector_capacity(array)) {
-				SSDFS_ERR("block bmap's cache is corrupted: "
-					  "folio_index %d, offset %u\n",
-					  folio_index, (u32)offset);
-				return -EINVAL;
-			}
-
-			while (folio_index >= ssdfs_folio_vector_count(array)) {
-				folio = ssdfs_folio_vector_allocate(array);
-				if (IS_ERR_OR_NULL(folio)) {
-					err = (folio == NULL ? -ENOMEM :
-								PTR_ERR(folio));
-					SSDFS_ERR("unable to allocate folio\n");
-					return err;
-				}
-
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("folio %p, count %d\n",
-					  folio, folio_ref_count(folio));
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
-
-			folio = ssdfs_folio_vector_get(array, folio_index);
-			err = __ssdfs_memcpy_to_folio(folio,
-						      offset, PAGE_SIZE,
-						      &cache,
-						      0, sizeof(unsigned long),
-						      sizeof(unsigned long));
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to copy: err %d\n", err);
-				return err;
-			}
-			break;
-
-		case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-			if (folio_index > 0) {
-				SSDFS_ERR("invalid folio_index %d\n", folio_index);
-				return -ERANGE;
-			}
-
-			kaddr = blk_bmap->storage.buf;
-			err = ssdfs_memcpy(kaddr, offset, blk_bmap->bytes_count,
-					   &cache, 0, sizeof(unsigned long),
-					   sizeof(unsigned long));
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to copy: err %d\n", err);
-				return err;
-			}
-			break;
-
-		default:
-			SSDFS_ERR("unexpected state %#x\n",
-					blk_bmap->storage.state);
-			return -ERANGE;
-		}
-	}
-
-	return 0;
-}
-
-/*
- * is_cache_invalid() - check that cache is invalid for requested state
- * @blk_bmap: pointer on block bitmap
- * @blk_state: requested block's state
- *
- * RETURN:
- * [true]  - cache doesn't been initialized yet.
- * [false] - cache is valid.
- */
-static inline
-bool is_cache_invalid(struct ssdfs_block_bmap *blk_bmap, int blk_state)
-{
-	struct ssdfs_last_bmap_search *last_search;
-	int cache_type = SSDFS_GET_CACHE_TYPE(blk_state);
-	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
-
-	if (cache_type >= SSDFS_SEARCH_TYPE_MAX) {
-		SSDFS_ERR("invalid cache type %#x, blk_state %#x\n",
-			  cache_type, blk_state);
-		return true;
-	}
-
-	last_search = &blk_bmap->last_search[cache_type];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (last_search->folio_index >= max_capacity ||
-	    last_search->offset == U16_MAX)
-		return true;
-
-	return false;
 }
 
 /*
@@ -2669,140 +2154,6 @@ bool BLK_BMAP_BYTE_CONTAINS_STATE(u8 *value, int blk_state)
 	return false;
 }
 EXPORT_SYMBOL_IF_KUNIT(BLK_BMAP_BYTE_CONTAINS_STATE);
-
-/*
- * ssdfs_block_bmap_find_block_in_cache() - find block for state in cache
- * @blk_bmap: pointer on block bitmap
- * @start: starting block for search
- * @max_blk: upper bound for search
- * @blk_state: requested block's state
- * @found_blk: pointer on found block for requested state [out]
- *
- * This function tries to find in block block bitmap with @blk_state
- * in range [@start, @max_blk).
- *
- * RETURN:
- * [success] - @found_blk contains found block number for @blk_state.
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input value.
- * %-ENODATA    - requested range [@start, @max_blk) doesn't contain
- *                any block with @blk_state.
- */
-static
-int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
-					 u32 start, u32 max_blk,
-					 int blk_state, u32 *found_blk)
-{
-	int cache_type = SSDFS_GET_CACHE_TYPE(blk_state);
-	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
-	struct ssdfs_last_bmap_search *last_search;
-	u32 first_cached_blk;
-	u32 upper_cached_blk;
-	u32 byte_index;
-	u32 blks_diff;
-	size_t bytes_per_long = sizeof(unsigned long);
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap || !found_blk);
-
-	if (blk_state > SSDFS_BLK_STATE_MAX) {
-		SSDFS_ERR("invalid block state %#x\n", blk_state);
-		return -EINVAL;
-	}
-
-	if (start > blk_bmap->items_capacity) {
-		SSDFS_ERR("invalid start block %u\n", start);
-		return -EINVAL;
-	}
-
-	if (start > max_blk) {
-		SSDFS_ERR("start %u > max_blk %u\n", start, max_blk);
-		return -EINVAL;
-	}
-
-	if (!is_block_state_cached(blk_bmap, start)) {
-		SSDFS_ERR("cache doesn't contain start %u\n", start);
-		return -EINVAL;
-	}
-
-	SSDFS_DBG("blk_bmap %p, start %u, max_blk %u, "
-		  "state %#x, found_blk %p\n",
-		  blk_bmap, start, max_blk, blk_state, found_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (cache_type >= SSDFS_SEARCH_TYPE_MAX) {
-		SSDFS_ERR("invalid cache type %#x, blk_state %#x\n",
-			  cache_type, blk_state);
-		return -EINVAL;
-	}
-
-	*found_blk = max_blk;
-	last_search = &blk_bmap->last_search[cache_type];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	first_cached_blk = SSDFS_FIRST_CACHED_BLOCK(last_search);
-	upper_cached_blk = first_cached_blk + (items_per_byte * bytes_per_long);
-
-	if (start < first_cached_blk || start >= upper_cached_blk) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("start %u is out of range [first %u, last %u]\n",
-			  start, first_cached_blk,
-			  upper_cached_blk - 1);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -ENODATA;
-	}
-
-	blks_diff = start - first_cached_blk;
-	byte_index = blks_diff / items_per_byte;
-	blks_diff = blks_diff % items_per_byte;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("first_cached_blk %u, start %u, "
-		  "byte_index %u, bytes_per_long %zu\n",
-		  first_cached_blk, start,
-		  byte_index, bytes_per_long);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	for (; byte_index < bytes_per_long; byte_index++) {
-		u8 *value = (u8 *)&last_search->cache + byte_index;
-		u8 found_off;
-
-		err = FIND_FIRST_ITEM_IN_BYTE(value, blk_state,
-					      SSDFS_BLK_STATE_BITS,
-					      SSDFS_BLK_STATE_MASK,
-					      blks_diff,
-					      BLK_BMAP_BYTE_CONTAINS_STATE,
-					      FIRST_STATE_IN_BYTE,
-					      &found_off);
-		if (err == -ENODATA) {
-			blks_diff = 0;
-			continue;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find block in byte: "
-				  "start_off %u, blk_state %#x, err %d\n",
-				  blks_diff, blk_state, err);
-			return err;
-		}
-
-		*found_blk = first_cached_blk;
-		*found_blk += byte_index * items_per_byte;
-		*found_blk += found_off;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("block %u has been found for state %#x\n",
-			  *found_blk, blk_state);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		return 0;
-	}
-
-	return -ENODATA;
-}
 
 static inline
 int ssdfs_block_bmap_define_start_item(int folio_index,
@@ -3468,74 +2819,12 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	if (blk_state == SSDFS_BLK_STATE_MAX) {
-		err = ssdfs_cache_block_state(blk_bmap, start, blk_state);
-		if (unlikely(err)) {
-			SSDFS_ERR("unable to cache block %u state: err %d\n",
-				  start, err);
-			return err;
-		}
-
 		*found_blk = start;
 		return 0;
 	}
 
 	*found_blk = max_blk;
 	max_blk = min_t(u32, max_blk, blk_bmap->items_capacity);
-
-	if (is_cache_invalid(blk_bmap, blk_state)) {
-		err = ssdfs_block_bmap_find_block_in_storage(blk_bmap,
-							     start, max_blk,
-							     blk_state,
-							     found_blk);
-		if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to find block in folio vector: "
-				  "start %u, max_blk %u, state %#x\n",
-				  0, max_blk, blk_state);
-#endif /* CONFIG_SSDFS_DEBUG */
-			*found_blk = max_blk;
-			return err;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find block in folio vector: "
-				  "start %u, max_blk %u, state %#x, err %d\n",
-				  0, max_blk, blk_state, err);
-			goto fail_find;
-		}
-
-		err = ssdfs_cache_block_state(blk_bmap, *found_blk, blk_state);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to cache block: "
-				  "found_blk %u, state %#x, err %d\n",
-				  *found_blk, blk_state, err);
-			goto fail_find;
-		}
-	}
-
-	if (*found_blk >= start && *found_blk < max_blk)
-		goto end_search;
-
-	if (is_block_state_cached(blk_bmap, start)) {
-		err = ssdfs_block_bmap_find_block_in_cache(blk_bmap,
-							   start, max_blk,
-							   blk_state,
-							   found_blk);
-		if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to find block in cache: "
-				  "start %u, max_blk %u, state %#x\n",
-				  start, max_blk, blk_state);
-#endif /* CONFIG_SSDFS_DEBUG */
-			/*
-			 * Continue to search in folio vector
-			 */
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find block in cache: "
-				  "start %u, max_blk %u, state %#x, err %d\n",
-				  start, max_blk, blk_state, err);
-			goto fail_find;
-		} else if (*found_blk >= start && *found_blk < max_blk)
-			goto end_search;
-	}
 
 	err = ssdfs_block_bmap_find_block_in_storage(blk_bmap, start, max_blk,
 						     blk_state, found_blk);
@@ -3551,36 +2840,15 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 		SSDFS_ERR("fail to find block in storage: "
 			  "start %u, max_blk %u, state %#x, err %d\n",
 			  start, max_blk, blk_state, err);
-		goto fail_find;
+		return err;
 	}
 
-	switch (SSDFS_GET_CACHE_TYPE(blk_state)) {
-	case SSDFS_FREE_BLK_SEARCH:
-	case SSDFS_OTHER_BLK_SEARCH:
-		err = ssdfs_cache_block_state(blk_bmap, *found_blk, blk_state);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to cache block: "
-				  "found_blk %u, state %#x, err %d\n",
-				  *found_blk, blk_state, err);
-			goto fail_find;
-		}
-		break;
-
-	default:
-		/* do nothing */
-		break;
-	}
-
-end_search:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("block %u has been found for state %#x\n",
 		  *found_blk, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
-
-fail_find:
-	return err;
 }
 
 /*
@@ -4207,67 +3475,13 @@ bool range_corrupted(struct ssdfs_block_bmap *blk_bmap,
 }
 
 /*
- * is_whole_range_cached() - check that cache contains requested range
+ * ssdfs_set_tiny_range_in_storage() - set tiny range by state
  * @blk_bmap: pointer on block bitmap
- * @range: range for check
- *
- * RETURN:
- * [true]  - cache contains the whole range
- * [false] - cache doesn't include the whole range
- */
-static
-bool is_whole_range_cached(struct ssdfs_block_bmap *blk_bmap,
-			   struct ssdfs_block_bmap_range *range)
-{
-	struct ssdfs_block_bmap_range cached_range;
-	int i;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap || !range);
-
-	if (range_corrupted(blk_bmap, range)) {
-		SSDFS_ERR("invalid range (start %u, len %u); "
-			  "items capacity %zu\n",
-			  range->start, range->len,
-			  blk_bmap->items_capacity);
-		return -EINVAL;
-	}
-
-	SSDFS_DBG("blk_bmap %p, range (start %u, len %u)\n",
-		  blk_bmap, range->start, range->len);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		struct ssdfs_last_bmap_search *last_search;
-		int cmp;
-
-		last_search = &blk_bmap->last_search[i];
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		cached_range.start = SSDFS_FIRST_CACHED_BLOCK(last_search);
-		cached_range.len = SSDFS_ITEMS_PER_LONG(SSDFS_BLK_STATE_BITS);
-
-		cmp = compare_block_bmap_ranges(&cached_range, range);
-
-		if (cmp >= 0)
-			return true;
-		else if (ranges_have_intersection(&cached_range, range))
-			return false;
-	}
-
-	return false;
-}
-
-/*
- * ssdfs_set_range_in_cache() - set small range in cache
- * @blk_bmap: pointer on block bitmap
- * @range: requested range
+ * @range: range for set
  * @blk_state: state for set
  *
- * This function sets small range in cache.
+ * This function sets every block of @range by @blk_state
+ * directly in the storage.
  *
  * RETURN:
  * [success]
@@ -4276,15 +3490,19 @@ bool is_whole_range_cached(struct ssdfs_block_bmap *blk_bmap,
  * %-EINVAL     - invalid input value.
  */
 static
-int ssdfs_set_range_in_cache(struct ssdfs_block_bmap *blk_bmap,
-				struct ssdfs_block_bmap_range *range,
-				int blk_state)
+int ssdfs_set_tiny_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
+				    struct ssdfs_block_bmap_range *range,
+				    int blk_state)
 {
 	u32 blk, index;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap);
+	BUG_ON(!blk_bmap || !range);
+
+	SSDFS_DBG("blk_bmap %p, range (start %u, len %u), state %#x\n",
+		  blk_bmap, range->start, range->len, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (blk_state >= SSDFS_BLK_STATE_MAX) {
 		SSDFS_ERR("invalid block state %#x\n", blk_state);
@@ -4298,91 +3516,16 @@ int ssdfs_set_range_in_cache(struct ssdfs_block_bmap *blk_bmap,
 			  blk_bmap->items_capacity);
 		return -EINVAL;
 	}
-
-	SSDFS_DBG("blk_bmap %p, range (start %u, len %u), state %#x\n",
-		  blk_bmap, range->start, range->len, blk_state);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (index = 0; index < range->len; index++) {
 		blk = range->start + index;
-		err = ssdfs_set_block_state_in_cache(blk_bmap, blk, blk_state);
+		err = ssdfs_block_bmap_set_state_in_storage(blk_bmap, blk,
+							    blk_state);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set block %u in cache: err %d\n",
+			SSDFS_ERR("fail to set block %u: err %d\n",
 				  blk, err);
 			return err;
 		}
-	}
-
-	return 0;
-}
-
-/*
- * ssdfs_set_uncached_tiny_range() - set tiny uncached range by state
- * @blk_bmap: pointer on block bitmap
- * @range: range for set
- * @blk_state: state for set
- *
- * This function caches @range, to set @range in cache by @blk_state
- * and to save the cache in folio vector.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input value.
- */
-static
-int ssdfs_set_uncached_tiny_range(struct ssdfs_block_bmap *blk_bmap,
-				  struct ssdfs_block_bmap_range *range,
-				  int blk_state)
-{
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap || !range);
-
-	if (blk_state >= SSDFS_BLK_STATE_MAX) {
-		SSDFS_ERR("invalid block state %#x\n", blk_state);
-		return -EINVAL;
-	}
-
-	if (range_corrupted(blk_bmap, range)) {
-		SSDFS_ERR("invalid range (start %u, len %u); "
-			  "items capacity %zu\n",
-			  range->start, range->len,
-			  blk_bmap->items_capacity);
-		return -EINVAL;
-	}
-
-	if (range->len > SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS)) {
-		SSDFS_ERR("range (start %u, len %u) is not tiny\n",
-			  range->start, range->len);
-		return -EINVAL;
-	}
-
-	SSDFS_DBG("blk_bmap %p, range (start %u, len %u), state %#x\n",
-		  blk_bmap, range->start, range->len, blk_state);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	err = ssdfs_cache_block_state(blk_bmap, range->start, blk_state);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to cache block %u: err %d\n",
-			  range->start, err);
-		return err;
-	}
-
-	err = ssdfs_set_range_in_cache(blk_bmap, range, blk_state);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to set (start %u, len %u): err %d\n",
-			  range->start, range->len, err);
-		return err;
-	}
-
-	err = ssdfs_save_cache_in_storage(blk_bmap);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to save cache in folio vector: err %d\n",
-			  err);
-		return err;
 	}
 
 	return 0;
@@ -4412,8 +3555,6 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 {
 	struct ssdfs_folio_vector *array;
 	void *kaddr;
-	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
-	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4493,12 +3634,6 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 		return -ERANGE;
 	}
 
-	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		blk_bmap->last_search[i].folio_index = max_capacity;
-		blk_bmap->last_search[i].offset = U16_MAX;
-		blk_bmap->last_search[i].cache = 0;
-	}
-
 	return 0;
 }
 
@@ -4563,14 +3698,20 @@ int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 		  aligned_start, aligned_end);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (aligned_start >= aligned_end) {
+		/* range doesn't contain any whole byte */
+		return ssdfs_set_tiny_range_in_storage(blk_bmap, range,
+							blk_state);
+	}
+
 	if (range->start != aligned_start) {
 		struct ssdfs_block_bmap_range unaligned;
 
 		unaligned.start = range->start;
 		unaligned.len = aligned_start - range->start;
 
-		err = ssdfs_set_uncached_tiny_range(blk_bmap, &unaligned,
-						    blk_state);
+		err = ssdfs_set_tiny_range_in_storage(blk_bmap, &unaligned,
+						      blk_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to set (start %u, len %u): err %d\n",
 				  unaligned.start, unaligned.len, err);
@@ -4644,8 +3785,8 @@ int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 		unaligned.start = aligned_end;
 		unaligned.len = (range->start + range->len) - aligned_end;
 
-		err = ssdfs_set_uncached_tiny_range(blk_bmap, &unaligned,
-						    blk_state);
+		err = ssdfs_set_tiny_range_in_storage(blk_bmap, &unaligned,
+						      blk_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to set (start %u, len %u): err %d\n",
 				  unaligned.start, unaligned.len, err);
@@ -4809,26 +3950,10 @@ int ssdfs_block_bmap_set_block_state(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap, blk, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!is_block_state_cached(blk_bmap, blk)) {
-		err = ssdfs_cache_block_state(blk_bmap, blk, blk_state);
-		if (unlikely(err)) {
-			SSDFS_ERR("unable to cache block %u state: err %d\n",
-				  blk, err);
-			return err;
-		}
-	}
-
-	err = ssdfs_set_block_state_in_cache(blk_bmap, blk, blk_state);
+	err = ssdfs_block_bmap_set_state_in_storage(blk_bmap, blk, blk_state);
 	if (unlikely(err)) {
-		SSDFS_ERR("unable to set block %u state in cache: err %d\n",
+		SSDFS_ERR("unable to set block %u state: err %d\n",
 			  blk, err);
-		return err;
-	}
-
-	err = ssdfs_save_cache_in_storage(blk_bmap);
-	if (unlikely(err)) {
-		SSDFS_ERR("unable to save the cache in storage: err %d\n",
-			  err);
 		return err;
 	}
 
@@ -4887,40 +4012,12 @@ int ssdfs_block_bmap_set_range(struct ssdfs_block_bmap *blk_bmap,
 				  range->start, range->len, blk_state, err);
 			return err;
 		}
-	} else if (is_whole_range_cached(blk_bmap, range)) {
-		err = ssdfs_set_range_in_cache(blk_bmap, range, blk_state);
-		if (unlikely(err)) {
-			SSDFS_ERR("unable to set (start %u, len %u) state %#x "
-				  "in cache: err %d\n",
-				  range->start, range->len, blk_state, err);
-			return err;
-		}
-
-		err = ssdfs_save_cache_in_storage(blk_bmap);
-		if (unlikely(err)) {
-			SSDFS_ERR("unable to save the cache in storage: "
-				  "err %d\n", err);
-			return err;
-		}
 	} else {
-		u32 next_blk;
-
 		err = ssdfs_set_range_in_storage(blk_bmap, range, blk_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to set (start %u, len %u) state %#x "
 				  "in storage: err %d\n",
 				  range->start, range->len, blk_state, err);
-			return err;
-		}
-
-		next_blk = range->start + range->len;
-		if (next_blk == blk_bmap->items_capacity)
-			next_blk--;
-
-		err = ssdfs_cache_block_state(blk_bmap, next_blk, blk_state);
-		if (unlikely(err)) {
-			SSDFS_ERR("unable to cache block %u state: err %d\n",
-				  next_blk, err);
 			return err;
 		}
 	}
@@ -5079,9 +4176,6 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_test_range);
  */
 int ssdfs_get_block_state(struct ssdfs_block_bmap *blk_bmap, u32 blk)
 {
-	u32 found;
-	int err;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
 
@@ -5126,23 +4220,7 @@ int ssdfs_get_block_state(struct ssdfs_block_bmap *blk_bmap, u32 blk)
 		return -ENODATA;
 	}
 
-	err = ssdfs_block_bmap_find_block(blk_bmap, blk, blk + 1,
-					    SSDFS_BLK_STATE_MAX,
-					    &found);
-	if (err) {
-		SSDFS_ERR("fail to find block %u, err %d\n",
-			  blk, err);
-		return err;
-	}
-
-	if (found != blk) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("found (%u) != blk (%u)\n", found, blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -ENODATA;
-	}
-
-	return ssdfs_get_block_state_from_cache(blk_bmap, blk);
+	return ssdfs_block_bmap_get_state_in_storage(blk_bmap, blk);
 }
 
 /*
@@ -5211,15 +4289,7 @@ int ssdfs_get_range_state(struct ssdfs_block_bmap *blk_bmap,
 		return -EOPNOTSUPP;
 	}
 
-	err = ssdfs_cache_block_state(blk_bmap, range->start,
-					SSDFS_BLK_STATE_MAX);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to cache block %u: err %d\n",
-			  range->start, err);
-		return err;
-	}
-
-	return ssdfs_get_block_state_from_cache(blk_bmap, range->start);
+	return ssdfs_block_bmap_get_state_in_storage(blk_bmap, range->start);
 }
 
 /*
@@ -5467,12 +4537,10 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_free_metadata_pages);
  */
 int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 {
-	u32 found_blk;
 	u32 used_blks;
 	u32 metadata_items;
 	u32 invalid_blks;
 	int free_blks;
-	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
@@ -5495,29 +4563,6 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
-	}
-
-	if (is_cache_invalid(blk_bmap, SSDFS_BLK_FREE)) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("cache for free states is invalid!!!\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_block_bmap_find_block(blk_bmap,
-						  0, blk_bmap->items_capacity,
-						  SSDFS_BLK_FREE, &found_blk);
-	} else
-		err = ssdfs_define_last_free_page(blk_bmap, &found_blk);
-
-	if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to find last free block: "
-			  "found_blk %u\n",
-			  found_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find last free block: err %d\n",
-			  err);
-		return err;
 	}
 
 	used_blks = blk_bmap->used_blks;
@@ -5551,14 +4596,6 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->allocation_pool,
 		  used_blks, invalid_blks, metadata_items,
 		  free_blks);
-
-	if (unlikely(found_blk > blk_bmap->items_capacity)) {
-		SSDFS_ERR("found_blk %u > items_capacity %zu\n",
-			  found_blk, blk_bmap->items_capacity);
-		return -ERANGE;
-	}
-
-	WARN_ON(INT_MAX < (blk_bmap->items_capacity - found_blk));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (free_blks < 0) {
@@ -5592,9 +4629,6 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_get_free_pages);
  */
 int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap)
 {
-	u32 found_blk;
-	int err;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
 
@@ -5624,26 +4658,7 @@ int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap)
 		return -ENOENT;
 	}
 
-	err = ssdfs_define_last_free_page(blk_bmap, &found_blk);
-	if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to find last free block: "
-			  "found_blk %u\n",
-			  found_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find last free block: err %d\n",
-			  err);
-		return err;
-	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (unlikely(found_blk > blk_bmap->items_capacity)) {
-		SSDFS_ERR("found_blk %u > items_capacity %zu\n",
-			  found_blk, blk_bmap->items_capacity);
-		return -ERANGE;
-	}
-
 	if (unlikely(blk_bmap->used_blks > blk_bmap->allocation_pool)) {
 		SSDFS_ERR("used_blks %u > allocation_pool %zu\n",
 			  blk_bmap->used_blks,
@@ -5991,16 +5006,6 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 			return -ENOSPC;
 		}
 
-		if (!is_cache_invalid(blk_bmap, SSDFS_BLK_FREE)) {
-			err = ssdfs_define_last_free_page(blk_bmap, &start_blk);
-			if (err) {
-				SSDFS_ERR("fail to define start block: "
-					  "err %d\n",
-					  err);
-				return err;
-			}
-		}
-
 		start_blk = max_t(u32, start_blk, start);
 
 		err = ssdfs_block_bmap_find_range(blk_bmap, start_blk, *len,
@@ -6248,16 +5253,6 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 				  free_pages, *len);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOSPC;
-		}
-
-		if (!is_cache_invalid(blk_bmap, SSDFS_BLK_FREE)) {
-			err = ssdfs_define_last_free_page(blk_bmap, &start_blk);
-			if (err) {
-				SSDFS_ERR("fail to define start block: "
-					  "err %d\n",
-					  err);
-				return err;
-			}
 		}
 
 		start_blk = max_t(u32, start_blk, start);
@@ -6978,7 +5973,6 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
 	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
 	size_t bmap_bytes = 0;
 	size_t bmap_folios = 0;
-	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7048,12 +6042,6 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
 	blk_bmap->used_blks = 0;
 	blk_bmap->invalid_blks = 0;
 
-	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		blk_bmap->last_search[i].folio_index = max_capacity;
-		blk_bmap->last_search[i].offset = U16_MAX;
-		blk_bmap->last_search[i].cache = 0;
-	}
-
 	range.start = 0;
 	range.len = blk_bmap->items_capacity;
 
@@ -7063,13 +6051,6 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
 			  "range (start %u, len %u), "
 			  "err %d\n",
 			  range.start, range.len, err);
-		return err;
-	}
-
-	err = ssdfs_cache_block_state(blk_bmap, 0, SSDFS_BLK_FREE);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to cache last free page: err %d\n",
-			  err);
 		return err;
 	}
 
@@ -7098,15 +6079,6 @@ void ssdfs_debug_block_bitmap(struct ssdfs_block_bmap *bmap)
 		  bmap->used_blks,
 		  bmap->invalid_blks,
 		  atomic_read(&bmap->flags));
-
-	SSDFS_DBG("LAST SEARCH:\n");
-	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		SSDFS_DBG("TYPE %d: page_index %d, offset %u, cache %lx\n",
-			  i,
-			  bmap->last_search[i].folio_index,
-			  bmap->last_search[i].offset,
-			  bmap->last_search[i].cache);
-	}
 
 	switch (bmap->storage.state) {
 	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:

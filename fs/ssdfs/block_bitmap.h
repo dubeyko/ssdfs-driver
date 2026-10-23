@@ -68,88 +68,6 @@ enum {
 	(((items_count + SSDFS_ITEMS_PER_LONG(SSDFS_BLK_STATE_BITS) - 1)  / \
 	 SSDFS_ITEMS_PER_LONG(SSDFS_BLK_STATE_BITS)) * sizeof(unsigned long))
 
-static inline
-int SSDFS_BLK2FOLIO(u32 blk, u8 item_bits, u16 *offset)
-{
-	u32 blks_per_byte = SSDFS_ITEMS_PER_BYTE(item_bits);
-	u32 blks_per_long = SSDFS_ITEMS_PER_LONG(item_bits);
-	u32 blks_per_folio = PAGE_SIZE * blks_per_byte;
-	u32 off;
-
-	if (offset) {
-		off = (blk % blks_per_folio) / blks_per_long;
-		off *= sizeof(unsigned long);
-		BUG_ON(off >= U16_MAX);
-		*offset = off;
-	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("blk %u, item_bits %u, blks_per_byte %u, "
-		  "blks_per_long %u, blks_per_folio %u, "
-		  "folio_index %u\n",
-		  blk, item_bits, blks_per_byte,
-		  blks_per_long, blks_per_folio,
-		  blk / blks_per_folio);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return blk / blks_per_folio;
-}
-
-/*
- * struct ssdfs_last_bmap_search - last search in bitmap
- * @folio_index: index of folio in folio vector
- * @offset: offset of cache from page's begining
- * @cache: cached bmap's part
- */
-struct ssdfs_last_bmap_search {
-	int folio_index;
-	u16 offset;
-	unsigned long cache;
-};
-
-static inline
-u32 SSDFS_FIRST_CACHED_BLOCK(struct ssdfs_last_bmap_search *search)
-{
-	u32 blks_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
-	u32 blks_per_folio = PAGE_SIZE * blks_per_byte;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("folio_index %d, offset %u, "
-		  "blks_per_byte %u, blks_per_folio %u\n",
-		  search->folio_index,
-		  search->offset,
-		  blks_per_byte, blks_per_folio);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return (search->folio_index * blks_per_folio) +
-		(search->offset * blks_per_byte);
-}
-
-enum {
-	SSDFS_FREE_BLK_SEARCH,
-	SSDFS_VALID_BLK_SEARCH,
-	SSDFS_OTHER_BLK_SEARCH,
-	SSDFS_SEARCH_TYPE_MAX,
-};
-
-static inline
-int SSDFS_GET_CACHE_TYPE(int blk_state)
-{
-	switch (blk_state) {
-	case SSDFS_BLK_FREE:
-		return SSDFS_FREE_BLK_SEARCH;
-
-	case SSDFS_BLK_VALID:
-		return SSDFS_VALID_BLK_SEARCH;
-
-	case SSDFS_BLK_PRE_ALLOCATED:
-	case SSDFS_BLK_INVALID:
-		return SSDFS_OTHER_BLK_SEARCH;
-	};
-
-	return SSDFS_SEARCH_TYPE_MAX;
-}
-
 #define SSDFS_BLK_BMAP_INITIALIZED	(1 << 0)
 #define SSDFS_BLK_BMAP_DIRTY		(1 << 1)
 
@@ -184,7 +102,6 @@ enum {
  * @metadata_items: count of metadata items
  * @used_blks: count of valid blocks
  * @invalid_blks: count of invalid blocks
- * @last_search: last search/access cache array
  */
 struct ssdfs_block_bmap {
 	struct mutex lock;
@@ -196,7 +113,6 @@ struct ssdfs_block_bmap {
 	u32 metadata_items;
 	u32 used_blks;
 	u32 invalid_blks;
-	struct ssdfs_last_bmap_search last_search[SSDFS_SEARCH_TYPE_MAX];
 };
 
 /*

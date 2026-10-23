@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.93 [October 22, 2026]
+    (*) Fix race condition issue in inodes b-tree.
+
 v.5.92 [October 22, 2026]
     (*) Optimize algorithm of searching a latest partial log.
 

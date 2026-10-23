@@ -11282,7 +11282,7 @@ int ssdfs_btree_node_check_result_for_search(struct ssdfs_btree_search *search)
 			return -EAGAIN;
 		}
 
-		if (search->request.start.hash < start_hash &&
+		if (search->request.start.hash < start_hash ||
 		    search->request.start.hash > end_hash) {
 			search->result.state =
 				SSDFS_BTREE_SEARCH_OBSOLETE_RESULT;

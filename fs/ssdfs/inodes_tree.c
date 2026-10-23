@@ -476,6 +476,76 @@ void ssdfs_free_inodes_queue_remove_all(struct ssdfs_free_inode_range_queue *q)
  ******************************************************************************/
 
 /*
+ * ssdfs_inodes_btree_change() - change raw inode
+ * @tree: pointer on inodes btree object
+ * @ino: inode ID value
+ * @search: pointer on search request object
+ *
+ * This method tries to change the raw inode for @ino.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_inodes_btree_change(struct ssdfs_inodes_btree_info *tree,
+				u64 ino,
+				struct ssdfs_btree_search *search)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, ino %llu, search %p\n",
+		  tree, ino, search);
+#else
+	SSDFS_DBG("tree %p, ino %llu, search %p\n",
+		  tree, ino, search);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
+	search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	search->request.start.hash = ino;
+	search->request.end.hash = ino;
+	search->request.count = 1;
+
+	err = ssdfs_btree_change_item(&tree->generic_tree, search);
+
+	ssdfs_btree_search_forget_parent_node(search);
+	ssdfs_btree_search_forget_child_node(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change inode: ino %llu, err %d\n",
+			  ino, err);
+		return err;
+	}
+
+	if (ino == SSDFS_ROOT_INO) {
+		spin_lock(&tree->lock);
+		ssdfs_memcpy(&tree->root_folder,
+			     0, sizeof(struct ssdfs_inode),
+			     search->result.raw_buf.place.ptr,
+			     0, search->result.raw_buf.size,
+			     sizeof(struct ssdfs_inode));
+		spin_unlock(&tree->lock);
+	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return 0;
+}
+
+/*
  * ssdfs_create_generic_inodes_btree() - convert inline b-tree into generic one
  * @ptr: pointer on inodes b-tree object
  *
@@ -687,6 +757,7 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 
 	is_tree_inline = vs_flags & SSDFS_HAS_INLINE_INODES_TREE;
 
+	init_rwsem(&ptr->tree_lock);
 	spin_lock_init(&ptr->lock);
 	raw_btree = &fsi->vs->inodes_btree;
 	ptr->upper_allocated_ino = le64_to_cpu(raw_btree->upper_allocated_ino);
@@ -884,7 +955,10 @@ int ssdfs_inodes_btree_flush(struct ssdfs_inodes_btree_info *tree)
 	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	down_write(&tree->tree_lock);
 	err = ssdfs_btree_flush(&tree->generic_tree);
+	up_write(&tree->tree_lock);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to flush inodes btree: err %d\n",
 			  err);
@@ -965,6 +1039,8 @@ int ssdfs_inodes_btree_find(struct ssdfs_inodes_btree_info *tree,
 			    u64 ino,
 			    struct ssdfs_btree_search *search)
 {
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
 
@@ -985,7 +1061,11 @@ int ssdfs_inodes_btree_find(struct ssdfs_inodes_btree_info *tree,
 		search->request.count = 1;
 	}
 
-	return ssdfs_btree_find_item(&tree->generic_tree, search);
+	down_read(&tree->tree_lock);
+	err = ssdfs_btree_find_item(&tree->generic_tree, search);
+	up_read(&tree->tree_lock);
+
+	return err;
 }
 
 /*
@@ -1044,7 +1124,10 @@ try_add_node:
 		  tree->upper_allocated_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	down_write(&tree->tree_lock);
 	err = ssdfs_btree_add_node(&tree->generic_tree, search);
+	up_write(&tree->tree_lock);
+
 	if (err == -EEXIST) {
 		queue = &tree->free_inodes_queue;
 
@@ -1321,7 +1404,10 @@ get_free_range:
 		  (u64)*ino, (u32)search->result.start_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	down_write(&tree->tree_lock);
 	err = ssdfs_btree_allocate_item(&tree->generic_tree, search);
+	up_write(&tree->tree_lock);
+
 	if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("obsolete request: node_id %u, "
@@ -1353,80 +1439,6 @@ finish_inode_allocation:
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
-}
-
-/*
- * ssdfs_inodes_btree_change() - change raw inode
- * @tree: pointer on inodes btree object
- * @ino: inode ID value
- * @search: pointer on search request object
- *
- * This method tries to change the raw inode for @ino.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ERANGE     - internal error.
- */
-int ssdfs_inodes_btree_change(struct ssdfs_inodes_btree_info *tree,
-				u64 ino,
-				struct ssdfs_btree_search *search)
-{
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, ino %llu, search %p\n",
-		  tree, ino, search);
-#else
-	SSDFS_DBG("tree %p, ino %llu, search %p\n",
-		  tree, ino, search);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
-
-	if (need_initialize_inodes_btree_search(ino, search)) {
-		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
-		search->request.flags =
-			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
-			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
-		search->request.start.hash = ino;
-		search->request.end.hash = ino;
-		search->request.count = 1;
-	}
-
-	err = ssdfs_btree_change_item(&tree->generic_tree, search);
-
-	ssdfs_btree_search_forget_parent_node(search);
-	ssdfs_btree_search_forget_child_node(search);
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to change inode: ino %llu, err %d\n",
-			  ino, err);
-		return err;
-	}
-
-	if (ino == SSDFS_ROOT_INO) {
-		spin_lock(&tree->lock);
-		ssdfs_memcpy(&tree->root_folder,
-			     0, sizeof(struct ssdfs_inode),
-			     search->result.raw_buf.place.ptr,
-			     0, search->result.raw_buf.size,
-			     sizeof(struct ssdfs_inode));
-		spin_unlock(&tree->lock);
-	}
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("finished\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	return 0;
 }
 
 /*
@@ -1476,11 +1488,21 @@ int ssdfs_inodes_btree_delete_range(struct ssdfs_inodes_btree_info *tree,
 		return -ENOMEM;
 	}
 
+	down_write(&tree->tree_lock);
+
 	ssdfs_btree_search_init(search);
 
-	if (count == 1)
-		err = ssdfs_inodes_btree_find(tree, ino, search);
-	else {
+	if (count == 1) {
+		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+		search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+		search->request.start.hash = ino;
+		search->request.end.hash = ino;
+		search->request.count = 1;
+
+		err = ssdfs_btree_find_item(&tree->generic_tree, search);
+	} else {
 		search->request.type = SSDFS_BTREE_SEARCH_FIND_RANGE;
 		search->request.flags =
 			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
@@ -1489,7 +1511,7 @@ int ssdfs_inodes_btree_delete_range(struct ssdfs_inodes_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(ino >= U64_MAX - count);
 #endif /* CONFIG_SSDFS_DEBUG */
-		search->request.end.hash = (u64)ino + count;
+		search->request.end.hash = (u64)ino + count - 1;
 		search->request.count = count;
 
 		err = ssdfs_btree_find_range(&tree->generic_tree, search);
@@ -1499,7 +1521,7 @@ int ssdfs_inodes_btree_delete_range(struct ssdfs_inodes_btree_info *tree,
 		SSDFS_ERR("fail to find inodes range: "
 			  "ino %llu, count %u, err %d\n",
 			  ino, count, err);
-		goto finish_delete_inodes_range;
+		goto unlock_tree;
 	}
 
 	if (count == 1) {
@@ -1509,6 +1531,9 @@ int ssdfs_inodes_btree_delete_range(struct ssdfs_inodes_btree_info *tree,
 		search->request.type = SSDFS_BTREE_SEARCH_DELETE_RANGE;
 		err = ssdfs_btree_delete_range(&tree->generic_tree, search);
 	}
+
+unlock_tree:
+	up_write(&tree->tree_lock);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to delete raw inodes range: "
