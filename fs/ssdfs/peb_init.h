@@ -157,7 +157,12 @@ struct ssdfs_blk_bmap_init_env {
  * @portion.fragments.stream: phys offset descriptors sequence
  * @portion.read_iter: read iterator in portion
  * @portion.area_offset: offset to the blk2off area
+ * @portion.area_size: size of the blk2off area in bytes
  * @portion.read_off: current read offset
+ * @portion.processed_bytes: number of processed bytes of the area
+ * @portion.is_compressed: is blk2off area compressed?
+ * @portion.has_next_chain: does area have not read fragments chain?
+ * @portion.req: segment request that reads the area
  */
 struct ssdfs_blk2off_table_init_env {
 	struct {
@@ -174,7 +179,12 @@ struct ssdfs_blk2off_table_init_env {
 
 //		struct ssdfs_fragment_raw_iterator read_iter;
 		u32 area_offset;
+		u32 area_size;
 		u32 read_off;
+		u32 processed_bytes;
+		bool is_compressed;
+		bool has_next_chain;
+		struct ssdfs_segment_request *req;
 	} portion;
 };
 

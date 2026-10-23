@@ -179,7 +179,12 @@ ssdfs_prepare_blk2off_table_init_env(struct ssdfs_blk2off_table_init_env *env,
 //	SSDFS_FRAG_RAW_ITER_CREATE(&env->portion.read_iter);
 
 	env->portion.area_offset = 0;
+	env->portion.area_size = 0;
 	env->portion.read_off = 0;
+	env->portion.processed_bytes = 0;
+	env->portion.is_compressed = false;
+	env->portion.has_next_chain = false;
+	env->portion.req = NULL;
 }
 
 #ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
@@ -214,7 +219,12 @@ ssdfs_reinit_blk2off_table_init_env(struct ssdfs_blk2off_table_init_env *env)
 */
 
 	env->portion.area_offset = 0;
+	env->portion.area_size = 0;
 	env->portion.read_off = 0;
+	env->portion.processed_bytes = 0;
+	env->portion.is_compressed = false;
+	env->portion.has_next_chain = false;
+	env->portion.req = NULL;
 }
 #endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
@@ -245,7 +255,12 @@ ssdfs_destroy_blk2off_table_init_env(struct ssdfs_blk2off_table_init_env *env)
 */
 
 	env->portion.area_offset = 0;
+	env->portion.area_size = 0;
 	env->portion.read_off = 0;
+	env->portion.processed_bytes = 0;
+	env->portion.is_compressed = false;
+	env->portion.has_next_chain = false;
+	env->portion.req = NULL;
 }
 
 static void
@@ -5035,22 +5050,27 @@ fail_read_log_header:
  * @fsi: file system info object
  * @pebi: pointer on PEB object
  * @footer_block: index of footer logical block in erase block
+ * @found_block: index of found log's header block [out]
+ * @found_log_bytes: number of bytes in found log [out]
  *
  * This function tries to check the presence of ending
  * partail log of full log.
  *
  * RETURN:
- * [success]
+ * [success] - log's header has been found and read into the cache.
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
  * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - ending partial log is absent.
  */
 #ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
 static
 int ssdfs_peb_check_full_log_end(struct ssdfs_fs_info *fsi,
 				 struct ssdfs_peb_info *pebi,
-				 u32 footer_block)
+				 u32 footer_block,
+				 u32 *found_block,
+				 u32 *found_log_bytes)
 {
 	u32 header_block;
 	u32 partial_log_blocks;
@@ -5060,6 +5080,9 @@ int ssdfs_peb_check_full_log_end(struct ssdfs_fs_info *fsi,
 	u64 peb_create_time;
 	u64 last_log_time;
 	int err;
+
+	*found_block = U32_MAX;
+	*found_log_bytes = U32_MAX;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi);
@@ -5183,11 +5206,11 @@ int ssdfs_peb_check_full_log_end(struct ssdfs_fs_info *fsi,
 		  last_log_time);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	partial_log_blocks = log_bytes >> fsi->log_pagesize;
+	partial_log_blocks = DIV_ROUND_UP(log_bytes, fsi->pagesize);
 
-	if (partial_log_blocks == 0) {
-		SSDFS_ERR("invalid log_bytes %u\n",
-			  log_bytes);
+	if (partial_log_blocks == 0 || partial_log_blocks > (footer_block + 1)) {
+		SSDFS_ERR("invalid log_bytes %u, footer_block %u\n",
+			  log_bytes, footer_block);
 		return -ERANGE;
 	}
 
@@ -5199,11 +5222,15 @@ int ssdfs_peb_check_full_log_end(struct ssdfs_fs_info *fsi,
 					&log_blocks,
 					&log_bytes);
 	if (err == -ENODATA) {
-		err = 0;
 		/*
 		 * Last partial log of full log is absent.
-		 * Continue logic.
+		 * Caller has to continue the search.
 		 */
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("header is absent: header_block %u\n",
+			  header_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read log header: "
 			  "seg %llu, peb %llu, header_block %u, "
@@ -5215,17 +5242,173 @@ int ssdfs_peb_check_full_log_end(struct ssdfs_fs_info *fsi,
 		return err;
 	}
 
+	*found_block = header_block;
+	*found_log_bytes = log_bytes;
+
 	return 0;
 }
 #endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
 /*
- * ssdfs_peb_find_last_partial_log() - find last partial log of full log
+ * ssdfs_peb_find_log_header_backward() - find nearest log's header backward
  * @fsi: file system info object
  * @pebi: pointer on PEB object
- * @high_block: upper bound for search (block index)
+ * @from_block: block index to start the search from
+ * @found_block: index of found log's header block [out]
+ * @found_log_bytes: number of bytes in found log [out]
  *
- * This function tries to find a last partial log of full log.
+ * This function walks from @from_block down to the block #0
+ * and tries to find the nearest valid log's header. The found
+ * header is kept in the PEB's cache.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - no log's header has been found.
+ */
+#ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+static
+int ssdfs_peb_find_log_header_backward(struct ssdfs_fs_info *fsi,
+					struct ssdfs_peb_info *pebi,
+					u32 from_block,
+					u32 *found_block,
+					u32 *found_log_bytes)
+{
+	u32 log_blocks = U32_MAX;
+	u32 log_bytes = U32_MAX;
+	int cur_block;
+	u64 peb_create_time;
+	u64 last_log_time;
+	int err = -ENODATA;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pebi || !found_block || !found_log_bytes);
+	BUG_ON(from_block >= fsi->pages_per_peb);
+
+	SSDFS_DBG("seg %llu, peb_index %u, from_block %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->pebc->peb_index,
+		  from_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*found_block = U32_MAX;
+	*found_log_bytes = U32_MAX;
+
+	for (cur_block = (int)from_block; cur_block >= 0; cur_block--) {
+		err = ssdfs_peb_read_log_header(fsi, pebi, cur_block,
+						&peb_create_time,
+						&last_log_time,
+						&log_blocks,
+						&log_bytes);
+		if (err == -ENODATA) {
+			/*
+			 * continue search the log's header
+			 */
+			continue;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to read log header: "
+				  "seg %llu, peb %llu, cur_block %d, "
+				  "err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  cur_block,
+				  err);
+			return err;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("header has been found: cur_block %d\n",
+			  cur_block);
+
+		BUG_ON(peb_create_time >= U64_MAX);
+		BUG_ON(last_log_time >= U64_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		pebi->peb_create_time = peb_create_time;
+		pebi->current_log.last_log_time = last_log_time;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg %llu, peb_index %u, peb_id %llu, "
+			  "peb_create_time %llx, last_log_time %llx\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->pebc->peb_index,
+			  pebi->peb_id,
+			  peb_create_time,
+			  last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		*found_block = (u32)cur_block;
+		*found_log_bytes = log_bytes;
+		return 0;
+	}
+
+	return err;
+}
+#endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
+
+/*
+ * ssdfs_peb_forget_stale_log_header() - exclude stale header from cache
+ * @fsi: file system info object
+ * @pebi: pointer on PEB object
+ * @block: index of block with stale log's header
+ *
+ * This function releases the cached folio that contains the header
+ * of the log from the previous lifecycle of the erase block.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code.
+ */
+#ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+static
+int ssdfs_peb_forget_stale_log_header(struct ssdfs_fs_info *fsi,
+				      struct ssdfs_peb_info *pebi,
+				      u32 block)
+{
+	pgoff_t start, end;
+	int err;
+
+	start = ((pgoff_t)block << fsi->log_pagesize) /
+					pebi->cache.folio_size;
+	end = start;
+
+	err = ssdfs_folio_array_release_folios(&pebi->cache, &start, end);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to release folio: "
+			  "block %u, err %d\n",
+			  block, err);
+		return err;
+	}
+
+	return 0;
+}
+#endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
+
+/*
+ * ssdfs_peb_follow_log_chain() - follow the chain of logs forward
+ * @fsi: file system info object
+ * @pebi: pointer on PEB object
+ * @hdr_block: index of known log's header block
+ * @log_bytes: number of bytes in the known log
+ * @peb_create_time: PEB's creation time (to detect stale logs)
+ * @max_block: upper bound for the search (block index, exclusive)
+ * @last_block: index of the last found log's header block [out]
+ * @last_log_bytes: number of bytes in the last found log [out]
+ *
+ * Search of the last log is based on the bisection by means of
+ * checking the emptiness of logical blocks. However, a logical block
+ * of user data can be filled by zeros and it looks like an empty
+ * (never written) block. As a result, the bisection can stop
+ * before the real last log. This function starts from the known
+ * log's header and tries to read the header of the next log
+ * (@hdr_block + log's size) until no valid header is found.
+ * Every found header is kept in the PEB's cache. If @last_block and
+ * @last_log_bytes are provided, then the position and size of the last
+ * found log are returned. The caller can detect the broken chain by
+ * checking that the last found log ends before @max_block.
  *
  * RETURN:
  * [success]
@@ -5236,29 +5419,358 @@ int ssdfs_peb_check_full_log_end(struct ssdfs_fs_info *fsi,
  */
 #ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
 static
-int ssdfs_peb_find_last_partial_log(struct ssdfs_fs_info *fsi,
-				    struct ssdfs_peb_info *pebi,
-				    u32 high_block)
+int ssdfs_peb_follow_log_chain(struct ssdfs_fs_info *fsi,
+				struct ssdfs_peb_info *pebi,
+				u32 hdr_block, u32 log_bytes,
+				u64 peb_create_time,
+				u32 max_block,
+				u32 *last_block,
+				u32 *last_log_bytes)
+{
+	u32 next_block;
+	u32 log_blocks = U32_MAX;
+	u32 next_log_bytes = U32_MAX;
+	u64 next_create_time;
+	u64 last_log_time;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pebi);
+
+	SSDFS_DBG("seg %llu, peb_index %u, hdr_block %u, "
+		  "log_bytes %u, max_block %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->pebc->peb_index,
+		  hdr_block, log_bytes, max_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (last_block)
+		*last_block = hdr_block;
+	if (last_log_bytes)
+		*last_log_bytes = log_bytes;
+
+	max_block = min_t(u32, max_block, fsi->pages_per_peb);
+
+	while (hdr_block < max_block) {
+		if (log_bytes == 0 || log_bytes >= U32_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log's size is unknown: "
+				  "hdr_block %u, log_bytes %u\n",
+				  hdr_block, log_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return 0;
+		}
+
+		next_block = hdr_block + DIV_ROUND_UP(log_bytes,
+						      fsi->pagesize);
+		if (next_block >= max_block)
+			return 0;
+
+		err = ssdfs_peb_read_log_header(fsi, pebi, next_block,
+						&next_create_time,
+						&last_log_time,
+						&log_blocks,
+						&next_log_bytes);
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("last log has been reached: "
+				  "hdr_block %u\n", hdr_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return 0;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to read log header: "
+				  "seg %llu, peb %llu, block %u, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, next_block, err);
+			return err;
+		}
+
+		if (next_create_time != peb_create_time) {
+			/*
+			 * The header belongs to the previous
+			 * lifecycle of the erase block (stale log).
+			 */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("stale log: block %u, "
+				  "create_time %llx != peb_create_time %llx\n",
+				  next_block, next_create_time,
+				  peb_create_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			return ssdfs_peb_forget_stale_log_header(fsi, pebi,
+								 next_block);
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("next log has been found: block %u\n",
+			  next_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		pebi->current_log.last_log_time = last_log_time;
+		hdr_block = next_block;
+		log_bytes = next_log_bytes;
+
+		if (last_block)
+			*last_block = hdr_block;
+		if (last_log_bytes)
+			*last_log_bytes = log_bytes;
+	}
+
+	return 0;
+}
+#endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
+
+/*
+ * ssdfs_peb_find_last_log_in_range() - find last log in written range
+ * @fsi: file system info object
+ * @pebi: pointer on PEB object
+ * @start_block: index of known log's header block
+ * @peb_create_time: PEB's creation time (to detect stale logs)
+ * @last_block: index of the last written block
+ * @found_block: index of found log's header block [out]
+ * @found_log_bytes: number of bytes in found log [out]
+ *
+ * This function tries to find the header of the last log in the range
+ * [@start_block, @last_block]. If the last partial log is small (for
+ * example, one logical block), then @last_block can contain the header
+ * of the last log. Otherwise, the function follows the chain of logs'
+ * headers from @start_block until the next log's header is located
+ * beyond @last_block. As a result, only one block per log is read.
+ * If the chain is broken, then the function falls back to the backward
+ * search of log's header from @last_block.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - no log's header has been found.
+ */
+#ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+static
+int ssdfs_peb_find_last_log_in_range(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_peb_info *pebi,
+				     u32 start_block,
+				     u64 peb_create_time,
+				     u32 last_block,
+				     u32 *found_block,
+				     u32 *found_log_bytes)
 {
 	u32 log_blocks = U32_MAX;
 	u32 log_bytes = U32_MAX;
-	int cur_block = 0;
-	u32 low_block;
-	u64 byte_offset;
-	u64 peb_create_time;
+	u32 hdr_block;
+	u64 create_time;
 	u64 last_log_time;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !pebi);
-	BUG_ON(high_block > fsi->pages_per_peb);
+	BUG_ON(!fsi || !pebi || !found_block || !found_log_bytes);
+	BUG_ON(last_block >= fsi->pages_per_peb);
+	BUG_ON(start_block > last_block);
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
-		  "high_block %u\n",
+		  "start_block %u, last_block %u\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->pebc->peb_index,
-		  high_block);
+		  start_block, last_block);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	*found_block = U32_MAX;
+	*found_log_bytes = U32_MAX;
+
+	/*
+	 * If @last_block is equal to @start_block, then the header
+	 * of @start_block is the header of the last log. Otherwise,
+	 * the last partial log can be small (for example, one logical
+	 * block) and @last_block can contain the header of the last log.
+	 */
+	err = ssdfs_peb_read_log_header(fsi, pebi, last_block,
+					&create_time,
+					&last_log_time,
+					&log_blocks,
+					&log_bytes);
+	if (err == -ENODATA) {
+		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("last written block %u has no header\n",
+			  last_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (last_block == start_block)
+			goto search_backward;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to read log header: "
+			  "seg %llu, peb %llu, block %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, last_block, err);
+		return err;
+	} else if (create_time != peb_create_time) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("stale log: block %u, "
+			  "create_time %llx != peb_create_time %llx\n",
+			  last_block, create_time, peb_create_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = ssdfs_peb_forget_stale_log_header(fsi, pebi,
+							last_block);
+		if (unlikely(err))
+			return err;
+
+		if (last_block == start_block)
+			goto search_backward;
+	} else {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("last written block %u contains header\n",
+			  last_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+		hdr_block = last_block;
+		goto finish_search;
+	}
+
+	/*
+	 * The @last_block is inside of the last log.
+	 * Follow the chain of logs' headers from @start_block.
+	 */
+	err = ssdfs_peb_read_log_header(fsi, pebi, start_block,
+					&create_time,
+					&last_log_time,
+					&log_blocks,
+					&log_bytes);
+	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("start block %u has no header\n",
+			  start_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto search_backward;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to read log header: "
+			  "seg %llu, peb %llu, block %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, start_block, err);
+		return err;
+	} else if (create_time != peb_create_time) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("stale log: block %u, "
+			  "create_time %llx != peb_create_time %llx\n",
+			  start_block, create_time, peb_create_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto search_backward;
+	}
+
+	pebi->current_log.last_log_time = last_log_time;
+
+	err = ssdfs_peb_follow_log_chain(fsi, pebi, start_block,
+					 log_bytes,
+					 peb_create_time,
+					 last_block + 1,
+					 &hdr_block,
+					 &log_bytes);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to follow the logs chain: "
+			  "seg %llu, peb %llu, block %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, start_block, err);
+		return err;
+	}
+
+	if (log_bytes == 0 || log_bytes >= U32_MAX ||
+	    (hdr_block + DIV_ROUND_UP(log_bytes, fsi->pagesize)) <= last_block) {
+		/*
+		 * The last found log ends before the last written
+		 * block. The chain is broken.
+		 */
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("chain is broken: "
+			  "hdr_block %u, log_bytes %u, last_block %u\n",
+			  hdr_block, log_bytes, last_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto search_backward;
+	}
+
+	last_log_time = pebi->current_log.last_log_time;
+
+finish_search:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb_index %u, peb_id %llu, "
+		  "last log %u, log_bytes %u, "
+		  "peb_create_time %llx, last_log_time %llx\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->pebc->peb_index,
+		  pebi->peb_id,
+		  hdr_block, log_bytes,
+		  peb_create_time,
+		  last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pebi->peb_create_time = peb_create_time;
+	pebi->current_log.last_log_time = last_log_time;
+
+	*found_block = hdr_block;
+	*found_log_bytes = log_bytes;
+
+	return 0;
+
+search_backward:
+	return ssdfs_peb_find_log_header_backward(fsi, pebi, last_block,
+						  found_block,
+						  found_log_bytes);
+}
+#endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
+
+/*
+ * ssdfs_peb_find_last_partial_log() - find last partial log of full log
+ * @fsi: file system info object
+ * @pebi: pointer on PEB object
+ * @start_block: index of known log's header block in the full log
+ * @peb_create_time: PEB's creation time (to detect stale logs)
+ * @high_block: upper bound for search (block index)
+ * @found_block: index of found log's header block [out]
+ * @found_log_bytes: number of bytes in found log [out]
+ *
+ * This function tries to find a last partial log of full log.
+ * First of all, the bisection finds the last written block
+ * in the range [@start_block, @high_block). Then, the function
+ * follows the chain of partial logs' headers from @start_block
+ * until the next log's header is beyond the last written block.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - no log's header has been found.
+ */
+#ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+static
+int ssdfs_peb_find_last_partial_log(struct ssdfs_fs_info *fsi,
+				    struct ssdfs_peb_info *pebi,
+				    u32 start_block,
+				    u64 peb_create_time,
+				    u32 high_block,
+				    u32 *found_block,
+				    u32 *found_log_bytes)
+{
+	int cur_block = 0;
+	u32 low_block;
+	u64 byte_offset;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pebi || !found_block || !found_log_bytes);
+	BUG_ON(high_block > fsi->pages_per_peb);
+	BUG_ON(start_block >= high_block);
+
+	SSDFS_DBG("seg %llu, peb_index %u, "
+		  "start_block %u, high_block %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->pebc->peb_index,
+		  start_block, high_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*found_block = U32_MAX;
+	*found_log_bytes = U32_MAX;
 
 	if (!fsi->devops->can_write_block) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5267,7 +5779,7 @@ int ssdfs_peb_find_last_partial_log(struct ssdfs_fs_info *fsi,
 		return -EOPNOTSUPP;
 	}
 
-	low_block = 0;
+	low_block = start_block;
 	cur_block = high_block - 1;
 
 	do {
@@ -5329,56 +5841,10 @@ int ssdfs_peb_find_last_partial_log(struct ssdfs_fs_info *fsi,
 		cur_block = low_block + diff_blocks;
 	} while (cur_block > low_block && cur_block < high_block);
 
-	cur_block = low_block;
-
-	do {
-		err = ssdfs_peb_read_log_header(fsi, pebi, cur_block,
-						&peb_create_time,
-						&last_log_time,
-						&log_blocks,
-						&log_bytes);
-		if (err == -ENODATA) {
-			/*
-			 * continue search the log's header
-			 */
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to read log header: "
-				  "seg %llu, peb %llu, cur_block %u, "
-				  "err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id,
-				  cur_block,
-				  err);
-			return err;
-		} else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("header has been found: cur_block %d\n",
-				  cur_block);
-
-			BUG_ON(peb_create_time >= U64_MAX);
-			BUG_ON(last_log_time >= U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			pebi->peb_create_time = peb_create_time;
-			pebi->current_log.last_log_time = last_log_time;
-
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("seg %llu, peb_index %u, peb_id %llu, "
-				  "peb_create_time %llx, last_log_time %llx\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->pebc->peb_index,
-				  pebi->peb_id,
-				  peb_create_time,
-				  last_log_time);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			break;
-		}
-
-		cur_block--;
-	} while (cur_block > 0);
-
-	return err;
+	return ssdfs_peb_find_last_log_in_range(fsi, pebi, start_block,
+						peb_create_time, low_block,
+						found_block,
+						found_log_bytes);
 }
 #endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
@@ -5415,12 +5881,12 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 	u32 log_blocks = U32_MAX;
 	u32 log_bytes = U32_MAX;
 	loff_t offset;
-	u32 full_log_bytes;
-	u32 full_log_blocks;
 	u64 zone_wp;
-	u64 cur_block = 0;
-	u32 low_block, high_block;
-	u32 partial_log_blocks;
+	u64 written_bytes;
+	u32 high_block;
+	u32 start_block, last_block;
+	u32 found_block = U32_MAX;
+	u32 found_log_bytes = U32_MAX;
 	u64 peb_create_time;
 	u64 last_log_time;
 	int err = 0;
@@ -5441,214 +5907,82 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 	offset = (loff_t)pebi->peb_id * fsi->pages_per_peb;
 	offset *= fsi->pagesize;
 
-	zone_wp = ssdfs_zns_zone_write_pointer(fsi->sb, offset);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("peb_id %llu, pages_per_peb %u, "
-		  "pagesize %u, offset %llu, "
-		  "write_pointer %llu\n",
-		  pebi->peb_id, fsi->pages_per_peb,
-		  fsi->pagesize, offset, zone_wp);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	/*
 	 * Read the very first header with the goal
-	 * to extract full log blocks count.
+	 * to check that zone contains any log and
+	 * to extract the PEB's creation time.
 	 */
-	err = ssdfs_peb_read_log_header(fsi, pebi, (u32)cur_block,
+	err = ssdfs_peb_read_log_header(fsi, pebi, 0,
 					&peb_create_time, &last_log_time,
 					&log_blocks, &log_bytes);
 	if (err == -ENODATA)
 		return 0;
 	else if (unlikely(err)) {
 		SSDFS_ERR("fail to read log header: "
-			  "seg %llu, peb %llu, "
-			  "cur_block %llu, err %d\n",
+			  "seg %llu, peb %llu, err %d\n",
 			  pebi->pebc->parent_si->seg_id,
-			  pebi->peb_id, cur_block,
-			  err);
+			  pebi->peb_id, err);
 		return err;
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(log_blocks >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
+	zone_wp = ssdfs_zns_zone_write_pointer(fsi->sb, offset);
 
-	full_log_blocks = log_blocks;
-	full_log_bytes = full_log_blocks * fsi->pagesize;
-
-	if (zone_wp >= U64_MAX)
-		zone_wp = fsi->device.zns.zone_capacity - full_log_bytes;
-
-	cur_block = (zone_wp - offset) >> PAGE_SHIFT;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(cur_block >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	/*
-	 * Try to read header of last full log.
-	 */
-	if (cur_block > full_log_blocks) {
-		cur_block /= full_log_blocks;
-		cur_block *= full_log_blocks;
-
-		err = ssdfs_peb_read_log_header(fsi, pebi, cur_block,
-						&peb_create_time,
-						&last_log_time,
-						&log_blocks,
-						&log_bytes);
-		if (err == -ENODATA) {
-			SSDFS_DBG("try previous full log's header: "
-				  "valid header is not detected: "
-				  "cur_block %llu\n",
-				  cur_block);
-
-			if (cur_block > full_log_blocks) {
-				cur_block -= full_log_blocks;
-
-				err = ssdfs_peb_read_log_header(fsi, pebi,
-								cur_block,
-								&peb_create_time,
-								&last_log_time,
-								&log_blocks,
-								&log_bytes);
-			}
-		}
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to read log header: "
-				  "seg %llu, peb %llu, cur_block %llu, "
-				  "full_log_blocks %u, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id,
-				  cur_block,
-				  full_log_blocks,
-				  err);
-			return err;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(log_blocks == 0);
-		BUG_ON(log_blocks >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
+	if (zone_wp >= U64_MAX || zone_wp < offset) {
+		/*
+		 * The zone is full (or write pointer is unavailable).
+		 * The whole zone's capacity can contain logs.
+		 */
+		written_bytes = fsi->device.zns.zone_capacity;
 	} else
-		cur_block = 0;
+		written_bytes = zone_wp - offset;
 
-	if (log_bytes == 0 || log_bytes >= U32_MAX) {
-		SSDFS_ERR("invalid log_bytes: "
-			  "seg %llu, peb_index %u, log_bytes %u\n",
+	high_block = (u32)min_t(u64, written_bytes >> fsi->log_pagesize,
+				fsi->pages_per_peb);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, pages_per_peb %u, "
+		  "pagesize %u, offset %llu, "
+		  "write_pointer %llu, high_block %u\n",
+		  pebi->peb_id, fsi->pages_per_peb,
+		  fsi->pagesize, offset, zone_wp, high_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (high_block == 0) {
+		SSDFS_ERR("invalid write pointer: "
+			  "seg %llu, peb %llu, write_pointer %llu\n",
 			  pebi->pebc->parent_si->seg_id,
-			  pebi->pebc->peb_index,
-			  log_bytes);
+			  pebi->peb_id, zone_wp);
 		return -ERANGE;
 	}
 
-	low_block = cur_block;
-	high_block = cur_block + full_log_blocks;
-	cur_block = high_block - 1;
+	/*
+	 * The write pointer defines exactly the end of written data.
+	 * The beginning of the last full log is expected to be aligned
+	 * on full log's boundary. It is used as the starting point for
+	 * following the chain of partial logs' headers up to the write
+	 * pointer. Partial logs are not guaranteed to be aligned on full
+	 * log's boundary. If the starting point doesn't contain the log's
+	 * header, then the search falls back to the backward walk from
+	 * the last written block to the nearest log's header.
+	 */
+	last_block = high_block - 1;
 
-	err = ssdfs_peb_check_full_log_end(fsi, pebi, cur_block);
-	if (err == -ENODATA) {
-		err = 0;
-		/*
-		 * Last partial log of full log is absent.
-		 * Continue logic.
-		 */
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to check full log end: "
-			  "seg %llu, peb_index %u, err %d\n",
+	if (log_blocks == 0 || log_blocks >= U32_MAX)
+		start_block = 0;
+	else
+		start_block = rounddown(last_block, log_blocks);
+
+	err = ssdfs_peb_find_last_log_in_range(fsi, pebi, start_block,
+						peb_create_time, last_block,
+						&found_block,
+						&found_log_bytes);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find last log's header: "
+			  "seg %llu, peb %llu, start_block %u, "
+			  "last_block %u, err %d\n",
 			  pebi->pebc->parent_si->seg_id,
-			  pebi->pebc->peb_index,
-			  err);
-		return err;
-	} else {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("ending partial log of full log is found: "
-			  "seg %llu, peb_index %u\n",
-			  pebi->pebc->parent_si->seg_id,
-			  pebi->pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
-	}
-
-	high_block = (zone_wp - offset) >> PAGE_SHIFT;
-
-	err = ssdfs_peb_find_last_partial_log(fsi, pebi, high_block);
-	if (err == -EOPNOTSUPP) {
-		err = 0;
-
-		cur_block = low_block;
-
-		do {
-			err = ssdfs_peb_read_log_header(fsi, pebi, cur_block,
-							&peb_create_time,
-							&last_log_time,
-							&log_blocks,
-							&log_bytes);
-			if (err == -ENODATA) {
-				err = 0;
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("header is not found: "
-					  "cur_block %llu\n",
-					  cur_block);
-#endif /* CONFIG_SSDFS_DEBUG */
-				break;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to read log header: "
-					  "seg %llu, peb %llu, cur_block %llu, "
-					  "err %d\n",
-					  pebi->pebc->parent_si->seg_id,
-					  pebi->peb_id,
-					  cur_block,
-					  err);
-				break;
-			} else if (log_bytes == 0 || log_bytes >= U32_MAX) {
-				err = -ERANGE;
-				SSDFS_ERR("invalid log_bytes: "
-					  "seg %llu, peb_index %u, "
-					  "log_bytes %u\n",
-					  pebi->pebc->parent_si->seg_id,
-					  pebi->pebc->peb_index,
-					  log_bytes);
-				break;
-			} else {
-#ifdef CONFIG_SSDFS_DEBUG
-				BUG_ON(peb_create_time >= U64_MAX);
-				BUG_ON(last_log_time >= U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-				pebi->peb_create_time = peb_create_time;
-				pebi->current_log.last_log_time = last_log_time;
-
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("seg %llu, peb_index %u, peb_id %llu, "
-					  "peb_create_time %llx, last_log_time %llx\n",
-					  pebi->pebc->parent_si->seg_id,
-					  pebi->pebc->peb_index,
-					  pebi->peb_id,
-					  peb_create_time,
-					  last_log_time);
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
-
-			partial_log_blocks = log_bytes >> fsi->log_pagesize;
-
-			if (partial_log_blocks == 0) {
-				err = -ERANGE;
-				SSDFS_ERR("invalid log_bytes %u\n",
-					  log_bytes);
-				break;
-			}
-
-			cur_block += partial_log_blocks;
-		} while (cur_block < high_block);
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find last partial log: "
-			  "seg %llu, peb_index %u, err %d\n",
-			  pebi->pebc->parent_si->seg_id,
-			  pebi->pebc->peb_index,
-			  err);
+			  pebi->peb_id, start_block,
+			  last_block, err);
 		return err;
 	}
 
@@ -5667,8 +6001,16 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
  * @full_log_pages: number of pages in full log
  * @found_page: start page of found full log [out]
  * @log_bytes: number of bytes in first partial log [out]
+ * @hdr_page: nearest page with log's header at or before @found_page [out]
  *
- * This function tries to find last full log.
+ * This function tries to find last full log. Partial logs are not
+ * guaranteed to be aligned on @full_log_pages boundary. As a result,
+ * a probed page can contain data without any log header. Such page
+ * is treated as the low bound of search. In this case, @found_page
+ * doesn't point out on log header and @log_bytes is U32_MAX.
+ * The @hdr_page always points out on the log's header (@start_page
+ * is expected to contain log's header). It can be used as starting
+ * point for following the chain of partial logs.
  *
  * RETURN:
  * [success]
@@ -5684,9 +6026,12 @@ int ssdfs_peb_find_last_full_log(struct ssdfs_fs_info *fsi,
 				 u32 start_page,
 				 u32 full_log_pages,
 				 u32 *found_page,
-				 u32 *log_bytes)
+				 u32 *log_bytes,
+				 u32 *hdr_page)
 {
 	u32 log_pages = U32_MAX;
+	u32 cur_log_bytes = U32_MAX;
+	u32 low_page_log_bytes = U32_MAX;
 	u32 cur_page = 0;
 	u32 low_page, high_page;
 	u64 byte_offset;
@@ -5696,7 +6041,7 @@ int ssdfs_peb_find_last_full_log(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi);
-	BUG_ON(!found_page || !log_bytes);
+	BUG_ON(!found_page || !log_bytes || !hdr_page);
 	BUG_ON(full_log_pages == 0);
 	BUG_ON(full_log_pages >= U32_MAX);
 
@@ -5708,6 +6053,7 @@ int ssdfs_peb_find_last_full_log(struct ssdfs_fs_info *fsi,
 
 	*found_page = U32_MAX;
 	*log_bytes = U32_MAX;
+	*hdr_page = start_page;
 
 	low_page = start_page;
 	high_page = fsi->pages_per_peb;
@@ -5764,10 +6110,10 @@ int ssdfs_peb_find_last_full_log(struct ssdfs_fs_info *fsi,
 							&peb_create_time,
 							&last_log_time,
 							&log_pages,
-							log_bytes);
+							&cur_log_bytes);
 			if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to read log header: "
+				SSDFS_DBG("page contains data but not header: "
 					  "seg %llu, peb %llu, cur_page %u, "
 					  "err %d\n",
 					  pebi->pebc->parent_si->seg_id,
@@ -5775,8 +6121,16 @@ int ssdfs_peb_find_last_full_log(struct ssdfs_fs_info *fsi,
 					  cur_page,
 					  err);
 #endif /* CONFIG_SSDFS_DEBUG */
-				/* correct upper bound */
-				high_page = cur_page;
+				/*
+				 * The page is written but it is not
+				 * a log's header. It means that partial
+				 * log is not aligned on full log's
+				 * boundary and the page is inside
+				 * of some log. Correct low bound.
+				 */
+				err = 0;
+				low_page = cur_page;
+				low_page_log_bytes = U32_MAX;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to read log header: "
 					  "seg %llu, peb %llu, cur_page %u, "
@@ -5789,6 +6143,8 @@ int ssdfs_peb_find_last_full_log(struct ssdfs_fs_info *fsi,
 			} else {
 				/* correct low bound */
 				low_page = cur_page;
+				low_page_log_bytes = cur_log_bytes;
+				*hdr_page = cur_page;
 			}
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5808,6 +6164,12 @@ int ssdfs_peb_find_last_full_log(struct ssdfs_fs_info *fsi,
 	} while (cur_page > low_page && cur_page < high_page);
 
 	*found_page = low_page;
+	*log_bytes = low_page_log_bytes;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("found_page %u, log_bytes %u, hdr_page %u\n",
+		  *found_page, *log_bytes, *hdr_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -5837,11 +6199,14 @@ int ssdfs_peb_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 	u32 log_pages = U32_MAX;
 	u32 log_bytes = U32_MAX;
 	u32 full_log_pages;
-	u32 partial_log_pages;
 	u32 found_log_bytes;
+	u32 found_block = U32_MAX;
+	u32 start_page;
+	u32 hdr_page;
 	u32 cur_page = 0;
-	u32 low_page, high_page;
+	u32 high_page;
 	u64 peb_create_time;
+	u64 first_log_create_time;
 	u64 last_log_time;
 	int err = 0;
 
@@ -5885,12 +6250,25 @@ int ssdfs_peb_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 
 	full_log_pages = log_pages;
 	found_log_bytes = log_bytes;
+	start_page = cur_page;
+	first_log_create_time = peb_create_time;
+
+	if (!fsi->devops->can_write_block) {
+		/*
+		 * Emptiness of blocks cannot be checked.
+		 * Simply follow the chain of logs from
+		 * the very first log.
+		 */
+		found_block = start_page;
+		goto follow_logs_chain;
+	}
 
 	err = ssdfs_peb_find_last_full_log(fsi, pebi,
-					   cur_page,
+					   start_page,
 					   full_log_pages,
 					   &cur_page,
-					   &log_bytes);
+					   &log_bytes,
+					   &hdr_page);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find last full log: "
 			  "seg %llu, peb_index %u, err %d\n",
@@ -5915,14 +6293,29 @@ int ssdfs_peb_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 			  log_bytes);
 		return -ERANGE;
 	} else if (log_bytes >= U32_MAX) {
+		if (cur_page == start_page) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("continue to use: found_log_bytes %u\n",
-			  found_log_bytes);
+			SSDFS_DBG("continue to use: found_log_bytes %u\n",
+				  found_log_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
+		} else {
+			/*
+			 * Found page is inside of some log
+			 * (partial logs are not aligned on
+			 * full log's boundary). The log's size
+			 * is unknown. Search the last partial log.
+			 */
+			found_log_bytes = U32_MAX;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("found page %u is not log header\n",
+				  cur_page);
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
 	} else
 		found_log_bytes = log_bytes;
 
-	if (full_log_pages <= (found_log_bytes >> fsi->log_pagesize)) {
+	if (found_log_bytes < U32_MAX &&
+	    full_log_pages <= (found_log_bytes >> fsi->log_pagesize)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("log is full: "
 			  "found_log_bytes %u, full_log_pages %u, "
@@ -5930,14 +6323,17 @@ int ssdfs_peb_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 			  found_log_bytes, full_log_pages,
 			  fsi->pagesize);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
+		found_block = cur_page;
+		goto follow_logs_chain;
 	}
 
-	low_page = cur_page;
-	high_page = cur_page + full_log_pages;
+	high_page = min_t(u32, cur_page + full_log_pages,
+				fsi->pages_per_peb);
 	cur_page = high_page - 1;
 
-	err = ssdfs_peb_check_full_log_end(fsi, pebi, cur_page);
+	err = ssdfs_peb_check_full_log_end(fsi, pebi, cur_page,
+					   &found_block,
+					   &found_log_bytes);
 	if (err == -ENODATA) {
 		err = 0;
 		/*
@@ -5954,92 +6350,49 @@ int ssdfs_peb_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 	} else {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("ending partial log of full log is found: "
-			  "seg %llu, peb_index %u\n",
-			  pebi->pebc->parent_si->seg_id,
-			  pebi->pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
-	}
-
-	err = ssdfs_peb_find_last_partial_log(fsi, pebi, high_page);
-	if (err == -EOPNOTSUPP) {
-		err = 0;
-
-		cur_page = low_page;
-
-		do {
-			err = ssdfs_peb_read_log_header(fsi, pebi, cur_page,
-							&peb_create_time,
-							&last_log_time,
-							&log_pages,
-							&log_bytes);
-			if (err == -ENODATA) {
-				err = 0;
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("header is not found: "
-					  "cur_page %u\n",
-					  cur_page);
-#endif /* CONFIG_SSDFS_DEBUG */
-				break;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to read log header: "
-					  "seg %llu, peb %llu, cur_page %u, "
-					  "err %d\n",
-					  pebi->pebc->parent_si->seg_id,
-					  pebi->peb_id,
-					  cur_page,
-					  err);
-				break;
-			} else if (log_bytes == 0 || log_bytes >= U32_MAX) {
-				err = -ERANGE;
-				SSDFS_ERR("invalid log_bytes: "
-					  "seg %llu, peb_index %u, "
-					  "log_bytes %u\n",
-					  pebi->pebc->parent_si->seg_id,
-					  pebi->pebc->peb_index,
-					  log_bytes);
-				break;
-			} else {
-#ifdef CONFIG_SSDFS_DEBUG
-				BUG_ON(peb_create_time >= U64_MAX);
-				BUG_ON(last_log_time >= U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-				pebi->peb_create_time = peb_create_time;
-				pebi->current_log.last_log_time = last_log_time;
-
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("seg %llu, peb_index %u, peb_id %llu, "
-					  "peb_create_time %llx, last_log_time %llx\n",
-					  pebi->pebc->parent_si->seg_id,
-					  pebi->pebc->peb_index,
-					  pebi->peb_id,
-					  peb_create_time,
-					  last_log_time);
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
-
-			partial_log_pages = log_bytes >> fsi->log_pagesize;
-
-			if (partial_log_pages == 0) {
-				err = -ERANGE;
-				SSDFS_ERR("invalid log_bytes %u\n",
-					  log_bytes);
-				break;
-			}
-
-			cur_page += partial_log_pages;
-		} while (cur_page < high_page);
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find last partial log: "
-			  "seg %llu, peb_index %u, err %d\n",
+			  "seg %llu, peb_index %u, header_block %u\n",
 			  pebi->pebc->parent_si->seg_id,
 			  pebi->pebc->peb_index,
-			  err);
+			  found_block);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto follow_logs_chain;
+	}
+
+	err = ssdfs_peb_find_last_partial_log(fsi, pebi, hdr_page,
+					      first_log_create_time,
+					      high_page,
+					      &found_block,
+					      &found_log_bytes);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find last partial log: "
+			  "seg %llu, peb_index %u, high_page %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->pebc->peb_index,
+			  high_page, err);
 		return err;
 	}
 
-	return err;
+follow_logs_chain:
+	/*
+	 * Bisection relies on emptiness check of logical blocks.
+	 * But zeroed block of user data looks like empty one.
+	 * Make sure that the found log is really the last one.
+	 */
+	err = ssdfs_peb_follow_log_chain(fsi, pebi, found_block,
+					 found_log_bytes,
+					 first_log_create_time,
+					 fsi->pages_per_peb,
+					 NULL, NULL);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to follow the logs chain: "
+			  "seg %llu, peb_index %u, block %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->pebc->peb_index,
+			  found_block, err);
+		return err;
+	}
+
+	return 0;
 }
 #endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
@@ -8323,68 +8676,6 @@ int __ssdfs_read_blk2off_compressed_fragment(struct ssdfs_peb_info *pebi,
 }
 
 /*
- * ssdfs_read_blk2off_compressed_fragment() - read compressed fragment
- * @pebi: pointer on PEB object
- * @req: segment request
- * @read_bytes: size of fragment in bytes
- * @env: init environment [in|out]
- *
- * This function tries to read blk2off table's Physical Offsets Table
- * compressed fragment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- * %-ENOMEM     - fail to allocate memory.
- * %-EIO        - I/O error.
- */
-static
-int ssdfs_read_blk2off_compressed_fragment(struct ssdfs_peb_info *pebi,
-					   struct ssdfs_segment_request *req,
-					   u32 read_bytes,
-					   struct ssdfs_read_init_env *env)
-{
-	u32 processed_bytes = 0;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
-	BUG_ON(!pebi->pebc->parent_si->fsi);
-	BUG_ON(!env);
-
-	SSDFS_DBG("seg %llu, peb %llu, read_bytes %u, "
-		  "read_off %u\n",
-		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  read_bytes, env->log.blk2off_tbl.portion.read_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	do {
-		err = __ssdfs_read_blk2off_compressed_fragment(pebi, req, env,
-							       &processed_bytes);
-		if (err == -EAGAIN) {
-			/*
-			 * continue logic
-			 */
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to read compressed stream: "
-				  "err %d\n", err);
-			return err;
-		}
-	} while (err == -EAGAIN);
-
-	if (processed_bytes != read_bytes) {
-		SSDFS_ERR("corrupted compressed stream: "
-			  "processed_bytes %u != read_bytes %u\n",
-			  processed_bytes, read_bytes);
-		return -ERANGE;
-	}
-
-	return err;
-}
-
-/*
  * __ssdfs_read_blk2off_fragment() - read blk2off table's log's fragment
  * @pebi: pointer on PEB object
  * @req: segment request
@@ -8563,13 +8854,19 @@ int __ssdfs_read_blk2off_fragment(struct ssdfs_peb_info *pebi,
 }
 
 /*
- * ssdfs_read_blk2off_fragment() - read blk2off table's log's fragments
+ * ssdfs_read_blk2off_table_portion() - read blk2off table's portion
  * @pebi: pointer on PEB object
- * @req: segment request
- * @read_bytes: amount of bytes for reading
  * @env: init environment [in|out]
  *
- * This function tries to read blk2off table's log's fragments.
+ * This function tries to read the next portion of blk2off table.
+ * The portion is the content of one or several fragments chains
+ * that contains at least one Physical Offsets Table fragment.
+ * Translation extents are stored before any Physical Offsets Table
+ * fragment. As a result, all extents have been read already when
+ * the first portion is ready. The folios of the previous portion
+ * are released before reading the next one. It means that only
+ * SSDFS_BLK2OFF_FRAG_CHAIN_MAX memory folios are allocated for
+ * Physical Offsets Table fragments at once.
  *
  * RETURN:
  * [success]
@@ -8580,47 +8877,141 @@ int __ssdfs_read_blk2off_fragment(struct ssdfs_peb_info *pebi,
  * %-EIO        - I/O error.
  */
 static
-int ssdfs_read_blk2off_fragment(struct ssdfs_peb_info *pebi,
-				struct ssdfs_segment_request *req,
-				u32 read_bytes,
-				struct ssdfs_read_init_env *env)
+int ssdfs_read_blk2off_table_portion(struct ssdfs_peb_info *pebi,
+				     struct ssdfs_read_init_env *env)
 {
-	u32 processed_bytes = 0;
+	struct ssdfs_blk2off_table_init_env *tbl_env;
+	struct ssdfs_content_stream *stream;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
-	BUG_ON(!pebi->pebc->parent_si->fsi);
-	BUG_ON(!env);
+	BUG_ON(!env || !env->log.blk2off_tbl.portion.req);
 
-	SSDFS_DBG("seg %llu, peb %llu, read_bytes %u, "
-		  "read_off %u\n",
+	SSDFS_DBG("seg %llu, peb %llu, read_off %u, "
+		  "processed_bytes %u, area_size %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  read_bytes, env->log.blk2off_tbl.portion.read_off);
+		  env->log.blk2off_tbl.portion.read_off,
+		  env->log.blk2off_tbl.portion.processed_bytes,
+		  env->log.blk2off_tbl.portion.area_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	do {
-		err = __ssdfs_read_blk2off_fragment(pebi, req,
-						    env, &processed_bytes);
+	tbl_env = &env->log.blk2off_tbl;
+	stream = &tbl_env->portion.fragments.stream;
+
+	ssdfs_reinit_content_stream(stream);
+
+	while (tbl_env->portion.has_next_chain) {
+		if (tbl_env->portion.is_compressed) {
+			err = __ssdfs_read_blk2off_compressed_fragment(pebi,
+					tbl_env->portion.req, env,
+					&tbl_env->portion.processed_bytes);
+		} else {
+			err = __ssdfs_read_blk2off_fragment(pebi,
+					tbl_env->portion.req, env,
+					&tbl_env->portion.processed_bytes);
+		}
+
 		if (err == -EAGAIN) {
 			/*
 			 * continue logic
 			 */
+			err = 0;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to read stream: "
-				  "err %d\n", err);
+			SSDFS_ERR("fail to read fragments chain: "
+				  "seg %llu, peb %llu, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, err);
 			return err;
-		}
-	} while (err == -EAGAIN);
+		} else {
+			tbl_env->portion.has_next_chain = false;
 
-	if (processed_bytes != read_bytes) {
-		SSDFS_ERR("corrupted stream: "
-			  "processed_bytes %u != read_bytes %u\n",
-			  processed_bytes, read_bytes);
+			if (tbl_env->portion.processed_bytes !=
+					tbl_env->portion.area_size) {
+				SSDFS_ERR("corrupted stream: "
+					  "processed_bytes %u != "
+					  "area_size %u\n",
+					  tbl_env->portion.processed_bytes,
+					  tbl_env->portion.area_size);
+				return -ERANGE;
+			}
+		}
+
+		if (ssdfs_folio_vector_count(&stream->batch) > 0)
+			break;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("fragments %u, extents %u, has_next_chain %#x\n",
+		  ssdfs_folio_vector_count(&stream->batch),
+		  ssdfs_folio_vector_count(&tbl_env->extents.stream.batch),
+		  tbl_env->portion.has_next_chain);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+/*
+ * ssdfs_read_blk2off_table_next_portion() - read next portion of blk2off table
+ * @pebi: pointer on PEB object
+ * @env: init environment [in|out]
+ *
+ * This function tries to read the next portion of blk2off table
+ * instead of the processed one. The blk2off table's initialization
+ * logic calls this function when all fragments of current portion
+ * have been processed.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENODATA    - all portions have been read already.
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+int ssdfs_read_blk2off_table_next_portion(struct ssdfs_peb_info *pebi,
+					  struct ssdfs_read_init_env *env)
+{
+	struct ssdfs_content_stream *stream;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !env);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	stream = &env->log.blk2off_tbl.portion.fragments.stream;
+
+	if (!env->log.blk2off_tbl.portion.has_next_chain) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("all portions have been read\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		ssdfs_reinit_content_stream(stream);
+		return -ENODATA;
+	}
+
+	if (!env->log.blk2off_tbl.portion.req) {
+		SSDFS_ERR("request is absent\n");
 		return -ERANGE;
 	}
 
-	return err;
+	return ssdfs_read_blk2off_table_portion(pebi, env);
+}
+
+/*
+ * ssdfs_finish_blk2off_table_stream() - finish blk2off table's reading
+ * @env: init environment [in|out]
+ *
+ * This function releases the folios of last processed portion
+ * and forgets the request because it cannot be used anymore.
+ */
+static inline
+void ssdfs_finish_blk2off_table_stream(struct ssdfs_read_init_env *env)
+{
+	struct ssdfs_blk2off_table_init_env *tbl_env = &env->log.blk2off_tbl;
+
+	ssdfs_reinit_content_stream(&tbl_env->portion.fragments.stream);
+	tbl_env->portion.has_next_chain = false;
+	tbl_env->portion.req = NULL;
 }
 
 /*
@@ -8729,8 +9120,10 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 	}
 
 	env->log.blk2off_tbl.portion.area_offset = le32_to_cpu(desc->offset);
+	env->log.blk2off_tbl.portion.area_size = le32_to_cpu(desc->size);
 	env->log.blk2off_tbl.portion.read_off =
 				env->log.blk2off_tbl.portion.area_offset;
+	env->log.blk2off_tbl.portion.processed_bytes = 0;
 	env->log.blk2off_tbl.extents.stream.write_off = 0;
 	env->log.blk2off_tbl.portion.fragments.stream.write_off = 0;
 
@@ -8758,19 +9151,20 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 			(flags & SSDFS_LZ4_COMPRESSED) ||
 			(flags & SSDFS_ZSTD_COMPRESSED);
 
-	if (is_compressed) {
-		err = ssdfs_read_blk2off_compressed_fragment(pebi, req,
-						      le32_to_cpu(desc->size),
-						      env);
-	} else {
-		err = ssdfs_read_blk2off_fragment(pebi, req,
-						  le32_to_cpu(desc->size),
-						  env);
-	}
+	env->log.blk2off_tbl.portion.is_compressed = is_compressed;
+	env->log.blk2off_tbl.portion.has_next_chain = true;
+	env->log.blk2off_tbl.portion.req = req;
 
+	/*
+	 * Read only the first portion of the table.
+	 * The rest portions will be read one by one
+	 * by blk2off table's initialization logic.
+	 */
+	err = ssdfs_read_blk2off_table_portion(pebi, env);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to prepare block descriptor table: "
+		SSDFS_ERR("fail to read blk2off table's portion: "
 			  "err %d\n", err);
+		ssdfs_finish_blk2off_table_stream(env);
 		return err;
 	}
 
@@ -10507,6 +10901,7 @@ fail_init_using_blk_bmap:
 			  "seg %llu, peb %llu, log_offset %u, err %d\n",
 			  si->seg_id, pebi->peb_id,
 			  env->log.offset, err);
+		ssdfs_finish_blk2off_table_stream(env);
 		goto fail_init_using_peb;
 	}
 
@@ -10520,6 +10915,7 @@ fail_init_using_blk_bmap:
 
 	err = ssdfs_blk2off_table_partial_init(si->blk2off_table, env,
 						pebi, cno);
+	ssdfs_finish_blk2off_table_stream(env);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to start initialization of offset table: "
 			  "seg %llu, peb %llu, err %d\n",
@@ -10700,6 +11096,7 @@ fail_init_used_blk_bmap:
 			  "seg %llu, peb %llu, log_offset %u, err %d\n",
 			  si->seg_id, pebi->peb_id,
 			  env->log.offset, err);
+		ssdfs_finish_blk2off_table_stream(env);
 		goto fail_init_used_peb;
 	}
 
@@ -10713,6 +11110,7 @@ fail_init_used_blk_bmap:
 
 	err = ssdfs_blk2off_table_partial_init(si->blk2off_table, env,
 						pebi, cno);
+	ssdfs_finish_blk2off_table_stream(env);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to start initialization of offset table: "
 			  "seg %llu, peb %llu, err %d\n",

@@ -3629,6 +3629,7 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 		goto process_free_extents;
 	}
 
+process_next_portion:
 	for (i = 0; i < portion.fragments_count; i++) {
 		portion.pot_hdr_off = i * PAGE_SIZE;
 
@@ -3667,7 +3668,8 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				  portion.fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			if ((i + 1) >= portion.fragments_count) {
+			if ((i + 1) >= portion.fragments_count &&
+			    !env->log.blk2off_tbl.portion.has_next_chain) {
 				err = -ERANGE;
 				SSDFS_ERR("fail to initialize fragment: "
 					  "fragment_index %d, extent_index %d, "
@@ -3693,6 +3695,31 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				  portion.fragments_count, err);
 			goto unlock_translation_table;
 		}
+	}
+
+	err = ssdfs_read_blk2off_table_next_portion(pebi, env);
+	if (err == -ENODATA) {
+		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("all portions have been processed\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to read next portion: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_index, err);
+		goto unlock_translation_table;
+	} else {
+		portion.fragments_count =
+			ssdfs_folio_vector_count(&stream->batch);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("next portion: fragments_count %u\n",
+			  portion.fragments_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (portion.fragments_count > 0)
+			goto process_next_portion;
 	}
 
 process_free_extents:

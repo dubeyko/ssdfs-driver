@@ -589,6 +589,8 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 				      u16 log_start_block,
 				      struct ssdfs_metadata_descriptor *array,
 				      size_t array_size);
+int ssdfs_read_blk2off_table_next_portion(struct ssdfs_peb_info *pebi,
+					  struct ssdfs_read_init_env *env);
 u16 ssdfs_peb_estimate_min_partial_log_pages(struct ssdfs_peb_info *pebi);
 u32 ssdfs_request_rest_bytes(struct ssdfs_peb_info *pebi,
 			     struct ssdfs_segment_request *req);
