@@ -4903,6 +4903,8 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 				goto finish_exclude_migration_peb;
 			}
 
+			cache->batch.count--;
+
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("folio %p, count %d\n",
 				  folio, folio_ref_count(folio));
