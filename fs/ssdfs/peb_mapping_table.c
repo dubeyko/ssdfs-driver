@@ -965,7 +965,6 @@ int ssdfs_maptbl_segment_init(struct ssdfs_peb_mapping_table *tbl,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	page_size = si->fsi->pagesize;
-	logical_offset = bytes_per_peb * si->pebs_count * seg_index;
 
 	for (i = 0; i < si->pebs_count; i++) {
 		struct ssdfs_peb_container *pebc = SEG2PEBC(si, i);
@@ -999,7 +998,10 @@ int ssdfs_maptbl_segment_init(struct ssdfs_peb_mapping_table *tbl,
 		ssdfs_request_init(req, page_size);
 		ssdfs_get_request(req);
 
-		logical_offset += bytes_per_peb * i;
+		/* every PEB keeps fragments_per_peb fragments */
+		logical_offset = (u64)si->pebs_count * seg_index;
+		logical_offset += i;
+		logical_offset *= bytes_per_peb;
 
 		ssdfs_request_prepare_logical_extent(SSDFS_MAPTBL_INO,
 						     logical_offset,
@@ -1007,7 +1009,7 @@ int ssdfs_maptbl_segment_init(struct ssdfs_peb_mapping_table *tbl,
 						     0, 0, req);
 		ssdfs_request_define_segment(si->seg_id, req);
 
-		logical_blk = (u64)i * fragment_bytes;
+		logical_blk = (u64)i * bytes_per_peb;
 		logical_blk = div64_u64(logical_blk, page_size);
 
 #ifdef CONFIG_SSDFS_DEBUG

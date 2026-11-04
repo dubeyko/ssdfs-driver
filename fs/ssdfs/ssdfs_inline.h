@@ -208,6 +208,66 @@ void ssdfs_folio_put(struct folio *folio)
 	folio_put(folio);
 }
 
+/*
+ * Accounting of page cache folio references.
+ *
+ * Every reference of page cache folio that SSDFS code receives
+ * (filemap_*_folio(), filemap_get_folios_tag(), extra folio_get())
+ * has to be accounted by ssdfs_pagecache_folio_ref_inc() and
+ * released by ssdfs_pagecache_folio_put() (or accounted release).
+ * The counter has to be zero at unmount. Otherwise, leaked references
+ * keep folios on file LRU forever after removal from the page cache.
+ */
+static inline
+void ssdfs_pagecache_folio_ref_inc(struct ssdfs_fs_info *fsi, long count)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_add(count, &fsi->ssdfs_pagecache_folio_refs);
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
+static inline
+void ssdfs_pagecache_folio_ref_dec(struct ssdfs_fs_info *fsi, long count)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	WARN_ON(atomic64_sub_return(count,
+				    &fsi->ssdfs_pagecache_folio_refs) < 0);
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
+static inline
+struct folio *ssdfs_pagecache_account_folio(struct ssdfs_fs_info *fsi,
+					    struct folio *folio)
+{
+	if (!IS_ERR_OR_NULL(folio))
+		ssdfs_pagecache_folio_ref_inc(fsi, 1);
+	return folio;
+}
+
+static inline
+void ssdfs_pagecache_folio_get(struct ssdfs_fs_info *fsi,
+			       struct folio *folio)
+{
+	ssdfs_folio_get(folio);
+	ssdfs_pagecache_folio_ref_inc(fsi, 1);
+}
+
+static inline
+void ssdfs_pagecache_folio_put(struct ssdfs_fs_info *fsi,
+			       struct folio *folio)
+{
+	ssdfs_pagecache_folio_ref_dec(fsi, 1);
+	ssdfs_folio_put(folio);
+}
+
+static inline
+void ssdfs_pagecache_folio_batch_release(struct ssdfs_fs_info *fsi,
+					 struct folio_batch *fbatch)
+{
+	ssdfs_pagecache_folio_ref_dec(fsi, folio_batch_count(fbatch));
+	folio_batch_release(fbatch);
+}
+
 static inline
 void ssdfs_folio_lock(struct folio *folio)
 {

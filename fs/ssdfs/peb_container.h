@@ -620,6 +620,7 @@ int ssdfs_peb_copy_pre_alloc_block(struct ssdfs_peb_container *pebc,
 int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 				struct ssdfs_segment_request *req,
 				struct ssdfs_metadata_descriptor *area_desc,
+				u32 byte_offset,
 				struct ssdfs_block_state_descriptor *desc,
 				u64 *cno, u64 *parent_snapshot);
 int ssdfs_blk_desc_buffer_init(struct ssdfs_peb_container *pebc,

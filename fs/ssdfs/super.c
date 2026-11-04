@@ -3572,6 +3572,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&fs_info->ssdfs_writeback_folios, 0);
+	atomic64_set(&fs_info->ssdfs_pagecache_folio_refs, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	fs_info->fs_ctime = U64_MAX;
@@ -4795,6 +4796,13 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_destruct_sb_snap_info(&fsi->sb_snapi);
 
 	ssdfs_free_workspaces();
+
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	if (atomic64_read(&fsi->ssdfs_pagecache_folio_refs) != 0) {
+		SSDFS_ERR("LEAKED page cache folio references: %lld\n",
+			  atomic64_read(&fsi->ssdfs_pagecache_folio_refs));
+	}
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	ssdfs_check_memory_folio_locks();
 	ssdfs_check_memory_leaks();

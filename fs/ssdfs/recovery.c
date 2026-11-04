@@ -2258,8 +2258,52 @@ static inline void ssdfs_init_sb_segs_array(struct ssdfs_fs_info *fsi)
 	}
 }
 
+/*
+ * ssdfs_segbmap_compression_type() - define segbmap's compression type
+ * @flags: segment bitmap's flags
+ *
+ * RETURN: type of fragment (SSDFS_FRAGMENT_*_BLOB).
+ */
+static inline
+u8 ssdfs_segbmap_compression_type(u16 flags)
+{
+	if (flags & SSDFS_SEGBMAP_MAKE_ZLIB_COMPR)
+		return SSDFS_FRAGMENT_ZLIB_BLOB;
+	else if (flags & SSDFS_SEGBMAP_MAKE_LZO_COMPR)
+		return SSDFS_FRAGMENT_LZO_BLOB;
+	else if (flags & SSDFS_SEGBMAP_MAKE_LZ4_COMPR)
+		return SSDFS_FRAGMENT_LZ4_BLOB;
+	else if (flags & SSDFS_SEGBMAP_MAKE_ZSTD_COMPR)
+		return SSDFS_FRAGMENT_ZSTD_BLOB;
+
+	return SSDFS_FRAGMENT_UNCOMPR_BLOB;
+}
+
+/*
+ * ssdfs_maptbl_compression_type() - define maptbl's compression type
+ * @flags: mapping table's flags
+ *
+ * RETURN: type of fragment (SSDFS_FRAGMENT_*_BLOB).
+ */
+static inline
+u8 ssdfs_maptbl_compression_type(u16 flags)
+{
+	if (flags & SSDFS_MAPTBL_MAKE_ZLIB_COMPR)
+		return SSDFS_FRAGMENT_ZLIB_BLOB;
+	else if (flags & SSDFS_MAPTBL_MAKE_LZO_COMPR)
+		return SSDFS_FRAGMENT_LZO_BLOB;
+	else if (flags & SSDFS_MAPTBL_MAKE_LZ4_COMPR)
+		return SSDFS_FRAGMENT_LZ4_BLOB;
+	else if (flags & SSDFS_MAPTBL_MAKE_ZSTD_COMPR)
+		return SSDFS_FRAGMENT_ZSTD_BLOB;
+
+	return SSDFS_FRAGMENT_UNCOMPR_BLOB;
+}
+
 static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 {
+	u16 segbmap_flags;
+	u16 maptbl_flags;
 	int err;
 
 	init_rwsem(&fsi->volume_sem);
@@ -2396,6 +2440,16 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 					fsi->vs->user_data.compression;
 	fsi->metadata_options.user_data.migration_threshold =
 			le16_to_cpu(fsi->vs->user_data.migration_threshold);
+
+	segbmap_flags = le16_to_cpu(fsi->vh->segbmap.flags);
+	fsi->metadata_options.segbmap.flags = segbmap_flags;
+	fsi->metadata_options.segbmap.compression =
+			ssdfs_segbmap_compression_type(segbmap_flags);
+
+	maptbl_flags = le16_to_cpu(fsi->vh->maptbl.flags);
+	fsi->metadata_options.maptbl.flags = maptbl_flags;
+	fsi->metadata_options.maptbl.compression =
+			ssdfs_maptbl_compression_type(maptbl_flags);
 
 	fsi->migration_threshold = le16_to_cpu(fsi->vs->migration_threshold);
 	if (fsi->migration_threshold == 0 ||

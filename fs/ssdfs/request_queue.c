@@ -430,6 +430,7 @@ int ssdfs_requests_queue_remove_first(struct ssdfs_requests_queue *rq,
  */
 static inline
 void ssdfs_requests_queue_remove_block(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request *req,
 					struct ssdfs_content_block *block)
 {
 	int i;
@@ -454,6 +455,8 @@ void ssdfs_requests_queue_remove_block(struct ssdfs_fs_info *fsi,
 		ssdfs_clear_dirty_folio(folio);
 		ssdfs_folio_unlock(folio);
 		ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
+		/* writeback folios are accounted for every folio */
+		ssdfs_request_writeback_folios_dec(req);
 	}
 }
 
@@ -544,8 +547,8 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_fs_info *fsi,
 
 			for (i = 0; i < req->result.content.count; i++) {
 				block = &req->result.content.blocks[i].new_state;
-				ssdfs_requests_queue_remove_block(fsi, block);
-				ssdfs_request_writeback_folios_dec(req);
+				ssdfs_requests_queue_remove_block(fsi, req,
+								  block);
 			}
 
 			ssdfs_put_request(req);
@@ -558,8 +561,8 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_fs_info *fsi,
 
 			for (i = 0; i < req->result.content.count; i++) {
 				block = &req->result.content.blocks[i].new_state;
-				ssdfs_requests_queue_remove_block(fsi, block);
-				ssdfs_request_writeback_folios_dec(req);
+				ssdfs_requests_queue_remove_block(fsi, req,
+								  block);
 			}
 
 			ssdfs_put_request(req);

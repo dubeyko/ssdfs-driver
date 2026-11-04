@@ -2327,6 +2327,7 @@ int ssdfs_peb_find_block_descriptor(struct ssdfs_peb_info *pebi,
  * @pebi: pointer on PEB object
  * @req: segment request
  * @area_desc: area descriptor
+ * @byte_offset: offset of block state descriptor from the area's begin
  * @desc: block state descriptor [out]
  * @cno: checkpoint ID [out]
  * @parent_snapshot: parent snapshot ID [out]
@@ -2344,6 +2345,7 @@ int ssdfs_peb_find_block_descriptor(struct ssdfs_peb_info *pebi,
 int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 				struct ssdfs_segment_request *req,
 				struct ssdfs_metadata_descriptor *area_desc,
+				u32 byte_offset,
 				struct ssdfs_block_state_descriptor *desc,
 				u64 *cno, u64 *parent_snapshot)
 {
@@ -2363,10 +2365,13 @@ int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 	area_offset = le32_to_cpu(area_desc->offset);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("seg %llu, peb %llu, area_offset %u\n",
+	SSDFS_DBG("seg %llu, peb %llu, area_offset %u, byte_offset %u\n",
 		  pebi->pebc->parent_si->seg_id,
-		  pebi->peb_id, area_offset);
+		  pebi->peb_id, area_offset, byte_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	/* every block has its own block state descriptor in the area */
+	area_offset += byte_offset;
 
 	err = ssdfs_unaligned_read_cache(pebi, req,
 					 area_offset,
@@ -2419,6 +2424,7 @@ int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
  * @pebi: pointer on PEB object
  * @req: request
  * @area_desc: area descriptor
+ * @byte_offset: offset of block state descriptor from the area's begin
  * @desc: block state descriptor [out]
  *
  * This function tries to get block state descriptor.
@@ -2435,6 +2441,7 @@ static
 int ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 				   struct ssdfs_segment_request *req,
 				   struct ssdfs_metadata_descriptor *area_desc,
+				   u32 byte_offset,
 				   struct ssdfs_block_state_descriptor *desc)
 {
 	u64 cno;
@@ -2451,7 +2458,8 @@ int ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = __ssdfs_peb_get_block_state_desc(pebi, req, area_desc,
-						desc, &cno, &parent_snapshot);
+						byte_offset, desc,
+						&cno, &parent_snapshot);
 	if (err == -ENOENT) {
 		SSDFS_DBG("cache hasn't requested folio\n");
 		return err;
@@ -3235,9 +3243,18 @@ bool IS_SSDFS_FRAGMENT_DESCRIPTOR_VALID(struct ssdfs_fragment_desc *desc,
 		return false;
 	}
 
-	if (desc->type < SSDFS_FRAGMENT_UNCOMPR_BLOB ||
-	    desc->type > SSDFS_FRAGMENT_LZO_BLOB) {
-		SSDFS_ERR("invalid fragment descriptor type\n");
+	switch (desc->type) {
+	case SSDFS_FRAGMENT_UNCOMPR_BLOB:
+	case SSDFS_FRAGMENT_ZLIB_BLOB:
+	case SSDFS_FRAGMENT_LZO_BLOB:
+	case SSDFS_FRAGMENT_LZ4_BLOB:
+	case SSDFS_FRAGMENT_ZSTD_BLOB:
+		/* valid type */
+		break;
+
+	default:
+		SSDFS_ERR("invalid fragment descriptor type %#x\n",
+			  desc->type);
 		return false;
 	}
 
@@ -3331,7 +3348,8 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 	data_bytes = min_t(u32, data_bytes, fsi->pagesize);
 
 	err = ssdfs_peb_get_block_state_desc(pebi, req, &array[area_index],
-					     &found_blk_state);
+				le32_to_cpu(blk_state_off->byte_offset),
+				&found_blk_state);
 	if (err == -ENOENT) {
 		SSDFS_DBG("cache hasn't requested page\n");
 		return err;
@@ -3699,8 +3717,9 @@ int ssdfs_peb_read_area_diff_fragment(struct ssdfs_peb_info *pebi,
 	}
 
 	err = __ssdfs_peb_get_block_state_desc(pebi, req, &array[area_index],
-						&found_blk_state,
-						&cno, &parent_snapshot);
+				le32_to_cpu(blk_state_off->byte_offset),
+				&found_blk_state,
+				&cno, &parent_snapshot);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get block state descriptor: "
 			  "area_offset %u, err %d\n",
@@ -14129,6 +14148,16 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 			}
 		}
 
+		if ((area->folios_count + blks_count) > area->folios_capacity) {
+			err = -ERANGE;
+			SSDFS_ERR("area is too small: "
+				  "folios_count %zu, blks_count %u, "
+				  "folios_capacity %zu\n",
+				  area->folios_count, blks_count,
+				  area->folios_capacity);
+			goto fail_read_maptbl_folios;
+		}
+
 		ssdfs_maptbl_move_fragment_folios(req, area, blks_count);
 		ssdfs_request_unlock_and_remove_folios(req);
 		ssdfs_put_request(req);
@@ -14191,10 +14220,16 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_maptbl_area area = {0};
+	u64 start_logical_offset;
 	u64 logical_offset;
+	u32 start_logical_blk;
 	u32 logical_blk;
 	u32 fragment_bytes;
 	u32 blks_per_fragment;
+	u32 fragments_count;
+	u16 fragments_per_peb;
+	u64 first_fragment;
+	u32 peb_fragments = 0;
 	int i;
 	int err = 0;
 
@@ -14220,6 +14255,8 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 
 	down_read(&fsi->maptbl->tbl_lock);
 	fragment_bytes = fsi->maptbl->fragment_bytes;
+	fragments_count = fsi->maptbl->fragments_count;
+	fragments_per_peb = fsi->maptbl->fragments_per_peb;
 	area.folios_count = 0;
 	area.folios_capacity = ssdfs_maptbl_fragment_folios_count(fsi);
 	up_read(&fsi->maptbl->tbl_lock);
@@ -14241,19 +14278,41 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 		goto end_init;
 	}
 
-	logical_offset = req->extent.logical_offset;
-	logical_blk = req->place.start.blk_index;
+	start_logical_offset = req->extent.logical_offset;
+	start_logical_blk = req->place.start.blk_index;
 
 	blks_per_fragment =
 		(fragment_bytes + fsi->pagesize - 1) / fsi->pagesize;
+
+	/*
+	 * Every PEB contains fragments_per_peb fragments,
+	 * excluding the last PEB of mapping table that
+	 * can contain fewer fragments.
+	 */
+	first_fragment = div_u64(start_logical_offset, fragment_bytes);
+	if (first_fragment < fragments_count) {
+		peb_fragments = min_t(u32, (u32)fragments_per_peb,
+				      fragments_count - (u32)first_fragment);
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(blks_per_fragment >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < fsi->maptbl->fragments_per_peb; i++) {
-		logical_offset = logical_offset + ((u64)fragment_bytes * i);
-		logical_blk = logical_blk + (blks_per_fragment * i);
+	for (i = 0; i < peb_fragments; i++) {
+		/*
+		 * ssdfs_maptbl_fragment_init() moves the folios of
+		 * the previous fragment into the fragment's folio array.
+		 * But the area keeps the folios count of the previous
+		 * fragment. The area has capacity for one fragment only.
+		 * So, every fragment of PEB has to be read into empty area.
+		 */
+		area.folios_count = 0;
+		area.portion_id = U16_MAX;
+
+		logical_offset = start_logical_offset +
+					((u64)fragment_bytes * i);
+		logical_blk = start_logical_blk + (blks_per_fragment * i);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(logical_blk >= U16_MAX);
@@ -14981,7 +15040,8 @@ int ssdfs_process_read_request(struct ssdfs_peb_container *pebc,
  * @req: segment request
  */
 static
-void ssdfs_unlock_request_folios(struct ssdfs_segment_request *req)
+void ssdfs_unlock_request_folios(struct ssdfs_fs_info *fsi,
+				 struct ssdfs_segment_request *req)
 {
 	struct ssdfs_request_content_block *block;
 	struct ssdfs_content_block *blk_state;
@@ -15008,7 +15068,11 @@ void ssdfs_unlock_request_folios(struct ssdfs_segment_request *req)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_folio_unlock(folio);
-			ssdfs_folio_put(folio);
+
+			if (req->private.flags & SSDFS_REQ_PAGECACHE_FOLIOS)
+				ssdfs_pagecache_folio_put(fsi, folio);
+			else
+				ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("folio %p, count %d\n",
@@ -15070,7 +15134,7 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 		break;
 
 	case SSDFS_REQ_ASYNC:
-		ssdfs_unlock_request_folios(req);
+		ssdfs_unlock_request_folios(pebc->parent_si->fsi, req);
 
 		if (err) {
 			SSDFS_DBG("failure: req %p, err %d\n", req, err);
@@ -15125,7 +15189,7 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 		break;
 
 	case SSDFS_REQ_ASYNC_NO_FREE:
-		ssdfs_unlock_request_folios(req);
+		ssdfs_unlock_request_folios(pebc->parent_si->fsi, req);
 
 		if (err) {
 			SSDFS_DBG("failure: req %p, err %d\n", req, err);

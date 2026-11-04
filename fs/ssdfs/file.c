@@ -674,6 +674,7 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 	fgf_t fgp_flags = FGP_CREAT | FGP_LOCK;
 	u32 processed_bytes = 0;
 	bool need_read_block = false;
+	bool is_requested_folio_added = false;
 	int i;
 	int err = 0;
 
@@ -696,8 +697,10 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 		if (index == folio->index) {
 			cur_folio = folio;
 			ssdfs_account_locked_folio(folio);
+			is_requested_folio_added = true;
 		} else {
 			cur_folio = filemap_lock_folio(mapping, index);
+			ssdfs_pagecache_account_folio(fsi, cur_folio);
 			if (!cur_folio || IS_ERR(cur_folio)) {
 				unsigned int nofs_flags;
 
@@ -709,18 +712,21 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 						    index,
 						    fgp_flags,
 						    mapping_gfp_mask(mapping));
+				ssdfs_pagecache_account_folio(fsi, cur_folio);
 				memalloc_nofs_restore(nofs_flags);
 			}
 
 			if (!cur_folio) {
+				err = -ENOMEM;
 				SSDFS_ERR("fail to grab folio: page_index %lu\n",
 					  index);
-				return -ENOMEM;
+				goto release_folios;
 			} else if (IS_ERR(cur_folio)) {
+				err = PTR_ERR(cur_folio);
 				SSDFS_ERR("fail to grab folio: "
-					  "page_index %lu, err %ld\n",
-					  index, PTR_ERR(cur_folio));
-				return PTR_ERR(cur_folio);
+					  "page_index %lu, err %d\n",
+					  index, err);
+				goto release_folios;
 			}
 
 			ssdfs_account_locked_folio(cur_folio);
@@ -768,6 +774,7 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 		}
 	}
 
+release_folios:
 	for (i = 0; i < folio_batch_count(&fbatch); i++) {
 		cur_folio = fbatch.folios[i];
 
@@ -776,6 +783,19 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_folio_unlock(cur_folio);
+
+		/*
+		 * The requested folio belongs to the caller.
+		 * The rest of block's folios have been received
+		 * by lookup with the elevated reference count.
+		 */
+		if (cur_folio != folio)
+			ssdfs_pagecache_folio_put(fsi, cur_folio);
+	}
+
+	if (!is_requested_folio_added) {
+		/* ->read_folio() has to unlock the folio in any case */
+		folio_unlock(folio);
 	}
 
 	return err;
@@ -980,6 +1000,13 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 	ssdfs_request_init(req, fsi->pagesize);
 	ssdfs_get_request(req);
 
+	/*
+	 * Request's folios are page cache folios with accounted
+	 * references (ssdfs_pagecache_folio_ref_inc()). These
+	 * references are released by ssdfs_unlock_request_folios().
+	 */
+	req->private.flags |= SSDFS_REQ_PAGECACHE_FOLIOS;
+
 	for (i = 0; i < folio_batch_count(&env->batch); i++) {
 		struct folio *folio;
 
@@ -1097,7 +1124,7 @@ fail_issue_read_request:
 				continue;
 
 			ssdfs_folio_unlock(folio);
-			ssdfs_folio_put(folio);
+			ssdfs_pagecache_folio_put(fsi, folio);
 		}
 
 		folio_batch_reinit(&block->batch);
@@ -1260,7 +1287,7 @@ fail_readahead_block:
 
 		folio_clear_uptodate(folio);
 		ssdfs_folio_unlock(folio);
-		ssdfs_folio_put(folio);
+		ssdfs_pagecache_folio_put(fsi, folio);
 
 		env->batch.folios[i] = NULL;
 	}
@@ -1346,6 +1373,7 @@ void ssdfs_readahead(struct readahead_control *rac)
 							   processed_bytes);
 
 				folio = filemap_lock_folio(mapping, index);
+				ssdfs_pagecache_account_folio(fsi, folio);
 				if (!folio || IS_ERR(folio)) {
 					unsigned int nofs_flags;
 
@@ -1354,6 +1382,7 @@ void ssdfs_readahead(struct readahead_control *rac)
 						    index,
 						    fgp_flags,
 						    mapping_gfp_mask(mapping));
+					ssdfs_pagecache_account_folio(fsi, folio);
 					memalloc_nofs_restore(nofs_flags);
 				}
 
@@ -1370,7 +1399,15 @@ void ssdfs_readahead(struct readahead_control *rac)
 					goto finish_requests_processing;
 				}
 
-				ssdfs_folio_get(folio);
+				/*
+				 * The folio has been received by lookup with
+				 * the elevated reference count. This reference
+				 * is dropped by request's completion logic
+				 * (ssdfs_unlock_request_folios()). So, don't
+				 * take another reference here, unlike the case
+				 * of readahead_folio() that returns the folio
+				 * without the reference.
+				 */
 				ssdfs_account_locked_folio(folio);
 
 				__ssdfs_memzero_folio(folio,
@@ -1419,7 +1456,7 @@ void ssdfs_readahead(struct readahead_control *rac)
 					goto finish_requests_processing;
 			}
 
-			ssdfs_folio_get(folio);
+			ssdfs_pagecache_folio_get(fsi, folio);
 			ssdfs_account_locked_folio(folio);
 
 			__ssdfs_memzero_folio(folio, 0, folio_size(folio),
@@ -1448,6 +1485,27 @@ try_readahead_block:
 	}
 
 finish_requests_processing:
+	/*
+	 * The errors of folios collection leave the folios of
+	 * the current logical block in the batch. These folios are
+	 * locked and with the elevated reference count, but they
+	 * haven't been moved into any request. The issued folios
+	 * are removed from the batch by ssdfs_issue_read_request()
+	 * and the failed ones by ssdfs_readahead_block().
+	 */
+	for (i = 0; i < folio_batch_count(&env.batch); i++) {
+		folio = env.batch.folios[i];
+
+		if (!folio)
+			continue;
+
+		folio_clear_uptodate(folio);
+		ssdfs_folio_unlock(folio);
+		ssdfs_pagecache_folio_put(fsi, folio);
+		env.batch.folios[i] = NULL;
+	}
+	folio_batch_reinit(&env.batch);
+
 	for (i = 0; i < env.count; i++) {
 		res = ssdfs_wait_read_request_end(fsi, env.reqs[i]);
 		if (res) {
@@ -1541,6 +1599,7 @@ static ssize_t ssdfs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 						   processed_bytes);
 
 			folio = filemap_lock_folio(mapping, page_index);
+			ssdfs_pagecache_account_folio(fsi, folio);
 			if (!folio || IS_ERR(folio)) {
 				unsigned int nofs_flags;
 
@@ -1549,6 +1608,7 @@ static ssize_t ssdfs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 						    page_index,
 						    fgp_flags,
 						    mapping_gfp_mask(mapping));
+				ssdfs_pagecache_account_folio(fsi, folio);
 				memalloc_nofs_restore(nofs_flags);
 			}
 
@@ -1583,7 +1643,7 @@ static ssize_t ssdfs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 			processed_bytes += folio_size(folio);
 
 			ssdfs_folio_unlock(folio);
-			ssdfs_folio_put(folio);
+			ssdfs_pagecache_folio_put(fsi, folio);
 		}
 	}
 
@@ -2926,9 +2986,11 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 
 				folio = filemap_get_folio(mapping,
 							   last_folio_index);
+				ssdfs_pagecache_account_folio(fsi, folio);
 				if (IS_ERR(folio) && PTR_ERR(folio) == -ENOENT) {
 					folio = filemap_grab_folio(mapping,
 							    last_folio_index);
+					ssdfs_pagecache_account_folio(fsi, folio);
 					if (!folio) {
 						err = -ERANGE;
 						SSDFS_ERR("empty folio: "
@@ -2956,6 +3018,13 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 					ssdfs_clear_dirty_folio(folio);
 					folio_batch_add(&blk_state->batch,
 							folio);
+					/*
+					 * The folio is locked and under writeback
+					 * till the request's end. The page cache
+					 * keeps the folio. Drop the reference
+					 * of lookup because nobody releases it.
+					 */
+					ssdfs_pagecache_folio_put(fsi, folio);
 				} else if (IS_ERR(folio)) {
 					err = PTR_ERR(folio);
 					SSDFS_ERR("fail to get folio: "
@@ -2975,10 +3044,37 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 					ssdfs_clear_dirty_folio(folio);
 					folio_batch_add(&blk_state->batch,
 							folio);
+					/* drop the reference of lookup */
+					ssdfs_pagecache_folio_put(fsi, folio);
 				}
 
 				block_bytes += folio_size(folio);
 			}
+		}
+	}
+
+	/*
+	 * The tail folios of partially dirty logical blocks have been
+	 * added into the batch. But the requested extent finishes at the
+	 * end of the last dirty folio. As a result, the flush logic stores
+	 * only the requested bytes of logical block and the rest of
+	 * the block (tail folios) is lost (zeroed on the volume).
+	 * The requested extent has to cover all logical blocks of the batch
+	 * (but not beyond the file's size).
+	 */
+	{
+		u64 requested_end = logical_offset + data_bytes;
+		u64 extent_end = logical_offset +
+				 ((u64)batch->content.count * fsi->pagesize);
+		u64 file_size = i_size_read(inode);
+
+		if (extent_end > file_size)
+			extent_end = max_t(u64, file_size, requested_end);
+
+		if (extent_end > requested_end) {
+			BUG_ON((extent_end - logical_offset) >= U32_MAX);
+			data_bytes = (u32)(extent_end - logical_offset);
+			batch->requested_extent.data_bytes = data_bytes;
 		}
 	}
 
@@ -3075,6 +3171,7 @@ try_add_folio_into_request:
 			while (cur_index < index) {
 				cur_folio = filemap_get_folio(mapping,
 							      cur_index);
+				ssdfs_pagecache_account_folio(fsi, cur_folio);
 				if (IS_ERR_OR_NULL(cur_folio)) {
 					err = IS_ERR(cur_folio) ?
 						PTR_ERR(cur_folio) : -ERANGE;
@@ -3103,8 +3200,18 @@ try_add_folio_into_request:
 					SSDFS_ERR("fail to add folio into batch: "
 						  "ino %llu, folio_index %lu, err %d\n",
 						  ino, index, err);
+					ssdfs_folio_unlock(cur_folio);
+					ssdfs_pagecache_folio_put(fsi, cur_folio);
 					goto fail_write_folios;
 				}
+
+				/*
+				 * The folio is kept locked by the batch till
+				 * the write request's end. The page cache keeps
+				 * the folio. Drop the reference of lookup
+				 * because the request doesn't release it.
+				 */
+				ssdfs_pagecache_folio_put(fsi, cur_folio);
 
 				mem_pages_per_folio =
 					folio_size(cur_folio) >> PAGE_SHIFT;
@@ -3564,6 +3671,7 @@ int ssdfs_writepages(struct address_space *mapping,
 
 		folios_count = filemap_get_folios_tag(mapping, &index, end,
 							tag, &fvec);
+		ssdfs_pagecache_folio_ref_inc(fsi, folios_count);
 		if (folios_count == 0) {
 			if (!is_ssdfs_file_inline(ii) &&
 			    is_ssdfs_dirty_batch_not_processed(batch)) {
@@ -3798,7 +3906,13 @@ continue_unlock:
 			  (u64)index, (u64)end, wbc->nr_to_write);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		folio_batch_reinit(&fvec);
+		/*
+		 * filemap_get_folios_tag() returns the folios with
+		 * the elevated reference count. The processed folios
+		 * are kept by the page cache: they are locked or
+		 * under writeback till the requests' end.
+		 */
+		ssdfs_pagecache_folio_batch_release(fsi, &fvec);
 		cond_resched();
 	};
 
@@ -3820,7 +3934,7 @@ continue_unlock:
 		done_index = 0;
 
 out_writepages:
-	folio_batch_release(&fvec);
+	ssdfs_pagecache_folio_batch_release(fsi, &fvec);
 
 	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0))
 		mapping->writeback_index = done_index;
@@ -3868,12 +3982,14 @@ struct folio *ssdfs_get_block_folio(struct file *file,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	folio = filemap_lock_folio(mapping, index);
+	ssdfs_pagecache_account_folio(fsi, folio);
 	if (!folio || IS_ERR(folio)) {
 		fgp_flags |= fgf_set_order(fsi->pagesize) | extra_fgp;
 
 		nofs_flags = memalloc_nofs_save();
 		folio = __filemap_get_folio(mapping, index, fgp_flags,
 					    mapping_gfp_mask(mapping));
+		ssdfs_pagecache_account_folio(fsi, folio);
 		memalloc_nofs_restore(nofs_flags);
 	}
 
@@ -3978,7 +4094,7 @@ int ssdfs_process_whole_block(struct file *file,
 	u32 processed_bytes = 0;
 	bool need_read_block = false;
 	int i;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!requested_folio);
@@ -4007,7 +4123,7 @@ int ssdfs_process_whole_block(struct file *file,
 				SSDFS_ERR("fail to get block's folio: "
 					  "index %lu, err %d\n",
 					  index, err);
-				return err;
+				goto release_folios;
 			}
 
 			if (is_new_blk) {
@@ -4068,10 +4184,11 @@ check_next_folio:
 			SSDFS_ERR("fail to read folio: "
 				  "index %lu, err %d\n",
 				  index, err);
-			return err;
+			goto release_folios;
 		}
 	}
 
+release_folios:
 	for (i = 0; i < folio_batch_count(&fbatch); i++) {
 		cur_folio = fbatch.folios[i];
 
@@ -4079,11 +4196,19 @@ check_next_folio:
 		BUG_ON(!cur_folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (cur_folio != requested_folio)
+		/*
+		 * The requested folio is returned to the caller locked
+		 * and with the reference. The rest of block's folios
+		 * have been received by ssdfs_get_block_folio() locked
+		 * and with the elevated reference count.
+		 */
+		if (cur_folio != requested_folio) {
 			ssdfs_folio_unlock(cur_folio);
+			ssdfs_pagecache_folio_put(fsi, cur_folio);
+		}
 	}
 
-	return 0;
+	return err;
 }
 
 static
@@ -4262,7 +4387,7 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 			ssdfs_increase_volume_free_pages(fsi, 1);
 
 			ssdfs_folio_unlock(first_folio);
-			ssdfs_folio_put(first_folio);
+			ssdfs_pagecache_folio_put(fsi, first_folio);
 
 			ssdfs_write_failed(mapping, pos);
 
@@ -4284,6 +4409,14 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 		SSDFS_ERR("fail to process the whole block: "
 			  "ino %llu, pos %llu, len %u, err %d\n",
 			  inode->i_ino, pos, len, err);
+		/*
+		 * The caller doesn't receive the folio in the case
+		 * of error. So, nobody else is going to unlock
+		 * and release the folio.
+		 */
+		ssdfs_folio_unlock(first_folio);
+		ssdfs_pagecache_folio_put(fsi, first_folio);
+		ssdfs_write_failed(mapping, pos + len);
 		return ERR_PTR(err);
 	}
 
@@ -4493,7 +4626,7 @@ int ssdfs_write_end(const struct kiocb *iocb,
 
 out:
 	ssdfs_folio_unlock(folio);
-	ssdfs_folio_put(folio);
+	ssdfs_pagecache_folio_put(fsi, folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio %p, count %d, "

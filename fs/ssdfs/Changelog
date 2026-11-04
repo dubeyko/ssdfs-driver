@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.94 [November 03, 2026]
+    (*) Fix memory pressure issue.
+
 v.5.93 [October 22, 2026]
     (*) Fix race condition issue in inodes b-tree.
 

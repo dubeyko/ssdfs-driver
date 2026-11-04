@@ -105,6 +105,16 @@ struct ssdfs_metadata_options {
 		u8 compression;
 		u16 migration_threshold;
 	} user_data;
+
+	struct {
+		u16 flags;
+		u8 compression;
+	} segbmap;
+
+	struct {
+		u16 flags;
+		u8 compression;
+	} maptbl;
 };
 
 /*
@@ -764,6 +774,7 @@ struct ssdfs_fs_info {
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_t ssdfs_writeback_folios;
+	atomic64_t ssdfs_pagecache_folio_refs;
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 #ifdef CONFIG_SSDFS_TESTING

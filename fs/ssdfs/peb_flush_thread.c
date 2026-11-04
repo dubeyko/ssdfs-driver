@@ -2070,7 +2070,17 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 		area_folios = &pebi->current_log.area[type].array;
 
 		offset = to.write_offset + written_bytes;
-		size = from->data_bytes - written_bytes;
+		/*
+		 * ssdfs_peb_grow_log_area() defines the range of folios
+		 * starting from area's write_offset that is equal to
+		 * to.write_offset and it is not changed till the whole
+		 * fragment is stored. So, the size has to be the whole
+		 * size of stored (compressed) fragment. The remaining size
+		 * of fragment cannot be used here because the range will
+		 * not include the next folio (@index) if the fragment
+		 * crosses the boundary of logical block.
+		 */
+		size = to.compr_size;
 		index = offset / area_folios->folio_size;
 
 		folio = ssdfs_peb_grab_area_folio(pebi, area_folios, type,
@@ -3636,6 +3646,35 @@ void ssdfs_prepare_user_data_options(struct ssdfs_fs_info *fsi,
 }
 
 /*
+ * ssdfs_prepare_compression_options() - define compression type of request
+ * @fsi: pointer on shared file system object
+ * @ino: inode ID of the request
+ * @compression: type of fragment's compression [out]
+ *
+ * The segment bitmap and the mapping table are compressed by
+ * their own compression types. Other inodes are compressed by
+ * the user data's compression type.
+ */
+static inline
+void ssdfs_prepare_compression_options(struct ssdfs_fs_info *fsi,
+					u64 ino, u8 *compression)
+{
+	switch (ino) {
+	case SSDFS_SEG_BMAP_INO:
+		*compression = fsi->metadata_options.segbmap.compression;
+		break;
+
+	case SSDFS_MAPTBL_INO:
+		*compression = fsi->metadata_options.maptbl.compression;
+		break;
+
+	default:
+		ssdfs_prepare_user_data_options(fsi, compression);
+		break;
+	}
+}
+
+/*
  * ssdfs_peb_store_fragment_in_area() - try to store fragment into area
  * @pebi: pointer on PEB object
  * @req: I/O request
@@ -3702,7 +3741,8 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	ssdfs_prepare_user_data_options(fsi, &compression_type);
+	ssdfs_prepare_compression_options(fsi, req->extent.ino,
+					  &compression_type);
 
 	switch (compression_type) {
 	case SSDFS_FRAGMENT_UNCOMPR_BLOB:
@@ -4190,6 +4230,7 @@ int ssdfs_peb_define_area_type(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	bool can_be_compressed = false;
+	u8 compression_type = SSDFS_FRAGMENT_UNCOMPR_BLOB;
 #ifdef CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA
 	int i;
 	int err;
@@ -4248,12 +4289,22 @@ int ssdfs_peb_define_area_type(struct ssdfs_peb_info *pebi,
 				  blocks_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			can_be_compressed =
-				can_ssdfs_batch_be_compressed(fsi,
-								start_block,
-								blocks_count,
-								bytes_count,
-								req);
+			ssdfs_prepare_compression_options(fsi,
+							req->extent.ino,
+							&compression_type);
+
+			/* uncompressed blocks are stored in main area */
+			if (compression_type == SSDFS_FRAGMENT_UNCOMPR_BLOB) {
+				can_be_compressed = false;
+			} else {
+				can_be_compressed =
+				    can_ssdfs_batch_be_compressed(fsi,
+								  start_block,
+								  blocks_count,
+								  bytes_count,
+								  req);
+			}
+
 			if (can_be_compressed)
 				*area_type = SSDFS_LOG_DIFFS_AREA;
 			else
@@ -4273,11 +4324,21 @@ int ssdfs_peb_define_area_type(struct ssdfs_peb_info *pebi,
 		} else
 			*area_type = SSDFS_LOG_DIFFS_AREA;
 #else
-		can_be_compressed = can_ssdfs_batch_be_compressed(fsi,
-								  start_block,
-								  blocks_count,
-								  bytes_count,
-								  req);
+		ssdfs_prepare_compression_options(fsi, req->extent.ino,
+						  &compression_type);
+
+		/* uncompressed blocks are stored in main area */
+		if (compression_type == SSDFS_FRAGMENT_UNCOMPR_BLOB) {
+			can_be_compressed = false;
+		} else {
+			can_be_compressed =
+				can_ssdfs_batch_be_compressed(fsi,
+							      start_block,
+							      blocks_count,
+							      bytes_count,
+							      req);
+		}
+
 		if (can_be_compressed)
 			*area_type = SSDFS_LOG_DIFFS_AREA;
 		else
