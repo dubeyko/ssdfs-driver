@@ -498,6 +498,9 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 				u16 sequence_id,
 				struct folio *folio,
 				int state);
+int ssdfs_segbmap_finish_peb_fragments_init(struct ssdfs_segment_bmap *segbmap,
+					    struct ssdfs_segment_info *si,
+					    u16 seg_index, u16 peb_index);
 int ssdfs_segbmap_flush(struct ssdfs_segment_bmap *segbmap);
 int ssdfs_segbmap_resize(struct ssdfs_segment_bmap *segbmap,
 			 u64 new_items_count);

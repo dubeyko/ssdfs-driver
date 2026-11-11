@@ -674,6 +674,138 @@ void ssdfs_segbmap_destroy_segments(struct ssdfs_segment_bmap *segbmap)
 }
 
 /*
+ * ssdfs_segbmap_define_peb_fragments() - define fragments range of PEB
+ * @segbmap: pointer on segment bitmap object
+ * @seg_index: index of segment in the sequence
+ * @peb_index: index of PEB inside the segment
+ * @start: first fragment ID of PEB [out]
+ * @count: number of fragments in PEB [out]
+ *
+ * One SSDFS_READ_INIT_SEGBMAP request reads and initializes
+ * the whole run of fragments that lives in a PEB. This method
+ * defines this run.
+ */
+static inline
+void ssdfs_segbmap_define_peb_fragments(struct ssdfs_segment_bmap *segbmap,
+					u16 seg_index, u16 peb_index,
+					u32 *start, u32 *count)
+{
+	u32 first;
+
+	first = (u32)seg_index * segbmap->fragments_per_seg;
+	first += (u32)peb_index * segbmap->fragments_per_peb;
+
+	*start = first;
+	*count = 0;
+
+	if (first < segbmap->fragments_count) {
+		*count = min_t(u32, segbmap->fragments_per_peb,
+				segbmap->fragments_count - first);
+	}
+}
+
+/*
+ * ssdfs_segbmap_mark_peb_fragments_under_init() - mark PEB's fragments
+ * @segbmap: pointer on segment bitmap object
+ * @seg_index: index of segment in the sequence
+ * @peb_index: index of PEB inside the segment
+ *
+ * This method moves every fragment of the PEB from the
+ * SSDFS_SEGBMAP_FRAG_CREATED state into SSDFS_SEGBMAP_FRAG_UNDER_INIT
+ * one. The init request of the PEB initializes all these fragments.
+ * As a result, a lookup of any other fragment of the same PEB
+ * waits the end of initialization instead of issuing
+ * the second init request for the same PEB.
+ *
+ * The caller must hold segbmap->search_lock for write.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static
+int ssdfs_segbmap_mark_peb_fragments_under_init(struct ssdfs_segment_bmap *segbmap,
+						u16 seg_index, u16 peb_index)
+{
+	struct ssdfs_segbmap_fragment_desc *desc;
+	u32 start, count;
+	u32 i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!segbmap);
+	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
+
+	SSDFS_DBG("seg_index %u, peb_index %u\n",
+		  seg_index, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_segbmap_define_peb_fragments(segbmap, seg_index, peb_index,
+					   &start, &count);
+
+	for (i = start; i < (start + count); i++) {
+		desc = ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (unlikely(IS_ERR_OR_NULL(desc))) {
+			err = !desc ? -ENOMEM : PTR_ERR(desc);
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "fragment_index %u, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		if (desc->state == SSDFS_SEGBMAP_FRAG_CREATED)
+			desc->state = SSDFS_SEGBMAP_FRAG_UNDER_INIT;
+	}
+
+	return 0;
+}
+
+/*
+ * __ssdfs_segbmap_fail_peb_fragments_init() - fail PEB's fragments init
+ * @segbmap: pointer on segment bitmap object
+ * @seg_index: index of segment in the sequence
+ * @peb_index: index of PEB inside the segment
+ *
+ * This method moves every fragment of the PEB that is still
+ * in the SSDFS_SEGBMAP_FRAG_UNDER_INIT state into
+ * SSDFS_SEGBMAP_FRAG_INIT_FAILED one and wakes up the waiters.
+ *
+ * The caller must hold segbmap->search_lock for write.
+ */
+static
+void __ssdfs_segbmap_fail_peb_fragments_init(struct ssdfs_segment_bmap *segbmap,
+					     u16 seg_index, u16 peb_index)
+{
+	struct ssdfs_segbmap_fragment_desc *desc;
+	u32 start, count;
+	u32 i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!segbmap);
+	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
+
+	SSDFS_DBG("seg_index %u, peb_index %u\n",
+		  seg_index, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_segbmap_define_peb_fragments(segbmap, seg_index, peb_index,
+					   &start, &count);
+
+	for (i = start; i < (start + count); i++) {
+		desc = __ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (!desc)
+			continue;
+
+		if (desc->state == SSDFS_SEGBMAP_FRAG_UNDER_INIT) {
+			desc->state = SSDFS_SEGBMAP_FRAG_INIT_FAILED;
+			complete_all(&desc->init_end);
+		}
+	}
+}
+
+/*
  * ssdfs_segbmap_issue_peb_init_request() - issue segbmap init command for a PEB
  * @segbmap: pointer on segment bitmap object
  * @si: segment object
@@ -760,6 +892,193 @@ int ssdfs_segbmap_issue_peb_init_request(struct ssdfs_segment_bmap *segbmap,
 }
 
 /*
+ * ssdfs_segbmap_issue_peb_fragments_init() - issue init of PEB's fragments
+ * @segbmap: pointer on segment bitmap object
+ * @seg_index: index of segment in the sequence
+ * @peb_index: index of PEB inside the segment
+ *
+ * This method queues the init request for the PEB of main segbmap's
+ * segment and marks the PEB's fragments as being under init.
+ * The backup copy exists for the reliability reason only. So, the PEB
+ * of the copy is read only if the PEB of main segment has nothing
+ * to read (or if main PEB is corrupted, see
+ * ssdfs_segbmap_finish_peb_fragments_init()).
+ *
+ * The caller must hold segbmap->resize_lock for read and
+ * segbmap->search_lock for write. As a result, the PEB's read thread
+ * cannot process the request before the fragments are marked.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENODATA    - neither main nor copy PEB has content to read.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_segbmap_issue_peb_fragments_init(struct ssdfs_segment_bmap *segbmap,
+					   u16 seg_index, u16 peb_index)
+{
+	struct ssdfs_segment_info *si;
+	int err = -ENODATA;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!segbmap);
+	BUG_ON(!rwsem_is_locked(&segbmap->resize_lock));
+	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
+
+	SSDFS_DBG("seg_index %u, peb_index %u\n",
+		  seg_index, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	si = ssdfs_segbmap_segment(segbmap, SSDFS_MAIN_SEGBMAP_SEG, seg_index);
+	if (si) {
+		err = ssdfs_segbmap_issue_peb_init_request(segbmap, si,
+							   seg_index,
+							   peb_index);
+	}
+
+	if (err == -ENODATA && segbmap->flags & SSDFS_SEGBMAP_HAS_COPY) {
+		si = ssdfs_segbmap_segment(segbmap, SSDFS_COPY_SEGBMAP_SEG,
+					   seg_index);
+		if (si) {
+			err = ssdfs_segbmap_issue_peb_init_request(segbmap, si,
+								   seg_index,
+								   peb_index);
+		}
+	}
+
+	if (err)
+		return err;
+
+	err = ssdfs_segbmap_mark_peb_fragments_under_init(segbmap,
+							  seg_index,
+							  peb_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to mark PEB's fragments: "
+			  "seg_index %u, peb_index %u, err %d\n",
+			  seg_index, peb_index, err);
+		__ssdfs_segbmap_fail_peb_fragments_init(segbmap,
+							seg_index,
+							peb_index);
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_segbmap_has_peb_fragments_under_init() - check PEB's fragments
+ * @segbmap: pointer on segment bitmap object
+ * @seg_index: index of segment in the sequence
+ * @peb_index: index of PEB inside the segment
+ *
+ * This method checks that some fragments of the PEB are still
+ * in the SSDFS_SEGBMAP_FRAG_UNDER_INIT state.
+ *
+ * The caller must hold segbmap->search_lock.
+ */
+static
+bool ssdfs_segbmap_has_peb_fragments_under_init(struct ssdfs_segment_bmap *segbmap,
+						u16 seg_index, u16 peb_index)
+{
+	struct ssdfs_segbmap_fragment_desc *desc;
+	u32 start, count;
+	u32 i;
+
+	ssdfs_segbmap_define_peb_fragments(segbmap, seg_index, peb_index,
+					   &start, &count);
+
+	for (i = start; i < (start + count); i++) {
+		desc = __ssdfs_segbmap_get_fragment_desc(segbmap, i);
+		if (!desc)
+			continue;
+
+		if (desc->state == SSDFS_SEGBMAP_FRAG_UNDER_INIT)
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * ssdfs_segbmap_finish_peb_fragments_init() - finish PEB's fragments init
+ * @segbmap: pointer on segment bitmap object
+ * @si: segment object of the PEB that has processed the init request
+ * @seg_index: index of segment in the sequence
+ * @peb_index: index of PEB inside the segment
+ *
+ * The PEB's read thread calls this method at the end of every init
+ * request (successful or not). The fragments that are still in the
+ * SSDFS_SEGBMAP_FRAG_UNDER_INIT state haven't been initialized by
+ * the request (the PEB is corrupted or it has no content). If the
+ * request has been processed by the PEB of main segment and segbmap
+ * has the backup copy, then the init request is issued for the PEB
+ * of the copy. Otherwise, the fragments are moved into the
+ * SSDFS_SEGBMAP_FRAG_INIT_FAILED state and the waiters are woken up
+ * (without this method, the waiters of these fragments never wake up).
+ *
+ * RETURN:
+ * [success] - all fragments of the PEB have been initialized.
+ * [failure] - error code:
+ *
+ * %-EAGAIN     - the init request has been issued for the copy's PEB.
+ * %-EIO        - the fragments cannot be initialized.
+ */
+int ssdfs_segbmap_finish_peb_fragments_init(struct ssdfs_segment_bmap *segbmap,
+					    struct ssdfs_segment_info *si,
+					    u16 seg_index, u16 peb_index)
+{
+	struct ssdfs_segment_info *copy_si;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!segbmap || !si);
+
+	SSDFS_DBG("seg %llu, seg_index %u, peb_index %u\n",
+		  si->seg_id, seg_index, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_read(&segbmap->resize_lock);
+	down_write(&segbmap->search_lock);
+
+	if (!ssdfs_segbmap_has_peb_fragments_under_init(segbmap,
+							seg_index,
+							peb_index))
+		goto finish_peb_fragments_init;
+
+	copy_si = NULL;
+	if (segbmap->flags & SSDFS_SEGBMAP_HAS_COPY) {
+		copy_si = ssdfs_segbmap_segment(segbmap,
+						SSDFS_COPY_SEGBMAP_SEG,
+						seg_index);
+	}
+
+	if (copy_si && copy_si != si) {
+		err = ssdfs_segbmap_issue_peb_init_request(segbmap, copy_si,
+							   seg_index,
+							   peb_index);
+		if (!err) {
+			err = -EAGAIN;
+			goto finish_peb_fragments_init;
+		}
+
+		SSDFS_ERR("fail to issue init request for copy: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  copy_si->seg_id, peb_index, err);
+	}
+
+	__ssdfs_segbmap_fail_peb_fragments_init(segbmap, seg_index, peb_index);
+	err = -EIO;
+
+finish_peb_fragments_init:
+	up_write(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	return err;
+}
+
+/*
  * ssdfs_segbmap_segment_init() - issue segbmap init command for PEBs
  * @segbmap: pointer on segment bitmap object
  * @si: segment object
@@ -781,8 +1100,26 @@ int ssdfs_segbmap_segment_init(struct ssdfs_segment_bmap *segbmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < si->pebs_count; i++) {
-		err = ssdfs_segbmap_issue_peb_init_request(segbmap, si,
-							   seg_index, i);
+		/*
+		 * The request initializes all fragments of the PEB.
+		 * Any lookup of these fragments has to wait the end of
+		 * initialization instead of issuing the second
+		 * init request for the same PEB. The search_lock is
+		 * held while the request is queued and the fragments
+		 * are marked, so the PEB's read thread cannot process
+		 * the request before the fragments are marked.
+		 * The PEB of main segment is read only. The copy's PEB
+		 * is read if the main PEB is corrupted or empty.
+		 */
+		down_read(&segbmap->resize_lock);
+		down_write(&segbmap->search_lock);
+
+		err = ssdfs_segbmap_issue_peb_fragments_init(segbmap,
+							     seg_index, i);
+
+		up_write(&segbmap->search_lock);
+		up_read(&segbmap->resize_lock);
+
 		if (err == -ENODATA) {
 			/* nothing to read from this PEB */
 			continue;
@@ -805,7 +1142,7 @@ static
 int ssdfs_segbmap_init(struct ssdfs_segment_bmap *segbmap)
 {
 	struct ssdfs_segment_info *si;
-	int i, j;
+	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -816,23 +1153,29 @@ int ssdfs_segbmap_init(struct ssdfs_segment_bmap *segbmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < segbmap->segs_count; i++) {
-		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
-			si = xa_load(&segbmap->segs[j], i);
+		/*
+		 * The backup copy is read only if the main segment
+		 * is corrupted (or absent).
+		 */
+		si = ssdfs_segbmap_segment(segbmap, SSDFS_MAIN_SEGBMAP_SEG, i);
+		if (!si) {
+			si = ssdfs_segbmap_segment(segbmap,
+						   SSDFS_COPY_SEGBMAP_SEG, i);
+		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("i %d, j %d, si %p\n", i, j, si);
+		SSDFS_DBG("i %d, si %p\n", i, si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			if (!si)
-				continue;
+		if (!si)
+			continue;
 
-			err = ssdfs_segbmap_segment_init(segbmap, si, i);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to init segment: "
-					  "seg %llu, err %d\n",
-					  si->seg_id, err);
-				return err;
-			}
+		err = ssdfs_segbmap_segment_init(segbmap, si, i);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to init segment: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			return err;
 		}
 	}
 
@@ -1217,6 +1560,7 @@ int ssdfs_segbmap_check_fragment_validity(struct ssdfs_segment_bmap *segbmap,
 
 	case SSDFS_SEGBMAP_FRAG_INITIALIZED:
 	case SSDFS_SEGBMAP_FRAG_DIRTY:
+	case SSDFS_SEGBMAP_FRAG_TOWRITE:
 		/* do nothing */
 		break;
 
@@ -1236,7 +1580,8 @@ int ssdfs_segbmap_check_fragment_validity(struct ssdfs_segment_bmap *segbmap,
  * fragment in the SSDFS_SEGBMAP_FRAG_CREATED state (i.e. it hasn't been
  * read from the volume yet). It transitions the fragment descriptor into
  * the SSDFS_SEGBMAP_FRAG_UNDER_INIT state and queues a per-PEB read
- * request for the PEB (and its backup copy) that stores the fragment.
+ * request for the PEB that stores the fragment (the backup copy's PEB
+ * is read only if the PEB of main segment is corrupted or empty).
  * The caller is expected to wait on the fragment's init_end completion
  * and to retry the lookup afterwards.
  *
@@ -1251,13 +1596,10 @@ static
 int ssdfs_segbmap_issue_fragment_init(struct ssdfs_segment_bmap *segbmap,
 				      struct ssdfs_segbmap_fragment_desc *desc)
 {
-	struct ssdfs_segment_info *si;
 	u16 fragments_per_seg;
 	u16 fragments_per_peb;
 	int seg_index;
 	int peb_index;
-	bool has_backup;
-	int copy_id;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1277,7 +1619,6 @@ int ssdfs_segbmap_issue_fragment_init(struct ssdfs_segment_bmap *segbmap,
 
 	fragments_per_seg = segbmap->fragments_per_seg;
 	fragments_per_peb = segbmap->fragments_per_peb;
-	has_backup = segbmap->flags & SSDFS_SEGBMAP_HAS_COPY;
 
 	if (fragments_per_seg == 0 || fragments_per_peb == 0) {
 		SSDFS_ERR("invalid geometry: fragments_per_seg %u, "
@@ -1289,23 +1630,19 @@ int ssdfs_segbmap_issue_fragment_init(struct ssdfs_segment_bmap *segbmap,
 	seg_index = desc->fragment_id / fragments_per_seg;
 	peb_index = (desc->fragment_id % fragments_per_seg) / fragments_per_peb;
 
-	if (desc->state == SSDFS_SEGBMAP_FRAG_CREATED)
-		desc->state = SSDFS_SEGBMAP_FRAG_UNDER_INIT;
-	else
+	if (desc->state != SSDFS_SEGBMAP_FRAG_CREATED)
 		return -EAGAIN;
 
-	copy_id = SSDFS_MAIN_SEGBMAP_SEG;
-	si = ssdfs_segbmap_segment(segbmap, copy_id, seg_index);
-	if (!si) {
-		err = -ERANGE;
-		SSDFS_ERR("fail to get segment: "
-			  "copy_id %#x, seg_index %d\n",
-			  copy_id, seg_index);
-		goto finish_issue_fragment_init;
-	}
-
-	err = ssdfs_segbmap_issue_peb_init_request(segbmap, si,
-						   seg_index, peb_index);
+	/*
+	 * The init request reads and initializes all fragments
+	 * of the PEB. All of them are marked as being under init.
+	 * Otherwise, a lookup of other fragment of the same PEB
+	 * issues the second init request for the same PEB.
+	 * The PEB of main segment is read only. The copy's PEB
+	 * is read if the main PEB is corrupted or empty.
+	 */
+	err = ssdfs_segbmap_issue_peb_fragments_init(segbmap,
+						     seg_index, peb_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to issue segbmap fragment init: "
 			  "fragment_index %u, seg_index %d, "
@@ -1314,38 +1651,18 @@ int ssdfs_segbmap_issue_fragment_init(struct ssdfs_segment_bmap *segbmap,
 		goto finish_issue_fragment_init;
 	}
 
-	if (has_backup) {
-		copy_id = SSDFS_COPY_SEGBMAP_SEG;
-		si = ssdfs_segbmap_segment(segbmap, copy_id, seg_index);
-		if (!si) {
-			err = -ERANGE;
-			SSDFS_ERR("fail to get segment: "
-				  "copy_id %#x, seg_index %d\n",
-				  copy_id, seg_index);
-			goto finish_issue_fragment_init;
-		}
-
-		err = ssdfs_segbmap_issue_peb_init_request(segbmap,
-							   si,
-							   seg_index,
-							   peb_index);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to issue segbmap fragment init: "
-				  "fragment_index %u, seg_index %d, "
-				  "peb_index %d, err %d\n",
-				  desc->fragment_id, seg_index,
-				  peb_index, err);
-			goto finish_issue_fragment_init;
-		}
-	}
-
 finish_issue_fragment_init:
 	if (unlikely(err)) {
 		SSDFS_ERR("unable to issue init for fragment %u: "
 			  "seg_index %d, peb_index %d\n",
 			  desc->fragment_id, seg_index, peb_index);
 
-		if (desc->state == SSDFS_SEGBMAP_FRAG_UNDER_INIT)
+		__ssdfs_segbmap_fail_peb_fragments_init(segbmap,
+							seg_index,
+							peb_index);
+
+		if (desc->state == SSDFS_SEGBMAP_FRAG_CREATED ||
+		    desc->state == SSDFS_SEGBMAP_FRAG_UNDER_INIT)
 			desc->state = SSDFS_SEGBMAP_FRAG_INIT_FAILED;
 		complete_all(&desc->init_end);
 		return err;
@@ -1806,69 +2123,94 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		err = !desc ? -ENOMEM : PTR_ERR(desc);
 		SSDFS_ERR("fail to get fragment descriptor: "
 			  "sequence_id %u\n", sequence_id);
+		up_write(&segbmap->search_lock);
+		up_read(&segbmap->resize_lock);
+		return err;
+	}
+
+	switch (desc->state) {
+	case SSDFS_SEGBMAP_FRAG_CREATED:
+	case SSDFS_SEGBMAP_FRAG_UNDER_INIT:
+		/* continue logic */
+		break;
+
+	case SSDFS_SEGBMAP_FRAG_INITIALIZED:
+	case SSDFS_SEGBMAP_FRAG_DIRTY:
+	case SSDFS_SEGBMAP_FRAG_TOWRITE:
+		/*
+		 * The fragment has been initialized already
+		 * (for example, by the init request of the backup
+		 * copy). The in-memory state is actual and it
+		 * must not be overwritten by the volume's state.
+		 * The caller keeps the ownership of the folio.
+		 */
+		err = -EALREADY;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("fragment is initialized already: "
+			  "sequence_id %u, state %#x\n",
+			  sequence_id, desc->state);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto unlock_search_lock;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("fail to initialize segbmap fragment: "
+			  "sequence_id %u, state %#x\n",
+			  sequence_id, desc->state);
 		goto unlock_search_lock;
 	}
 
+	/*
+	 * The caller keeps the ownership of the folio in the case of
+	 * failure. It releases the folio with the request.
+	 */
 	err = ssdfs_folio_array_add_folio(&segbmap->folios, folio,
 					  sequence_id);
 	if (unlikely(err)) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to add folio %u into address space: err %d\n",
+		SSDFS_ERR("unable to add folio %u into address space: "
+			  "err %d\n",
 			  sequence_id, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		ssdfs_folio_put(folio);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("folio %p, count %d\n",
-			  folio, folio_ref_count(folio));
-#endif /* CONFIG_SSDFS_DEBUG */
+		desc->state = SSDFS_SEGBMAP_FRAG_INIT_FAILED;
 		goto unlock_search_lock;
 	}
 
-	if (desc->state != SSDFS_SEGBMAP_FRAG_CREATED &&
-	    desc->state != SSDFS_SEGBMAP_FRAG_UNDER_INIT) {
-		err = -ERANGE;
-		SSDFS_ERR("fail to initialize segbmap fragment\n");
-	} else {
-		hdr = SSDFS_SBMP_FRAG_HDR(kmap_local_folio(folio, 0));
-		desc->total_segs = le16_to_cpu(hdr->total_segs);
+	hdr = SSDFS_SBMP_FRAG_HDR(kmap_local_folio(folio, 0));
+	desc->total_segs = le16_to_cpu(hdr->total_segs);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("total_segs %u, clean_or_using_segs %u, "
-			  "used_or_dirty_segs %u, bad_segs %u\n",
-			  le16_to_cpu(hdr->total_segs),
-			  le16_to_cpu(hdr->clean_or_using_segs),
-			  le16_to_cpu(hdr->used_or_dirty_segs),
-			  le16_to_cpu(hdr->bad_segs));
+	SSDFS_DBG("total_segs %u, clean_or_using_segs %u, "
+		  "used_or_dirty_segs %u, bad_segs %u\n",
+		  le16_to_cpu(hdr->total_segs),
+		  le16_to_cpu(hdr->clean_or_using_segs),
+		  le16_to_cpu(hdr->used_or_dirty_segs),
+		  le16_to_cpu(hdr->bad_segs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_CLEAN_USING_FBMAP];
-		desc->clean_or_using_segs =
-			le16_to_cpu(hdr->clean_or_using_segs);
-		if (desc->clean_or_using_segs == 0)
-			bitmap_clear(fbmap, sequence_id, 1);
-		else
-			bitmap_set(fbmap, sequence_id, 1);
+	fbmap = segbmap->fbmap[SSDFS_SEGBMAP_CLEAN_USING_FBMAP];
+	desc->clean_or_using_segs =
+		le16_to_cpu(hdr->clean_or_using_segs);
+	if (desc->clean_or_using_segs == 0)
+		bitmap_clear(fbmap, sequence_id, 1);
+	else
+		bitmap_set(fbmap, sequence_id, 1);
 
-		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_USED_DIRTY_FBMAP];
-		desc->used_or_dirty_segs =
-			le16_to_cpu(hdr->used_or_dirty_segs);
-		if (desc->used_or_dirty_segs == 0)
-			bitmap_clear(fbmap, sequence_id, 1);
-		else
-			bitmap_set(fbmap, sequence_id, 1);
+	fbmap = segbmap->fbmap[SSDFS_SEGBMAP_USED_DIRTY_FBMAP];
+	desc->used_or_dirty_segs =
+		le16_to_cpu(hdr->used_or_dirty_segs);
+	if (desc->used_or_dirty_segs == 0)
+		bitmap_clear(fbmap, sequence_id, 1);
+	else
+		bitmap_set(fbmap, sequence_id, 1);
 
-		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_BAD_FBMAP];
-		desc->bad_segs = le16_to_cpu(hdr->bad_segs);
-		if (desc->bad_segs == 0)
-			bitmap_clear(fbmap, sequence_id, 1);
-		else
-			bitmap_set(fbmap, sequence_id, 1);
+	fbmap = segbmap->fbmap[SSDFS_SEGBMAP_BAD_FBMAP];
+	desc->bad_segs = le16_to_cpu(hdr->bad_segs);
+	if (desc->bad_segs == 0)
+		bitmap_clear(fbmap, sequence_id, 1);
+	else
+		bitmap_set(fbmap, sequence_id, 1);
 
-		desc->state = state;
-		kunmap_local(hdr);
-	}
+	desc->state = state;
+	kunmap_local(hdr);
 
 unlock_search_lock:
 	complete_all(&desc->init_end);

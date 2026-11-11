@@ -9315,6 +9315,169 @@ int ssdfs_read_blk_desc_byte_stream(struct ssdfs_peb_info *pebi,
 }
 
 /*
+ * ssdfs_read_blk_desc_uncompressed_byte_stream() - read blk desc's byte stream
+ * @pebi: pointer on PEB object
+ * @req: segment request
+ * @area_size: size of block descriptors area in bytes
+ * @env: init environment [in|out]
+ *
+ * This function tries to read the uncompressed blk desc table's
+ * byte stream. The area can contain the chain of area block tables
+ * (SSDFS_MULTIPLE_HDR_CHAIN). The function reads only the fragments
+ * of block descriptors (without area block tables). As a result,
+ * the byte stream has the same layout as the decompressed one
+ * (see __ssdfs_read_blk_desc_compressed_byte_stream()).
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int ssdfs_read_blk_desc_uncompressed_byte_stream(struct ssdfs_peb_info *pebi,
+					struct ssdfs_segment_request *req,
+					u32 area_size,
+					struct ssdfs_read_init_env *env)
+{
+	struct ssdfs_blk_desc_table_init_env *blk_desc_tbl;
+	struct ssdfs_area_block_table table;
+	struct ssdfs_fragment_desc *frag;
+	size_t tbl_size = sizeof(struct ssdfs_area_block_table);
+	u32 area_offset;
+	u32 table_offset = 0;
+	u32 frag_offset;
+	u16 frag_size;
+	u16 fragments_count;
+	bool has_next_table;
+	int i;
+	int err;
+
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!env);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb %llu, area_size %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id, area_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	blk_desc_tbl = &env->log.blk_desc_tbl;
+	area_offset = blk_desc_tbl->portion.area_offset;
+
+	do {
+		has_next_table = false;
+
+		if ((table_offset + tbl_size) > area_size) {
+			SSDFS_ERR("corrupted area blocks table: "
+				  "table_offset %u, area_size %u\n",
+				  table_offset, area_size);
+			return -EIO;
+		}
+
+		err = ssdfs_unaligned_read_cache(pebi, req,
+						 area_offset + table_offset,
+						 tbl_size, &table);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to read area block table: "
+				  "table_offset %u, tbl_size %zu, err %d\n",
+				  area_offset + table_offset, tbl_size, err);
+			return err;
+		}
+
+		if (table.chain_hdr.magic != SSDFS_CHAIN_HDR_MAGIC) {
+			SSDFS_ERR("corrupted area block table: "
+				  "magic (expected %#x, found %#x)\n",
+				  SSDFS_CHAIN_HDR_MAGIC,
+				  table.chain_hdr.magic);
+			return -EIO;
+		}
+
+		if (table.chain_hdr.type != SSDFS_BLK_DESC_CHAIN_HDR) {
+			SSDFS_ERR("unexpected area block table's type %#x\n",
+				  table.chain_hdr.type);
+			return -EIO;
+		}
+
+		fragments_count = le16_to_cpu(table.chain_hdr.fragments_count);
+		if (fragments_count > SSDFS_BLK_TABLE_MAX) {
+			SSDFS_ERR("corrupted area block table: "
+				  "fragments_count %u\n",
+				  fragments_count);
+			return -EIO;
+		}
+
+		for (i = 0; i < fragments_count; i++) {
+			frag = &table.blk[i];
+
+			if (frag->magic != SSDFS_FRAGMENT_DESC_MAGIC) {
+				SSDFS_ERR("corrupted area block table: "
+					  "magic (expected %#x, found %#x)\n",
+					  SSDFS_FRAGMENT_DESC_MAGIC,
+					  frag->magic);
+				return -EIO;
+			}
+
+			frag_offset = le32_to_cpu(frag->offset);
+			frag_size = le16_to_cpu(frag->uncompr_size);
+
+			switch (frag->type) {
+			case SSDFS_DATA_BLK_DESC:
+				if (frag_offset < (table_offset + tbl_size) ||
+				    (frag_offset + frag_size) > area_size) {
+					SSDFS_ERR("corrupted fragment: "
+						  "frag_offset %u, "
+						  "frag_size %u, "
+						  "area_size %u\n",
+						  frag_offset, frag_size,
+						  area_size);
+					return -EIO;
+				}
+
+				blk_desc_tbl->portion.read_off =
+						area_offset + frag_offset;
+
+				err = ssdfs_read_blk_desc_byte_stream(pebi, req,
+								     frag_size,
+								     env);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to read fragment: "
+						  "frag_offset %u, "
+						  "frag_size %u, err %d\n",
+						  frag_offset, frag_size, err);
+					return err;
+				}
+				break;
+
+			case SSDFS_NEXT_TABLE_DESC:
+				if (i != SSDFS_NEXT_BLK_TABLE_INDEX ||
+				    frag_offset <= table_offset) {
+					SSDFS_ERR("corrupted next table desc: "
+						  "index %d, frag_offset %u, "
+						  "table_offset %u\n",
+						  i, frag_offset,
+						  table_offset);
+					return -EIO;
+				}
+
+				table_offset = frag_offset;
+				has_next_table = true;
+				break;
+
+			default:
+				SSDFS_ERR("unexpected fragment's type %#x\n",
+					  frag->type);
+				return -EIO;
+			}
+		}
+	} while (has_next_table);
+
+	return 0;
+}
+
+/*
  * __ssdfs_read_blk_desc_compressed_byte_stream() - read blk desc's byte stream
  * @pebi: pointer on PEB object
  * @req: segment request
@@ -9712,8 +9875,6 @@ int ssdfs_pre_fetch_blk_desc_table_area(struct ssdfs_peb_info *pebi,
 		u32 read_bytes = le32_to_cpu(desc->size);
 		size_t area_tbl_size = sizeof(struct ssdfs_area_block_table);
 
-		env->log.blk_desc_tbl.portion.read_off += area_tbl_size;
-
 		if (read_bytes <= area_tbl_size) {
 			SSDFS_ERR("corrupted area blocks table: "
 				  "read_bytes %u, area_tbl_size %zu\n",
@@ -9721,10 +9882,9 @@ int ssdfs_pre_fetch_blk_desc_table_area(struct ssdfs_peb_info *pebi,
 			return -EIO;
 		}
 
-		read_bytes -= area_tbl_size;
-
-		err = ssdfs_read_blk_desc_byte_stream(pebi, req,
-						      read_bytes, env);
+		err = ssdfs_read_blk_desc_uncompressed_byte_stream(pebi, req,
+								   read_bytes,
+								   env);
 	}
 
 	if (unlikely(err)) {
@@ -13584,7 +13744,13 @@ int ssdfs_peb_read_segbmap_first_folio(struct ssdfs_peb_container *pebc,
 
 	err = ssdfs_segbmap_fragment_init(pebc, sequence_id,
 					  folio, state);
-	if (unlikely(err)) {
+	if (err == -EALREADY) {
+		/*
+		 * Fragment has been initialized already.
+		 * The folio is released with the request.
+		 */
+		err = 0;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to init fragment: "
 			  "sequence_id %u, err %d\n",
 			  sequence_id, err);
@@ -13783,7 +13949,13 @@ int ssdfs_peb_read_segbmap_folios(struct ssdfs_peb_container *pebc,
 
 		err = ssdfs_segbmap_fragment_init(pebc, sequence_id,
 						  folio, state);
-		if (unlikely(err)) {
+		if (err == -EALREADY) {
+			/*
+			 * Fragment has been initialized already.
+			 * The folio is released with the request.
+			 */
+			err = 0;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to init fragment: "
 				  "sequence_id %u, err %d\n",
 				  sequence_id, err);
@@ -13884,7 +14056,7 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 	struct ssdfs_fs_info *fsi;
 	u16 seg_index;
 	struct ssdfs_segbmap_extent extent = {0};
-	int err = 0;
+	int err = 0, err1;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !req);
@@ -13922,11 +14094,12 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 		SSDFS_DBG("peb_index %u hasn't segbmap's content\n",
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
+		err = 0;
+		goto finish_init;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read PEB's segbmap first page: "
 			  "err %d\n", err);
-		return err;
+		goto finish_init;
 	}
 
 	err = ssdfs_peb_read_segbmap_rest_folios(pebc, seg_index, &extent);
@@ -13935,22 +14108,49 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 		SSDFS_DBG("peb_index %u has only one folio\n",
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
+		err = 0;
+		goto finish_init;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read PEB's segbmap rest folios: "
 			  "err %d\n", err);
-		return err;
+		goto finish_init;
 	}
 
-	{
-		int err1 = ssdfs_peb_release_folios(pebc);
-		if (err1 == -ENODATA) {
-			SSDFS_DBG("PEB cache is empty\n");
-		} else if (unlikely(err1)) {
-			SSDFS_ERR("fail to release pages: err %d\n",
-				  err1);
-		}
+	err1 = ssdfs_peb_release_folios(pebc);
+	if (err1 == -ENODATA) {
+		SSDFS_DBG("PEB cache is empty\n");
+	} else if (unlikely(err1)) {
+		SSDFS_ERR("fail to release pages: err %d\n",
+			  err1);
 	}
+
+finish_init:
+	/*
+	 * The fragments that the request hasn't initialized are read
+	 * from the backup copy (if the PEB of main segment is corrupted
+	 * or empty) or they are failed. Otherwise, the waiters of these
+	 * fragments never wake up.
+	 */
+	err1 = ssdfs_segbmap_finish_peb_fragments_init(fsi->segbmap,
+						       pebc->parent_si,
+						       seg_index,
+						       pebc->peb_index);
+	if (err1 == -EAGAIN) {
+		SSDFS_NOTICE("segbmap's fragments will be read from copy: "
+			     "seg %llu, peb_index %u, err %d\n",
+			     pebc->parent_si->seg_id,
+			     pebc->peb_index, err);
+		return 0;
+	} else if (unlikely(err1)) {
+		SSDFS_ERR("fail to initialize segbmap's fragments: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index, err1);
+		return err ? err : err1;
+	}
+
+	if (unlikely(err))
+		return err;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");

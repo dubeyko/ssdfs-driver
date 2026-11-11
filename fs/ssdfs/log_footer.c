@@ -459,7 +459,7 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 		*log_pages = le32_to_cpu(footer->log_bytes);
 		*log_pages /= block_size;
 
-		if (*log_pages == 0 || *log_pages >= pages_per_peb) {
+		if (*log_pages == 0 || *log_pages > pages_per_peb) {
 			if (!silent)
 				SSDFS_ERR("invalid log pages %u\n", *log_pages);
 			else {
@@ -529,7 +529,7 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 		*log_pages = le32_to_cpu(pl_hdr->log_bytes);
 		*log_pages /= block_size;
 
-		if (*log_pages == 0 || *log_pages >= pages_per_peb) {
+		if (*log_pages == 0 || *log_pages > pages_per_peb) {
 			if (!silent)
 				SSDFS_ERR("invalid log pages %u\n", *log_pages);
 			else {

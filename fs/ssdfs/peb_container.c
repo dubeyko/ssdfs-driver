@@ -1056,6 +1056,12 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	}
 
 	ssdfs_put_request(req1);
+	/*
+	 * The read thread frees the request as soon as
+	 * the reference counter is zero. The error paths below
+	 * must not put the request again.
+	 */
+	req1 = NULL;
 
 	/*
 	 * Current log start_page and data_free_pages count was defined
@@ -1182,7 +1188,8 @@ stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
 
 stop_read_thread:
-	ssdfs_put_request(req1);
+	if (req1)
+		ssdfs_put_request(req1);
 	ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
 					&pebc->read_rq, -ERANGE);
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
