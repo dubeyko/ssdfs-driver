@@ -29,6 +29,7 @@
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "folio_array.h"
+#include "dynamic_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
 #include "segment_bitmap.h"
@@ -3138,11 +3139,103 @@ int ssdfs_wait_recovery_thread_finish(struct ssdfs_fs_info *fsi,
 	return err;
 }
 
+/*
+ * ssdfs_recovery_load_stripe_summary() - prepare stripe's details
+ * @array: dynamic array of stripes' summaries
+ * @index: stripe index
+ * @found: thread's buffer of stripe's details [out]
+ */
+static
+int ssdfs_recovery_load_stripe_summary(struct ssdfs_dynamic_array *array,
+				       u32 index,
+				       struct ssdfs_found_protected_pebs *found)
+{
+	struct ssdfs_stripe_search_summary *summary;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array || !found);
+
+	SSDFS_DBG("array %p, index %u, found %p\n",
+		  array, index, found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_init_found_pebs_details(found);
+
+	summary = ssdfs_dynamic_array_get_locked(array, index);
+	if (IS_ERR_OR_NULL(summary)) {
+		err = (summary == NULL ? -ENOENT : PTR_ERR(summary));
+		SSDFS_ERR("fail to get stripe's summary: "
+			  "index %u, err %d\n",
+			  index, err);
+		return err;
+	}
+
+	found->start_peb = summary->start_peb;
+	found->pebs_count = summary->pebs_count;
+	found->middle_offset = summary->middle_offset;
+
+	for (i = 0; i < SSDFS_PROTECTED_PEB_CHAIN_MAX; i++)
+		found->array[i].peb.peb_id = summary->protected_peb_id[i];
+
+	err = ssdfs_dynamic_array_release(array, index, summary);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to release stripe's summary: "
+			  "index %u, err %d\n",
+			  index, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_recovery_store_stripe_summary() - save stripe's summary
+ * @array: dynamic array of stripes' summaries
+ * @index: stripe index
+ * @found: thread's buffer of stripe's details
+ */
+static
+int ssdfs_recovery_store_stripe_summary(struct ssdfs_dynamic_array *array,
+				u32 index,
+				struct ssdfs_found_protected_pebs *found)
+{
+	struct ssdfs_stripe_search_summary summary;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array || !found);
+
+	SSDFS_DBG("array %p, index %u, found %p\n",
+		  array, index, found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memset(&summary, 0xFF, sizeof(summary));
+
+	summary.start_peb = found->start_peb;
+	summary.pebs_count = found->pebs_count;
+	summary.middle_offset = found->middle_offset;
+
+	for (i = 0; i < SSDFS_PROTECTED_PEB_CHAIN_MAX; i++)
+		summary.protected_peb_id[i] = found->array[i].peb.peb_id;
+
+	err = ssdfs_dynamic_array_set(array, index, &summary);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to store stripe's summary: "
+			  "index %u, err %d\n",
+			  index, err);
+	}
+
+	return err;
+}
+
 int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 {
 	struct ssdfs_volume_header *vh;
 	struct ssdfs_recovery_env *array = NULL;
-	struct ssdfs_found_protected_pebs *found_pebs = NULL;
+	struct ssdfs_dynamic_array summaries;
 	u64 dev_size;
 	u32 erasesize;
 	u64 pebs_per_volume;
@@ -3210,22 +3303,19 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	has_sb_peb_found1 = false;
 	has_sb_peb_found2 = false;
 
-	found_pebs = ssdfs_recovery_kcalloc(stripes_count,
-				sizeof(struct ssdfs_found_protected_pebs),
-				GFP_KERNEL);
-	if (!found_pebs) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate the PEBs details array\n");
-		goto free_environment;
-	}
-
-	for (i = 0; i < stripes_count; i++) {
-		ssdfs_init_found_pebs_details(&found_pebs[i]);
+	err = ssdfs_dynamic_array_create(&summaries, stripes_count,
+					 sizeof(struct ssdfs_stripe_search_summary),
+					 0xFF);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create the stripes' summary array: "
+			  "stripes_count %u, err %d\n",
+			  stripes_count, err);
+		goto free_env_array;
 	}
 
 	array = ssdfs_recovery_kcalloc(threads_count,
-				sizeof(struct ssdfs_recovery_env),
-				GFP_KERNEL);
+					sizeof(struct ssdfs_recovery_env),
+					GFP_KERNEL);
 	if (!array) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate the environment\n");
@@ -3307,8 +3397,11 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 				  pebs_per_volume, processed_pebs);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+			/* fast search visits every stripe the first time */
+			ssdfs_init_found_pebs_details(&array[i].found_buf);
+
 			err = ssdfs_start_recovery_thread_activity(&array[i],
-					&found_pebs[processed_stripes + i],
+					&array[i].found_buf,
 					processed_pebs, calculated,
 					SSDFS_RECOVERY_FAST_SEARCH);
 			if (err) {
@@ -3325,6 +3418,14 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 						&array[i],
 						processed_stripes + i,
 						&has_iteration_succeeded);
+			if (unlikely(err)) {
+				has_sb_peb_found1 = false;
+				goto finish_sb_peb_search;
+			}
+
+			err = ssdfs_recovery_store_stripe_summary(&summaries,
+							processed_stripes + i,
+							&array[i].found_buf);
 			if (unlikely(err)) {
 				has_sb_peb_found1 = false;
 				goto finish_sb_peb_search;
@@ -3409,8 +3510,18 @@ try_slow_search:
 				  pebs_per_volume, processed_pebs);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+			err = ssdfs_recovery_load_stripe_summary(&summaries,
+							processed_stripes + i,
+							&array[i].found_buf);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to load stripe's summary: "
+					  "stripe %u, err %d\n",
+					  processed_stripes + i, err);
+				goto finish_sb_peb_search;
+			}
+
 			err = ssdfs_start_recovery_thread_activity(&array[i],
-					&found_pebs[processed_stripes + i],
+					&array[i].found_buf,
 					processed_pebs, calculated,
 					SSDFS_RECOVERY_SLOW_SEARCH);
 			if (err == -ENODATA) {
@@ -3484,11 +3595,9 @@ destruct_sb_info:
 	}
 
 free_environment:
-	if (found_pebs) {
-		ssdfs_recovery_kfree(found_pebs);
-		found_pebs = NULL;
-	}
+	ssdfs_dynamic_array_destroy(&summaries);
 
+free_env_array:
 	if (array) {
 		ssdfs_recovery_kfree(array);
 		array = NULL;

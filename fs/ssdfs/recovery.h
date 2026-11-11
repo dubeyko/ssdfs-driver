@@ -97,8 +97,26 @@ struct ssdfs_found_protected_pebs {
 };
 
 /*
+ * struct ssdfs_stripe_search_summary - stripe's search summary
+ * @start_peb: starting PEB ID in stripe
+ * @middle_offset: middle offset that fast search has found
+ * @protected_peb_id: IDs of found protected PEBs
+ * @pebs_count: PEBs count in stripe
+ *
+ * Fast search keeps in the summary only the state of the stripe
+ * that slow search needs.
+ */
+struct ssdfs_stripe_search_summary {
+	u64 start_peb;
+	u64 middle_offset;
+	u64 protected_peb_id[SSDFS_PROTECTED_PEB_CHAIN_MAX];
+	u32 pebs_count;
+};
+
+/*
  * struct ssdfs_recovery_env - recovery environment
  * @found: found PEBs' details
+ * @found_buf: thread's buffer of found PEBs' details
  * @err: result of the search
  * @state: recovery thread's state
  * @pebs_per_volume: PEBs number per volume
@@ -114,6 +132,7 @@ struct ssdfs_found_protected_pebs {
  */
 struct ssdfs_recovery_env {
 	struct ssdfs_found_protected_pebs *found;
+	struct ssdfs_found_protected_pebs found_buf;
 
 	int err;
 	atomic_t state;

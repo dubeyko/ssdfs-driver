@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.95 [November 11, 2026]
+    (*) Fix memory allocation issue in ssdfs_gather_superblock_info().
+
 v.5.94 [November 03, 2026]
     (*) Fix memory pressure issue.
 
