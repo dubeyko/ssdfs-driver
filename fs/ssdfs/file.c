@@ -2785,6 +2785,14 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
 					ssdfs_folio_lock(folio);
 				}
 
+				/*
+				 * The folio's data is dropped here, so the
+				 * error has to be recorded in the mapping.
+				 * Otherwise, fsync() will not report it.
+				 */
+				if (folio->mapping)
+					mapping_set_error(folio->mapping, err);
+
 				clear_folio_new(folio);
 				folio_mark_uptodate(folio);
 				folio_clear_dirty(folio);
@@ -2804,6 +2812,7 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
  * ssdfs_discard_dirty_folios_batch() - unlock and discard batch's folios
  * @fsi: pointer on shared file system object
  * @batch: dirty folios batch
+ * @err: error of the failed write request
  *
  * This method is used to recover from a failure to submit
  * a write request for the whole @batch (e.g. async request
@@ -2818,7 +2827,8 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
  */
 static
 void ssdfs_discard_dirty_folios_batch(struct ssdfs_fs_info *fsi,
-				      struct ssdfs_dirty_folios_batch *batch)
+				      struct ssdfs_dirty_folios_batch *batch,
+				      int err)
 {
 	int i, j;
 
@@ -2838,6 +2848,14 @@ void ssdfs_discard_dirty_folios_batch(struct ssdfs_fs_info *fsi,
 					   folio, folio_test_locked(folio));
 				ssdfs_folio_lock(folio);
 			}
+
+			/*
+			 * The folio's data is dropped here, so the
+			 * error has to be recorded in the mapping.
+			 * Otherwise, fsync() will not report it.
+			 */
+			if (folio->mapping)
+				mapping_set_error(folio->mapping, err);
 
 			clear_folio_new(folio);
 			folio_mark_uptodate(folio);
@@ -3085,7 +3103,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 			SSDFS_ERR("fail to write async: "
 				  "ino %llu, err %d\n",
 				  ino, err);
-			ssdfs_discard_dirty_folios_batch(fsi, batch);
+			ssdfs_discard_dirty_folios_batch(fsi, batch, err);
 			goto finish_issue_write_request;
 		}
 	} else if (wbc->sync_mode == WB_SYNC_ALL) {
