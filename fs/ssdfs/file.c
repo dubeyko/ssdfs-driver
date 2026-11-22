@@ -664,8 +664,8 @@ fail_read_block:
 static
 int ssdfs_read_block(struct file *file, struct folio *folio)
 {
-	struct inode *inode = file_inode(file);
-	struct address_space *mapping = file->f_mapping;
+	struct address_space *mapping = folio->mapping;
+	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct folio_batch fbatch;
 	struct folio *cur_folio;
@@ -681,7 +681,7 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %llu, folio_index %lu, "
 		  "folio_size %zu\n",
-		  file_inode(file)->i_ino, folio->index,
+		  inode->i_ino, folio->index,
 		  folio_size(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -758,7 +758,7 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 			  "ino %llu, folio_index %lu, "
 			  "folio_size %zu, processed_bytes %u, "
 			  "pagesize %u\n",
-			  file_inode(file)->i_ino, folio->index,
+			  inode->i_ino, folio->index,
 			  folio_size(folio), processed_bytes,
 			  fsi->pagesize);
 	}
