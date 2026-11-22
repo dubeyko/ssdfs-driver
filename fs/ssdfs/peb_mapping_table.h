@@ -766,6 +766,8 @@ int ssdfs_maptbl_break_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl
 
 int ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi,
 			     u32 count, int type);
+int ssdfs_try_reserve_free_pages(struct ssdfs_fs_info *fsi,
+				 u32 count, int type);
 
 /*
  * It makes sense to have special thread for the whole mapping table.

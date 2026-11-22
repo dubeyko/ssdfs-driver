@@ -14010,6 +14010,41 @@ finish_wait_init:
 	return err;
 }
 
+/*
+ * ssdfs_try_reserve_free_pages() - try to reserve free pages without waiting
+ * @fsi: pointer on shared file system object
+ * @count: number of logical blocks
+ * @type: type of pages
+ *
+ * This function tries to reserve free pages without waiting for
+ * free space (no GC, no waiting of mapping table initialization).
+ * It can be used in the context (for example, writeback) that
+ * cannot wait.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - volume hasn't free pages.
+ */
+int ssdfs_try_reserve_free_pages(struct ssdfs_fs_info *fsi,
+				 u32 count, int type)
+{
+	u64 free_pages = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+	BUG_ON(type <= SSDFS_UNKNOWN_PAGE_TYPE || type >= SSDFS_PAGES_TYPE_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = __ssdfs_reserve_free_pages(fsi, count, type, &free_pages);
+	if (err == -EEXIST)
+		return 0;
+
+	return err;
+}
+
 int ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi, u32 count, int type)
 {
 	u64 free_pages = 0;

@@ -962,6 +962,8 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 	int invalid_blks = 0;
 	int vacant_blks = 0;
 	int reserved_metapages;
+	int taken_free_blks = 0;
+	int taken_invalid_blks = 0;
 	int err = 0, err1 = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1031,6 +1033,7 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 
 			if (free_blks >= vacant_blks) {
 				atomic_sub(*reserved_blks, &ptr->seg_free_blks);
+				taken_free_blks = *reserved_blks;
 #ifdef CONFIG_SSDFS_DEBUG
 				BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1038,6 +1041,8 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 				atomic_set(&ptr->seg_free_blks, 0);
 				atomic_sub(vacant_blks - free_blks,
 					   &ptr->seg_invalid_blks);
+				taken_free_blks = free_blks;
+				taken_invalid_blks = vacant_blks - free_blks;
 #ifdef CONFIG_SSDFS_DEBUG
 				BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1057,6 +1062,7 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 
 			if (free_blks >= count) {
 				atomic_sub(*reserved_blks, &ptr->seg_free_blks);
+				taken_free_blks = *reserved_blks;
 #ifdef CONFIG_SSDFS_DEBUG
 				BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1064,6 +1070,8 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 				atomic_set(&ptr->seg_free_blks, 0);
 				atomic_sub(count - free_blks,
 					   &ptr->seg_invalid_blks);
+				taken_free_blks = free_blks;
+				taken_invalid_blks = count - free_blks;
 #ifdef CONFIG_SSDFS_DEBUG
 				BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1109,6 +1117,17 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 			SSDFS_WARN("count %u is bigger than reserved %llu, "
 				   "seg_id %llu\n",
 				   mem_pages, reserved, si->seg_id);
+
+			/*
+			 * Return the taken blocks back into the segment.
+			 * Otherwise, the segment loses them forever.
+			 */
+			down_write(&ptr->modification_lock);
+			atomic_add(taken_free_blks, &ptr->seg_free_blks);
+			atomic_add(taken_invalid_blks, &ptr->seg_invalid_blks);
+			up_write(&ptr->modification_lock);
+
+			*reserved_blks = 0;
 			goto finish_reserve_extent;
 		}
 

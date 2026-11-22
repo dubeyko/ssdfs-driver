@@ -3408,6 +3408,169 @@ typedef int (*ssdfs_writepagefn)(struct folio *folio, u32 len,
 				 struct ssdfs_segment_request_pool *pool,
 				 struct ssdfs_dirty_folios_batch *batch);
 
+/*
+ * ssdfs_block_has_new_folio() - check that block's space is reserved already
+ * @inode: pointer on inode object
+ * @folio: folio of the logical block
+ *
+ * A logical block can be bigger than a folio. Space is reserved once
+ * per logical block and every folio of the block is marked as new.
+ * This function checks that some other folio of the same logical
+ * block has been marked as new already.
+ */
+static
+bool ssdfs_block_has_new_folio(struct inode *inode, struct folio *folio)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct folio *cur_folio;
+	pgoff_t index, end_index;
+	u64 blk;
+	bool found = false;
+
+	if (need_add_block(folio))
+		return true;
+
+	if (folio_size(folio) >= fsi->pagesize)
+		return false;
+
+	blk = folio_pos(folio) >> fsi->log_pagesize;
+	index = (pgoff_t)((blk << fsi->log_pagesize) >> PAGE_SHIFT);
+	end_index = index + (fsi->pagesize >> PAGE_SHIFT);
+
+	while (index < end_index && !found) {
+		if (index == folio->index) {
+			index += folio_nr_pages(folio);
+			continue;
+		}
+
+		cur_folio = filemap_get_folio(inode->i_mapping, index);
+		if (IS_ERR_OR_NULL(cur_folio)) {
+			index++;
+			continue;
+		}
+
+		found = need_add_block(cur_folio);
+		index = cur_folio->index + folio_nr_pages(cur_folio);
+		folio_put(cur_folio);
+	}
+
+	return found;
+}
+
+/*
+ * ssdfs_mark_block_folios_new() - mark all block's folios as new
+ * @inode: pointer on inode object
+ * @folio: folio of the logical block
+ */
+static
+void ssdfs_mark_block_folios_new(struct inode *inode, struct folio *folio)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct folio *cur_folio;
+	pgoff_t index, end_index;
+	u64 blk;
+
+	set_folio_new(folio);
+
+	if (folio_size(folio) >= fsi->pagesize)
+		return;
+
+	blk = folio_pos(folio) >> fsi->log_pagesize;
+	index = (pgoff_t)((blk << fsi->log_pagesize) >> PAGE_SHIFT);
+	end_index = index + (fsi->pagesize >> PAGE_SHIFT);
+
+	while (index < end_index) {
+		if (index == folio->index) {
+			index += folio_nr_pages(folio);
+			continue;
+		}
+
+		cur_folio = filemap_get_folio(inode->i_mapping, index);
+		if (IS_ERR_OR_NULL(cur_folio)) {
+			index++;
+			continue;
+		}
+
+		set_folio_new(cur_folio);
+		index = cur_folio->index + folio_nr_pages(cur_folio);
+		folio_put(cur_folio);
+	}
+}
+
+/*
+ * ssdfs_reserve_folio_new_blocks() - reserve space for folio's new blocks
+ * @inode: pointer on inode object
+ * @folio: locked folio
+ * @can_wait: is it possible to wait for free space?
+ *
+ * Every logical block that has no allocated space yet needs
+ * the space reservation (reserved_new_user_data_pages) before
+ * the flush logic allocates the block. The reservation has to be
+ * done when the folio becomes dirty. Otherwise, the flush logic
+ * allocates the blocks that nobody has reserved, and the pool of
+ * reserved pages runs out for the legitimate reservations.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - volume hasn't free space.
+ */
+static
+int ssdfs_reserve_folio_new_blocks(struct inode *inode,
+				   struct folio *folio,
+				   bool can_wait)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	loff_t i_size = i_size_read(inode);
+	loff_t start = folio_pos(folio);
+	loff_t end = start + folio_size(folio);
+	u64 start_blk, end_blk, blk;
+	u32 count = 0;
+	int err;
+
+	if (ssdfs_block_has_new_folio(inode, folio)) {
+		/* space has been reserved already */
+		set_folio_new(folio);
+		return 0;
+	}
+
+	if (start < i_size && end > i_size)
+		end = i_size;
+
+	start_blk = start >> fsi->log_pagesize;
+	end_blk = (end - 1) >> fsi->log_pagesize;
+
+	for (blk = start_blk; blk <= end_blk; blk++) {
+		if (!ssdfs_extents_tree_has_logical_block(blk, inode))
+			count++;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %llu, folio_index %lu, start_blk %llu, "
+		  "end_blk %llu, new blocks %u, can_wait %#x\n",
+		  inode->i_ino, folio->index, start_blk,
+		  end_blk, count, can_wait);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (count == 0)
+		return 0;
+
+	if (can_wait) {
+		err = ssdfs_reserve_free_pages(fsi, count,
+						SSDFS_USER_DATA_PAGES);
+	} else {
+		err = ssdfs_try_reserve_free_pages(fsi, count,
+						   SSDFS_USER_DATA_PAGES);
+	}
+
+	if (err)
+		return err;
+
+	ssdfs_mark_block_folios_new(inode, folio);
+	return 0;
+}
+
 static
 int ssdfs_writepage_wrapper(struct folio *folio,
 			    struct writeback_control *wbc,
@@ -3499,16 +3662,27 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!need_add_block(folio)) {
-		is_new_blk = !ssdfs_extents_tree_has_logical_block(cur_blk,
-								   inode);
+		/*
+		 * The space of new block has to be reserved when the folio
+		 * is dirtied (write_begin, page_mkwrite). If some path
+		 * dirtied the folio without the reservation, then try
+		 * to reserve the space now without waiting. The flush
+		 * logic will consume the reservation for the new block.
+		 */
+		err = ssdfs_reserve_folio_new_blocks(inode, folio, false);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to reserve space for new block: "
+				  "ino %llu, cur_blk %llu, err %d\n",
+				  ino, (u64)cur_blk, err);
+			goto discard_folio;
+		}
+
+		is_new_blk = need_add_block(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cur_blk %llu, is_new_blk %#x\n",
 			  (u64)cur_blk, is_new_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		if (is_new_blk)
-			set_folio_new(folio);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4050,49 +4224,6 @@ struct folio *ssdfs_get_block_folio(struct file *file,
 	return folio;
 }
 
-static inline
-void ssdfs_folio_test_and_set_if_new(struct inode *inode,
-				     struct folio *folio)
-{
-	pgoff_t last_folio;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!inode || !folio);
-
-	SSDFS_DBG("ino %llu, folio_index %lu\n",
-		  inode->i_ino, folio->index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	last_folio = (i_size_read(inode) - 1) >> PAGE_SHIFT;
-
-	if (i_size_read(inode) == 0) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("SET NEW FOLIO: "
-			  "file_size %llu, last_folio %lu, "
-			  "folio_index %lu\n",
-			  (u64)i_size_read(inode),
-			  last_folio,
-			  folio->index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		set_folio_new(folio);
-	} else {
-		if (folio->index > last_folio ||
-		    !folio_test_uptodate(folio)) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("SET NEW FOLIO: "
-				  "file_size %llu, last_folio %lu, "
-				  "folio_index %lu\n",
-				  (u64)i_size_read(inode),
-				  last_folio,
-				  folio->index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			set_folio_new(folio);
-		}
-	}
-}
-
 static
 int ssdfs_process_whole_block(struct file *file,
 			      struct address_space *mapping,
@@ -4144,10 +4275,8 @@ int ssdfs_process_whole_block(struct file *file,
 				goto release_folios;
 			}
 
-			if (is_new_blk) {
-				ssdfs_folio_test_and_set_if_new(inode,
-								cur_folio);
-			}
+			if (is_new_blk)
+				set_folio_new(cur_folio);
 		}
 
 		if (folio_test_uptodate(cur_folio)) {
@@ -4367,16 +4496,26 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 		return first_folio;
 	}
 
-	if (pos % folio_size(first_folio)) {
-		if (folio_test_uptodate(first_folio))
-			return first_folio;
-	}
-
-	if (last_blk >= U64_MAX) {
+	if (need_add_block(first_folio)) {
+		/* space of the block has been reserved already */
+		is_new_blk = true;
+	} else if (last_blk >= U64_MAX) {
 		is_new_blk = true;
 	} else if (cur_blk > last_blk) {
 		is_new_blk = true;
-	} else if (!folio_test_uptodate(first_folio)) {
+	} else if (folio_test_dirty(first_folio)) {
+		/*
+		 * The dirty folio has been checked when it was
+		 * dirtied. It is not new block, otherwise,
+		 * the folio would have been marked as new.
+		 */
+		is_new_blk = false;
+	} else {
+		/*
+		 * The uptodate folio can be the hole's folio
+		 * (for example, after the read of a hole).
+		 * So, check the extents tree in any case.
+		 */
 		is_new_blk = !ssdfs_extents_tree_has_logical_block(cur_blk,
 								   inode);
 	}
@@ -4387,7 +4526,7 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (is_new_blk) {
-		if (!need_add_block(first_folio)) {
+		if (!ssdfs_block_has_new_folio(inode, first_folio)) {
 			err = ssdfs_reserve_free_pages(fsi, 1,
 						SSDFS_USER_DATA_PAGES);
 		}
@@ -4402,8 +4541,6 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (err) {
-			ssdfs_increase_volume_free_pages(fsi, 1);
-
 			ssdfs_folio_unlock(first_folio);
 			ssdfs_pagecache_folio_put(fsi, first_folio);
 
@@ -4418,7 +4555,12 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 			return ERR_PTR(err);
 		}
 
-		ssdfs_folio_test_and_set_if_new(inode, first_folio);
+		ssdfs_mark_block_folios_new(inode, first_folio);
+	}
+
+	if (pos % folio_size(first_folio)) {
+		if (folio_test_uptodate(first_folio))
+			return first_folio;
 	}
 
 	err = ssdfs_process_whole_block(file, mapping, first_folio,
@@ -5128,12 +5270,93 @@ static int ssdfs_file_open(struct inode *inode, struct file *filp)
 }
 #endif /* CONFIG_SSDFS_FS_ENCRYPTION */
 
+/*
+ * ssdfs_page_mkwrite() - make the mapped folio writable
+ * @vmf: fault description
+ *
+ * A write into a hole through mmap() doesn't go through
+ * ->write_begin(). Reserve the space of new blocks here.
+ * Otherwise, the flush logic would allocate the blocks
+ * that nobody has reserved.
+ */
+static
+vm_fault_t ssdfs_page_mkwrite(struct vm_fault *vmf)
+{
+	struct file *file = vmf->vma->vm_file;
+	struct inode *inode = file_inode(file);
+	struct address_space *mapping = inode->i_mapping;
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct folio *folio = page_folio(vmf->page);
+	vm_fault_t ret = VM_FAULT_LOCKED;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %llu, folio_index %lu\n",
+		  inode->i_ino, folio->index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(ssdfs_forced_shutdown(inode->i_sb)))
+		return VM_FAULT_SIGBUS;
+
+	sb_start_pagefault(inode->i_sb);
+	file_update_time(file);
+
+	folio_lock(folio);
+
+	if (folio->mapping != mapping ||
+	    folio_pos(folio) >= i_size_read(inode)) {
+		folio_unlock(folio);
+		ret = VM_FAULT_NOPAGE;
+		goto finish_page_mkwrite;
+	}
+
+	if (!is_ssdfs_file_inline(ii)) {
+		err = ssdfs_reserve_folio_new_blocks(inode, folio, true);
+		if (unlikely(err)) {
+			folio_unlock(folio);
+			ret = vmf_fs_error(err);
+			goto finish_page_mkwrite;
+		}
+	}
+
+	/*
+	 * Mark the folio dirty already here so that when freeze is in
+	 * progress, writeback during freezing will see the dirty folio
+	 * and writeprotect it again.
+	 */
+	folio_mark_dirty(folio);
+	folio_wait_stable(folio);
+
+finish_page_mkwrite:
+	sb_end_pagefault(inode->i_sb);
+	return ret;
+}
+
+static const struct vm_operations_struct ssdfs_file_vm_ops = {
+	.fault		= filemap_fault,
+	.map_pages	= filemap_map_pages,
+	.page_mkwrite	= ssdfs_page_mkwrite,
+};
+
+static
+int ssdfs_file_mmap_prepare(struct vm_area_desc *desc)
+{
+	int err;
+
+	err = generic_file_mmap_prepare(desc);
+	if (err)
+		return err;
+
+	desc->vm_ops = &ssdfs_file_vm_ops;
+	return 0;
+}
+
 const struct file_operations ssdfs_file_operations = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= ssdfs_file_read_iter,
 	.write_iter	= generic_file_write_iter,
 	.unlocked_ioctl	= ssdfs_ioctl,
-	.mmap		= generic_file_mmap,
+	.mmap_prepare	= ssdfs_file_mmap_prepare,
 #ifdef CONFIG_SSDFS_FS_ENCRYPTION
 	.open		= ssdfs_file_open,
 #else
