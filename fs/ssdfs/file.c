@@ -4438,7 +4438,7 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct folio *first_folio = NULL;
-	fgf_t extra_fgp = (iocb->ki_flags & IOCB_DONTCACHE) ? FGP_DONTCACHE : 0;
+	fgf_t extra_fgp = 0;
 	loff_t cur_pos, next_pos;
 	loff_t start_blk, end_blk, cur_blk;
 	u32 processed_bytes = 0;
@@ -4457,11 +4457,19 @@ int ssdfs_write_begin(const struct kiocb *iocb,
 
 	/*
 	 * iocb may be NULL when called from the quota write path
-	 * (ssdfs_quota_write). In that case file is also NULL; the
-	 * downstream helpers (ssdfs_get_block_folio, ssdfs_read_block_nolock)
-	 * derive everything they need from mapping->host instead.
+	 * (ssdfs_quota_write) or from page_symlink() (ssdfs_symlink).
+	 * In that case file is also NULL; the downstream helpers
+	 * (ssdfs_get_block_folio, ssdfs_read_block_nolock) derive
+	 * everything they need from mapping->host instead.
 	 */
-	file = iocb ? iocb->ki_filp : NULL;
+	if (iocb) {
+		file = iocb->ki_filp;
+
+		if (iocb->ki_flags & IOCB_DONTCACHE)
+			extra_fgp = FGP_DONTCACHE;
+	} else {
+		file = NULL;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %llu, large_folios_support %#x\n",
