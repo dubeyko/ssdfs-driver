@@ -2727,30 +2727,38 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
 		if (err == -EAGAIN) {
 			wake_up_all(&fsi->pending_wq);
 
+			/*
+			 * Don't return here: the batch's folios
+			 * are locked and under writeback. They have
+			 * to be released below.
+			 */
 			err = ssdfs_wait_write_pool_requests_end(fsi, pool);
 			if (unlikely(err)) {
 				SSDFS_ERR("write request failed: err %d\n",
 					  err);
-				return err;
-			}
-
-			err = ssdfs_issue_sync_block_write_request(wbc,
+			} else {
+				err = ssdfs_issue_sync_block_write_request(wbc,
 								pool, batch);
+			}
 		}
 	} else if (req_type == SSDFS_EXTENT_BASED_REQUEST) {
 		err = ssdfs_issue_sync_extent_write_request(wbc, pool, batch);
 		if (err == -EAGAIN) {
 			wake_up_all(&fsi->pending_wq);
 
+			/*
+			 * Don't return here: the batch's folios
+			 * are locked and under writeback. They have
+			 * to be released below.
+			 */
 			err = ssdfs_wait_write_pool_requests_end(fsi, pool);
 			if (unlikely(err)) {
 				SSDFS_ERR("write request failed: err %d\n",
 					  err);
-				return err;
-			}
-
-			err = ssdfs_issue_sync_extent_write_request(wbc,
+			} else {
+				err = ssdfs_issue_sync_extent_write_request(wbc,
 								pool, batch);
+			}
 		}
 	} else
 		BUG();
@@ -2815,10 +2823,14 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
  * @err: error of the failed write request
  *
  * This method is used to recover from a failure to submit
- * a write request for the whole @batch (e.g. async request
+ * a write request for the @batch (e.g. async request
  * submission failed after every folio in the batch has
  * already been put under writeback and had its dirty bit
- * cleared by ssdfs_issue_write_request()). Without this
+ * cleared by ssdfs_issue_write_request()). The blocks before
+ * @batch->processed_blks belong to the submitted requests
+ * already, and the requests release their folios. A folio
+ * is not under writeback if the request preparation failed
+ * before it was processed. Without this
  * cleanup the folios would stay locked and marked under
  * writeback forever because nothing else is going to unlock
  * them or call folio_end_writeback() on their behalf, and
@@ -2832,7 +2844,7 @@ void ssdfs_discard_dirty_folios_batch(struct ssdfs_fs_info *fsi,
 {
 	int i, j;
 
-	for (i = 0; i < batch->content.count; i++) {
+	for (i = batch->processed_blks; i < batch->content.count; i++) {
 		struct ssdfs_content_block *blk_state =
 						&batch->content.blocks[i];
 		u32 batch_size = folio_batch_count(&blk_state->batch);
@@ -2862,9 +2874,40 @@ void ssdfs_discard_dirty_folios_batch(struct ssdfs_fs_info *fsi,
 			folio_clear_dirty(folio);
 
 			ssdfs_folio_unlock(folio);
-			ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
+
+			if (folio_test_writeback(folio))
+				ssdfs_folio_end_writeback(fsi, U64_MAX,
+							  0, folio);
 		}
 	}
+}
+
+/*
+ * ssdfs_discard_writeback_folio() - unlock and discard a folio
+ * @fsi: pointer on shared file system object
+ * @folio: locked folio that is not added into any batch or request
+ * @err: error of the failed write
+ *
+ * ssdfs_writepages() locks the folio and clears its dirty flag
+ * before calling ->writepage(). If the folio cannot be written
+ * and nobody else owns it, it has to be unlocked here.
+ * Otherwise, the folio stays locked forever and the next
+ * writeback or truncate of the file hangs on the folio lock.
+ */
+static
+void ssdfs_discard_writeback_folio(struct ssdfs_fs_info *fsi,
+				   struct folio *folio, int err)
+{
+	if (folio->mapping && err != -EROFS)
+		mapping_set_error(folio->mapping, err);
+
+	clear_folio_new(folio);
+	folio_clear_dirty(folio);
+
+	ssdfs_folio_unlock(folio);
+
+	if (folio_test_writeback(folio))
+		ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
 }
 
 static
@@ -2961,7 +3004,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 			if (last_folio_index == 0) {
 				err = -ERANGE;
 				SSDFS_ERR("empty block: blk_index %d\n", i);
-				goto finish_issue_write_request;
+				goto discard_batch;
 			}
 
 			folio = blk_state->batch.folios[0];
@@ -2984,7 +3027,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 					   ino, logical_offset, data_bytes, i,
 					   block_bytes, fsi->pagesize,
 					   start_index, index);
-				goto finish_issue_write_request;
+				goto discard_batch;
 			}
 
 			last_folio_index--;
@@ -3014,14 +3057,14 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 						SSDFS_ERR("empty folio: "
 							  "folio_index %lu\n",
 							  last_folio_index);
-						goto finish_issue_write_request;
+						goto discard_batch;
 					} else if (IS_ERR(folio)) {
 						err = PTR_ERR(folio);
 						SSDFS_ERR("fail to grab folio: "
 							  "folio_index %lu, err %d\n",
 							  last_folio_index,
 							  err);
-						goto finish_issue_write_request;
+						goto discard_batch;
 					}
 
 					__ssdfs_memzero_folio(folio, 0,
@@ -3048,7 +3091,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 					SSDFS_ERR("fail to get folio: "
 						  "folio_index %lu, err %d\n",
 						  last_folio_index, err);
-					goto finish_issue_write_request;
+					goto discard_batch;
 				} else {
 					if (!folio_test_locked(folio))
 						ssdfs_folio_lock(folio);
@@ -3118,6 +3161,15 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 	} else
 		BUG();
 
+	goto finish_issue_write_request;
+
+discard_batch:
+	/*
+	 * The request has not been submitted. The batch's folios
+	 * are locked, and some of them are under writeback already.
+	 */
+	ssdfs_discard_dirty_folios_batch(fsi, batch, err);
+
 finish_issue_write_request:
 	if (unlikely(err)) {
 		for (i = 0; i < batch->content.count; i++) {
@@ -3156,6 +3208,7 @@ int __ssdfs_writepages(struct folio *folio, u32 len,
 	pgoff_t start_index;
 	pgoff_t index = folio->index;
 	loff_t logical_offset;
+	bool folio_in_batch = false;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3196,7 +3249,7 @@ try_add_folio_into_request:
 					SSDFS_ERR("fail to get folio: "
 						  "folio_index %lu, err %d\n",
 						  cur_index, err);
-					goto fail_write_folios;
+					goto discard_batch;
 				}
 
 				if (!folio_test_locked(cur_folio))
@@ -3220,7 +3273,7 @@ try_add_folio_into_request:
 						  ino, index, err);
 					ssdfs_folio_unlock(cur_folio);
 					ssdfs_pagecache_folio_put(fsi, cur_folio);
-					goto fail_write_folios;
+					goto discard_batch;
 				}
 
 				/*
@@ -3253,8 +3306,10 @@ try_add_folio_into_request:
 				SSDFS_ERR("fail to add folio into batch: "
 					  "ino %llu, folio_index %lu, err %d\n",
 					  ino, index, err);
-				goto fail_write_folios;
+				goto discard_batch;
 			}
+
+			folio_in_batch = true;
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("logical_offset %llu, len %u\n",
@@ -3280,6 +3335,8 @@ try_add_folio_into_request:
 					  ino, index, err);
 				goto fail_write_folios;
 			}
+
+			folio_in_batch = true;
 
 			ssdfs_dirty_folios_batch_prepare_logical_extent(ino,
 							(u64)logical_offset,
@@ -3385,6 +3442,7 @@ try_add_folio_into_request:
 					goto try_add_folio_into_request;
 			}
 
+			folio_in_batch = true;
 			batch->requested_extent.data_bytes += len;
 		} else {
 			err = ssdfs_issue_write_request(wbc, pool, batch,
@@ -3398,7 +3456,24 @@ try_add_folio_into_request:
 
 	return 0;
 
+discard_batch:
+	/*
+	 * The previous folios of the logical block are in the batch
+	 * already, but the requested extent hasn't been prepared.
+	 * The incomplete block cannot be written. Release the folios.
+	 */
+	ssdfs_discard_dirty_folios_batch(fsi, batch, err);
+	ssdfs_dirty_folios_batch_init(batch);
+
 fail_write_folios:
+	/*
+	 * If the folio has been added into the batch, then the batch
+	 * owns the folio: a failed request releases it. Otherwise,
+	 * nobody else is going to unlock the folio.
+	 */
+	if (!folio_in_batch)
+		ssdfs_discard_writeback_folio(fsi, folio, err);
+
 	return err;
 }
 
@@ -3610,7 +3685,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 		 * So, here we simply discard this dirty page.
 		 */
 		err = -EROFS;
-		goto discard_folio;
+		goto release_folio;
 	}
 
 	/* Is the page fully outside @i_size? (truncate in progress) */
@@ -3627,7 +3702,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 			err = -ENOSPC;
 			SSDFS_ERR("len %d is greater capacity %zu\n",
 				  len, inline_capacity);
-			goto discard_folio;
+			goto release_folio;
 		}
 
 		ssdfs_folio_start_writeback(fsi, U64_MAX, 0, folio);
@@ -3640,7 +3715,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy file's content: "
 				  "err %d\n", err);
-			goto discard_folio;
+			goto release_folio;
 		}
 
 		inode_add_bytes(inode, len);
@@ -3674,7 +3749,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 			SSDFS_ERR("fail to reserve space for new block: "
 				  "ino %llu, cur_blk %llu, err %d\n",
 				  ino, (u64)cur_blk, err);
-			goto discard_folio;
+			goto release_folio;
 		}
 
 		is_new_blk = need_add_block(folio);
@@ -3766,8 +3841,20 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 
 finish_write_folio:
 	ssdfs_folio_unlock(folio);
+	return err;
+
+release_folio:
+	/*
+	 * The folio hasn't been passed to ->writepage(),
+	 * so nobody else is going to unlock it.
+	 */
+	ssdfs_discard_writeback_folio(fsi, folio, err);
 
 discard_folio:
+	/*
+	 * ->writepage() has released the folio or passed it
+	 * into the batch already.
+	 */
 	return err;
 }
 
@@ -3800,6 +3887,7 @@ int ssdfs_writepages(struct address_space *mapping,
 	int tag;
 	int i;
 	int done = 0;
+	int res;
 	int ret = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4071,9 +4159,16 @@ continue_unlock:
 		if (ret != -EAGAIN &&
 		    !is_ssdfs_file_inline(ii) &&
 		    is_ssdfs_dirty_batch_not_processed(batch)) {
-			ret = ssdfs_issue_write_request(wbc, &pool, batch,
+			/*
+			 * Keep the error of the failed folio. The batch
+			 * contains the folios before the failed one.
+			 */
+			res = ssdfs_issue_write_request(wbc, &pool, batch,
 						SSDFS_EXTENT_BASED_REQUEST);
-			if (ret < 0) {
+			if (!ret)
+				ret = res;
+
+			if (res < 0) {
 				SSDFS_ERR("ino %llu, nr_to_write %lu, "
 					  "range_start %llu, range_end %llu, "
 					  "writeback_index %llu, "
@@ -4107,6 +4202,29 @@ continue_unlock:
 		ssdfs_pagecache_folio_batch_release(fsi, &fvec);
 		cond_resched();
 	};
+
+	/*
+	 * The loop can stop in the middle of a logical block
+	 * (ret == -EAGAIN): nr_to_write is exhausted, or the rest of
+	 * the block is beyond the range's end. The block's folios
+	 * are locked in the batch. Issue the batch: the request
+	 * preparation adds the rest of the block from the page cache.
+	 * Otherwise, the folios stay locked forever.
+	 */
+	if (!is_ssdfs_file_inline(ii) &&
+	    is_ssdfs_dirty_batch_not_processed(batch)) {
+		res = ssdfs_issue_write_request(wbc, &pool, batch,
+					SSDFS_EXTENT_BASED_REQUEST);
+		if (res < 0) {
+			SSDFS_ERR("fail to issue write request: "
+				  "ino %llu, err %d\n",
+				  ino, res);
+			ret = res;
+		}
+	}
+
+	if (ret == -EAGAIN)
+		ret = 0;
 
 	if (!ret) {
 		ret = ssdfs_wait_write_pool_requests_end(fsi, &pool);
