@@ -142,6 +142,8 @@ int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
 			   struct folio *folio, u8 write_stream);
 int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 			    struct folio_batch *batch, u8 write_stream);
+int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len);
+void ssdfs_bdev_discard_check_release(struct ssdfs_fs_info *fsi);
 
 #if IS_ENABLED(CONFIG_KUNIT)
 int ssdfs_bdev_submit_bio_wait(struct bio *bio);
@@ -169,6 +171,7 @@ int ssdfs_bdev_calc_trim_range(loff_t offset, size_t len, u32 erase_size,
 #endif /* IS_ENABLED(CONFIG_KUNIT) */
 
 /* dev_zns.c */
+bool ssdfs_zns_is_sequential_zone(struct super_block *sb, loff_t offset);
 u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset);
 u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset);
 u64 ssdfs_zns_zone_write_pointer(struct super_block *sb, loff_t offset);

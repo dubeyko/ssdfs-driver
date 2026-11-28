@@ -505,6 +505,19 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_fs_info *fsi,
 
 		list_del(&req->list);
 
+		/*
+		 * The request is dropped without processing.
+		 * Exclude it from the count of requests in flight.
+		 * Otherwise, sync and unmount wait for the end of
+		 * the request forever. It has to be done before
+		 * the request is completed or freed.
+		 */
+		if (req->private.cmd == SSDFS_COMMIT_LOG_NOW) {
+			ssdfs_forget_commit_log_request(fsi,
+						req->place.start.seg_id);
+		} else
+			ssdfs_forget_user_data_flush_request(fsi, req);
+
 		if (err == -EROFS) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("delete request: "

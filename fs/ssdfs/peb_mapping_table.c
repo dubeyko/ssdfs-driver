@@ -2585,23 +2585,23 @@ int ssdfs_maptbl_set_fragment_checksum(struct folio_batch *batch)
 }
 
 /*
- * ssdfs_realloc_flush_reqs_array() - check necessity to realloc reqs array
+ * ssdfs_reserve_flush_reqs_array() - reserve flush requests for the whole pass
  * @fdesc: pointer on fragment descriptor
- *
- * This method checks the necessity to realloc the flush
- * requests array. Finally, it tries to realloc the memory
- * for the flush requests array.
+ * @needed: maximal number of requests that the pass can issue
  *
  * RETURN:
  * [success]
  * [failure] - error code:
  *
- * %-ERANGE     - internal error.
+ * %-ERANGE     - requests are in flight.
  * %-ENOMEM     - fail to allocate memory.
  */
-static inline
-int ssdfs_realloc_flush_reqs_array(struct ssdfs_maptbl_fragment_desc *fdesc)
+static
+int ssdfs_reserve_flush_reqs_array(struct ssdfs_maptbl_fragment_desc *fdesc,
+				   u32 needed)
 {
+	size_t pair_size = sizeof(struct ssdfs_maptbl_flush_pair);
+	struct ssdfs_maptbl_flush_pair *pair1, *pair2;
 	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2609,36 +2609,74 @@ int ssdfs_realloc_flush_reqs_array(struct ssdfs_maptbl_fragment_desc *fdesc)
 	BUG_ON(!rwsem_is_locked(&fdesc->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fdesc->flush_req_count > fdesc->flush_seq_size) {
-		SSDFS_ERR("request_index %u > flush_seq_size %u\n",
+	if (fdesc->flush_req_count != 0) {
+		SSDFS_ERR("requests are in flight: flush_req_count %u\n",
+			  fdesc->flush_req_count);
+		return -ERANGE;
+	}
+
+	if (needed <= fdesc->flush_seq_size)
+		return 0;
+
+	nofs_flags = memalloc_nofs_save();
+	pair1 = krealloc(fdesc->flush_pair1, needed * pair_size,
+			 GFP_KERNEL | __GFP_ZERO);
+	memalloc_nofs_restore(nofs_flags);
+
+	if (!pair1) {
+		SSDFS_ERR("fail to reallocate buffer: needed %u\n", needed);
+		return -ENOMEM;
+	}
+
+	/* the old array has been freed by krealloc() */
+	fdesc->flush_pair1 = pair1;
+
+	nofs_flags = memalloc_nofs_save();
+	pair2 = krealloc(fdesc->flush_pair2, needed * pair_size,
+			 GFP_KERNEL | __GFP_ZERO);
+	memalloc_nofs_restore(nofs_flags);
+
+	if (!pair2) {
+		/* flush_seq_size is still valid for both arrays */
+		SSDFS_ERR("fail to reallocate buffer: needed %u\n", needed);
+		return -ENOMEM;
+	}
+
+	fdesc->flush_pair2 = pair2;
+	fdesc->flush_seq_size = needed;
+
+	return 0;
+}
+
+/*
+ * ssdfs_check_flush_reqs_array() - check the capacity of reqs array
+ * @fdesc: pointer on fragment descriptor
+ *
+ * This method checks that the flush requests array has
+ * the space for one more request. The array is never reallocated
+ * here because the issued requests of the pass are in flight.
+ * The capacity has to be reserved by ssdfs_reserve_flush_reqs_array()
+ * at the beginning of the pass.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - the array is full.
+ */
+static inline
+int ssdfs_check_flush_reqs_array(struct ssdfs_maptbl_fragment_desc *fdesc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fdesc);
+	BUG_ON(!rwsem_is_locked(&fdesc->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fdesc->flush_req_count >= fdesc->flush_seq_size) {
+		SSDFS_ERR("flush requests array is full: "
+			  "flush_req_count %u, flush_seq_size %u\n",
 			  fdesc->flush_req_count, fdesc->flush_seq_size);
 		return -ERANGE;
-	} else if (fdesc->flush_req_count == fdesc->flush_seq_size) {
-		size_t pair_size = sizeof(struct ssdfs_maptbl_flush_pair);
-
-		fdesc->flush_seq_size *= 2;
-
-		nofs_flags = memalloc_nofs_save();
-		fdesc->flush_pair1 = krealloc(fdesc->flush_pair1,
-					fdesc->flush_seq_size * pair_size,
-					GFP_KERNEL);
-		memalloc_nofs_restore(nofs_flags);
-
-		if (!fdesc->flush_pair1) {
-			SSDFS_ERR("fail to reallocate buffer\n");
-			return -ENOMEM;
-		}
-
-		nofs_flags = memalloc_nofs_save();
-		fdesc->flush_pair2 = krealloc(fdesc->flush_pair2,
-					fdesc->flush_seq_size * pair_size,
-					GFP_KERNEL);
-		memalloc_nofs_restore(nofs_flags);
-
-		if (!fdesc->flush_pair2) {
-			SSDFS_ERR("fail to reallocate buffer\n");
-			return -ENOMEM;
-		}
 	}
 
 	return 0;
@@ -2717,6 +2755,18 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 
 	fdesc->flush_req_count = 0;
 
+	/* the error path releases the batch's folios */
+	folio_batch_init(&batch);
+
+	/* every request contains one dirty folio, at least */
+	err = ssdfs_reserve_flush_reqs_array(fdesc, tbl->fragment_folios);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to reserve the reqs array: "
+			  "fragment_index %u, err %d\n",
+			  fragment_index, err);
+		goto finish_fragment_update;
+	}
+
 retrive_dirty_folios:
 	folio_batch_init(&batch);
 
@@ -2782,9 +2832,9 @@ define_update_area:
 	BUG_ON(area_size == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_realloc_flush_reqs_array(fdesc);
+	err = ssdfs_check_flush_reqs_array(fdesc);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to realloc the reqs array\n");
+		SSDFS_ERR("fail to get flush request: err %d\n", err);
 		goto finish_fragment_update;
 	}
 
@@ -3489,14 +3539,25 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 
 	fdesc->flush_req_count = 0;
 
+	/* one request per SSDFS_EXTENT_LEN_MAX folios */
+	err = ssdfs_reserve_flush_reqs_array(fdesc,
+				DIV_ROUND_UP(tbl->fragment_folios,
+					     SSDFS_EXTENT_LEN_MAX));
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to reserve the reqs array: err %d\n", err);
+		return err;
+	}
+
 	do {
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(area_size == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_realloc_flush_reqs_array(fdesc);
+		err = ssdfs_check_flush_reqs_array(fdesc);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to realloc the reqs array\n");
+			SSDFS_ERR("fail to get flush request: err %d\n", err);
+			/* previous requests have been issued already */
+			pair1 = pair2 = NULL;
 			goto finish_issue_commit_request;
 		}
 
@@ -3631,9 +3692,9 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 	} while (processed_folios < tbl->fragment_folios);
 
 finish_issue_commit_request:
-	if (err) {
+	if (err && pair1) {
 		ssdfs_put_request(&pair1->req);
-		if (has_backup)
+		if (has_backup && pair2)
 			ssdfs_put_request(&pair2->req);
 	}
 
@@ -3870,14 +3931,25 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 
 	fdesc->flush_req_count = 0;
 
+	/* one request per SSDFS_EXTENT_LEN_MAX folios */
+	err = ssdfs_reserve_flush_reqs_array(fdesc,
+				DIV_ROUND_UP(tbl->fragment_folios,
+					     SSDFS_EXTENT_LEN_MAX));
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to reserve the reqs array: err %d\n", err);
+		return err;
+	}
+
 	do {
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(area_size == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_realloc_flush_reqs_array(fdesc);
+		err = ssdfs_check_flush_reqs_array(fdesc);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to realloc the reqs array\n");
+			SSDFS_ERR("fail to get flush request: err %d\n", err);
+			/* previous requests have been issued already */
+			pair1 = pair2 = NULL;
 			goto finish_issue_prepare_migration_request;
 		}
 
@@ -4018,9 +4090,9 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 	} while (processed_folios < tbl->fragment_folios);
 
 finish_issue_prepare_migration_request:
-	if (err) {
+	if (err && pair1) {
 		ssdfs_put_request(&pair1->req);
-		if (has_backup)
+		if (has_backup && pair2)
 			ssdfs_put_request(&pair2->req);
 	}
 
@@ -8819,14 +8891,16 @@ int ssdfs_maptbl_map_leb2peb(struct ssdfs_fs_info *fsi,
 
 	if (need_erase_pebs_now(fdesc)) {
 		up_write(&fdesc->lock);
+		up_read(&tbl->tbl_lock);
 
 		err = ssdfs_maptbl_erase_dirty_pebs_now(tbl);
 		if (unlikely(err)) {
-			err = 0;
 			SSDFS_ERR("fail to erase dirty PEBs: err %d\n", err);
+			err = 0;
 			/* continue logic */
 		}
 
+		down_read(&tbl->tbl_lock);
 		down_write(&fdesc->lock);
 	} else if (fdesc->pre_erase_pebs > 0)
 		wake_up_all(&fsi->maptbl->wait_queue);
@@ -10961,14 +11035,16 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 
 	if (need_erase_pebs_now(fdesc)) {
 		up_write(&fdesc->lock);
+		up_read(&tbl->tbl_lock);
 
 		err = ssdfs_maptbl_erase_dirty_pebs_now(tbl);
 		if (unlikely(err)) {
-			err = 0;
 			SSDFS_ERR("fail to erase dirty PEBs: err %d\n", err);
+			err = 0;
 			/* continue logic */
 		}
 
+		down_read(&tbl->tbl_lock);
 		down_write(&fdesc->lock);
 	} else if (fdesc->pre_erase_pebs > 0)
 		wake_up_all(&fsi->maptbl->wait_queue);

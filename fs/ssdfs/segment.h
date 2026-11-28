@@ -256,7 +256,8 @@ struct ssdfs_peb_container *SEG2PEBC(struct ssdfs_segment_info *si,
 	switch (atomic_read(&si->pebc_array.state)) {
 	case SSDFS_INLINE_PEBC_ARRAY:
 	case SSDFS_DYNAMIC_PEBC_ARRAY:
-		return si->pebc_array.ptr[peb_index];
+		/* pairs with ssdfs_peb_container_publish() */
+		return smp_load_acquire(&si->pebc_array.ptr[peb_index]);
 
 	default:
 		/* do nothing */
@@ -636,6 +637,7 @@ void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si,
 					   struct ssdfs_segment_request *req)
 {
 	u64 flush_requests = 0;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
@@ -659,6 +661,16 @@ void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si,
 		}
 
 		spin_lock(&si->fsi->volume_state_lock);
+		if (req->private.flags & SSDFS_REQ_USER_DATA_FLUSH_ACCOUNTED) {
+			err = -EEXIST;
+			goto finish_account;
+		}
+		/*
+		 * The flag marks the request as accounted. Every path
+		 * that finishes or drops the request has to forget it
+		 * by ssdfs_forget_user_data_flush_request().
+		 */
+		req->private.flags |= SSDFS_REQ_USER_DATA_FLUSH_ACCOUNTED;
 		si->fsi->flushing_user_data_requests++;
 		flush_requests = si->fsi->flushing_user_data_requests;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -667,7 +679,16 @@ void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si,
 				&si->fsi->user_data_requests_list);
 		spin_unlock(&si->fsi->requests_lock);
 #endif /* CONFIG_SSDFS_DEBUG */
+finish_account:
 		spin_unlock(&si->fsi->volume_state_lock);
+
+		if (unlikely(err)) {
+			SSDFS_WARN("request has been accounted already: "
+				   "seg_id %llu, class %#x, cmd %#x\n",
+				   si->seg_id, req->private.class,
+				   req->private.cmd);
+			return;
+		}
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg_id %llu, flush_requests %llu, "
@@ -681,55 +702,70 @@ void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si,
 	}
 }
 
+/*
+ * ssdfs_forget_user_data_flush_request() - forget user data flush request
+ * @fsi: pointer on shared file system object
+ * @req: request
+ *
+ * This method excludes the request from the count of user data
+ * flush requests in flight (and from the debug list of such requests).
+ * Only the request that has been accounted by
+ * ssdfs_account_user_data_flush_request() is excluded. As a result,
+ * the method can be called for any request and it can be called
+ * several times for the same request. It has to be called before
+ * the request is completed or freed.
+ */
 static inline
-void ssdfs_forget_user_data_flush_request(struct ssdfs_segment_info *si,
+void ssdfs_forget_user_data_flush_request(struct ssdfs_fs_info *fsi,
 					  struct ssdfs_segment_request *req)
 {
 	u64 flush_requests = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!si);
+	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
-		spin_lock(&si->fsi->volume_state_lock);
-		flush_requests = si->fsi->flushing_user_data_requests;
-		if (flush_requests > 0) {
-			si->fsi->flushing_user_data_requests--;
-			flush_requests = si->fsi->flushing_user_data_requests;
-#ifdef CONFIG_SSDFS_DEBUG
-			if (req) {
-				spin_lock(&si->fsi->requests_lock);
-				list_del(&req->user_data_requests_list);
-				spin_unlock(&si->fsi->requests_lock);
-			}
-#endif /* CONFIG_SSDFS_DEBUG */
-		} else
-			err = -ERANGE;
-		spin_unlock(&si->fsi->volume_state_lock);
+	if (!req)
+		return;
 
-		if (unlikely(err))
-			SSDFS_WARN("fail to decrement\n");
-
-#ifdef CONFIG_SSDFS_DEBUG
-		if (req == NULL) {
-			SSDFS_DBG("seg_id %llu, flush_requests %llu\n",
-				  si->seg_id, flush_requests);
-		} else {
-			SSDFS_DBG("seg_id %llu, flush_requests %llu, "
-				  "req->private.class %#x, "
-				  "req->private.cmd %#x\n",
-				  si->seg_id, flush_requests,
-				  req->private.class,
-				  req->private.cmd);
-			BUG_ON(!is_request_command_valid(req->private.class,
-							 req->private.cmd));
-		}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		wake_up_all(&si->fsi->finish_user_data_flush_wq);
+	spin_lock(&fsi->volume_state_lock);
+	if (!(req->private.flags & SSDFS_REQ_USER_DATA_FLUSH_ACCOUNTED)) {
+		spin_unlock(&fsi->volume_state_lock);
+		return;
 	}
+
+	req->private.flags &= ~SSDFS_REQ_USER_DATA_FLUSH_ACCOUNTED;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	spin_lock(&fsi->requests_lock);
+	list_del(&req->user_data_requests_list);
+	spin_unlock(&fsi->requests_lock);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	flush_requests = fsi->flushing_user_data_requests;
+	if (flush_requests > 0) {
+		fsi->flushing_user_data_requests--;
+		flush_requests = fsi->flushing_user_data_requests;
+	} else
+		err = -ERANGE;
+	spin_unlock(&fsi->volume_state_lock);
+
+	if (unlikely(err))
+		SSDFS_WARN("fail to decrement\n");
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, flush_requests %llu, "
+		  "req->private.class %#x, "
+		  "req->private.cmd %#x\n",
+		  req->place.start.seg_id, flush_requests,
+		  req->private.class,
+		  req->private.cmd);
+	BUG_ON(!is_request_command_valid(req->private.class,
+					 req->private.cmd));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	wake_up_all(&fsi->finish_user_data_flush_wq);
 }
 
 /*
@@ -891,37 +927,42 @@ void ssdfs_account_commit_log_request(struct ssdfs_segment_info *si)
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 
+/*
+ * ssdfs_forget_commit_log_request() - forget commit log request
+ * @fsi: pointer on shared file system object
+ * @seg_id: segment ID
+ */
 static inline
-void ssdfs_forget_commit_log_request(struct ssdfs_segment_info *si)
+void ssdfs_forget_commit_log_request(struct ssdfs_fs_info *fsi, u64 seg_id)
 {
 	u64 commit_log_requests = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!si);
+	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	spin_lock(&si->fsi->volume_state_lock);
-	commit_log_requests = si->fsi->commit_log_requests;
+	spin_lock(&fsi->volume_state_lock);
+	commit_log_requests = fsi->commit_log_requests;
 	if (commit_log_requests > 0) {
-		si->fsi->commit_log_requests--;
-		commit_log_requests = si->fsi->commit_log_requests;
+		fsi->commit_log_requests--;
+		commit_log_requests = fsi->commit_log_requests;
 	} else
 		err = -ERANGE;
-	spin_unlock(&si->fsi->volume_state_lock);
+	spin_unlock(&fsi->volume_state_lock);
 
 	if (unlikely(err)) {
 		SSDFS_WARN("fail to decrement: "
 			   "seg_id %llu\n",
-			   si->seg_id);
+			   seg_id);
 	}
 
 	if (commit_log_requests == 0)
-		wake_up_all(&si->fsi->finish_commit_log_flush_wq);
+		wake_up_all(&fsi->finish_commit_log_flush_wq);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, commit_log_requests %llu\n",
-		  si->seg_id, commit_log_requests);
+		  seg_id, commit_log_requests);
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 

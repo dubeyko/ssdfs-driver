@@ -644,7 +644,13 @@ static int ssdfs_find_latest_valid_sb_snap_info(struct ssdfs_fs_info *fsi)
 		return -ENOENT;
 	}
 
-	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
+	/*
+	 * Conventional zone has no write pointer.
+	 * Use the regular block device logic for such zone.
+	 */
+	if (fsi->device.type == SSDFS_ZNS_DEVICE &&
+	    ssdfs_zns_is_sequential_zone(fsi->sb,
+				(loff_t)peb * fsi->device.zns.zone_size)) {
 		err = ssdfs_zns_find_last_non_empty_page(fsi,
 							 leb, peb,
 							 log_pages,
@@ -2083,7 +2089,13 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 		return 0;
 	}
 
-	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
+	/*
+	 * Conventional zone has no write pointer.
+	 * Use the regular block device logic for such zone.
+	 */
+	if (fsi->device.type == SSDFS_ZNS_DEVICE &&
+	    ssdfs_zns_is_sequential_zone(fsi->sb,
+				(loff_t)peb * fsi->device.zns.zone_size)) {
 		err = ssdfs_zns_find_last_non_empty_page(fsi,
 							 leb, peb,
 							 log_pages,

@@ -1076,6 +1076,12 @@ static int ssdfs_rmdir(struct inode *dir, struct dentry *dentry)
 		err = ssdfs_unlink(dir, dentry);
 		if (!err) {
 			inode->i_size = 0;
+			/*
+			 * ssdfs_unlink() dropped the parent's entry;
+			 * drop the directory's own "." link too, so that
+			 * i_nlink reaches zero and evict frees the inode.
+			 */
+			inode_dec_link_count(inode);
 			inode_dec_link_count(dir);
 		}
 	}
@@ -1297,8 +1303,19 @@ static int ssdfs_rename_target(struct mnt_idmap *idmap,
 			goto finish_target_rename;
 		}
 
+		if (S_ISDIR(new_inode->i_mode)) {
+			/*
+			 * The replaced directory loses its "." link, and
+			 * new_dir loses the replaced directory's ".." link.
+			 * When old_inode moves in from another directory,
+			 * new_dir gets that link back below.
+			 */
+			drop_nlink(new_inode);
+			inode_dec_link_count(new_dir);
+		}
+
 		inode_set_ctime_to_ts(new_inode, time);
-		mark_inode_dirty(new_inode);
+		inode_dec_link_count(new_inode);
 	}
 
 	if (old_dir == new_dir) {

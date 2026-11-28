@@ -1360,6 +1360,8 @@ int ssdfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 #endif
 	u64 nsegs;
 	u32 pages_per_seg;
+	u64 used_inodes, free_inodes;
+	u16 raw_inode_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %llu\n", dentry->d_inode->i_ino);
@@ -1382,10 +1384,27 @@ int ssdfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 	buf->f_bavail = buf->f_bfree;
 
+	/*
+	 * allocated_inodes counts inodes in use and free_inodes counts
+	 * unused slots in the existing leaf nodes of the inodes b-tree
+	 * (allocated_inodes + free_inodes == inodes_capacity). The tree
+	 * grows on demand, so the free count also includes the inodes
+	 * that the remaining free space could hold, and the total is
+	 * in-use + free.
+	 */
 	spin_lock(&fsi->inodes_tree->lock);
-	buf->f_files = fsi->inodes_tree->allocated_inodes;
-	buf->f_ffree = fsi->inodes_tree->free_inodes;
+	used_inodes = fsi->inodes_tree->allocated_inodes;
+	free_inodes = fsi->inodes_tree->free_inodes;
+	raw_inode_size = fsi->inodes_tree->raw_inode_size;
 	spin_unlock(&fsi->inodes_tree->lock);
+
+	if (raw_inode_size > 0) {
+		free_inodes += div_u64(buf->f_bfree * sb->s_blocksize,
+					raw_inode_size);
+	}
+
+	buf->f_files = used_inodes + free_inodes;
+	buf->f_ffree = free_inodes;
 
 	buf->f_namelen = SSDFS_MAX_NAME_LEN;
 

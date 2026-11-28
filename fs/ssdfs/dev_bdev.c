@@ -1010,8 +1010,142 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_write_blocks);
  */
 static inline bool ssdfs_bdev_support_discard(struct block_device *bdev)
 {
-	return bdev_max_discard_sectors(bdev) ||
-		bdev_is_zoned(bdev);
+	return bdev_max_discard_sectors(bdev) > 0;
+}
+
+/*
+ * Whether discarded ranges read back as erased is a property of the
+ * device. But reading a block back as erased proves something only
+ * if the block contained data before the discard: a device that
+ * ignores discard leaves an unused block erased too. A log always
+ * begins at the first block of a PEB, so the first block of a used
+ * PEB isn't erased.
+ *
+ * Every discard is followed by a check of the PEB's first block.
+ * Discard becomes trusted when it has erased a first block that
+ * contained data. Any failed check stops trusting discard for the
+ * rest of the mount, and every later erase zero-fills.
+ */
+enum {
+	SSDFS_DISCARD_UNVERIFIED,	/* fsi is zeroed: initial state */
+	SSDFS_DISCARD_TRUSTED,
+	SSDFS_DISCARD_UNTRUSTED,
+};
+
+/*
+ * State of a block before discard. Only a block that contained data
+ * and reads as erased after discard proves that discard works.
+ */
+enum ssdfs_bdev_block_state {
+	SSDFS_BLOCK_STATE_UNKNOWN,	/* not checked or unreadable */
+	SSDFS_BLOCK_STATE_ERASED,
+	SSDFS_BLOCK_STATE_HAS_DATA,
+};
+
+/*
+ * ssdfs_bdev_discard_check_folio() - get the folio for discard checks
+ * @fsi: file system info object
+ *
+ * The folio is allocated on the first use, because fsi->pagesize
+ * isn't known before the superblock has been read. It is freed by
+ * ssdfs_bdev_discard_check_release() at unmount.
+ *
+ * The caller has to hold fsi->discard_check_lock.
+ */
+static struct folio *ssdfs_bdev_discard_check_folio(struct ssdfs_fs_info *fsi)
+{
+	struct folio *folio = fsi->discard_check_folio;
+
+	lockdep_assert_held(&fsi->discard_check_lock);
+
+	if (folio)
+		return folio;
+
+	folio = ssdfs_dev_bdev_alloc_folio(GFP_NOFS, get_order(fsi->pagesize));
+	if (IS_ERR_OR_NULL(folio)) {
+		SSDFS_ERR("unable to allocate folio for discard checks\n");
+		return NULL;
+	}
+
+	fsi->discard_check_folio = folio;
+	return folio;
+}
+
+/*
+ * ssdfs_bdev_discard_check_release() - free the folio for discard checks
+ * @fsi: file system info object
+ */
+void ssdfs_bdev_discard_check_release(struct ssdfs_fs_info *fsi)
+{
+	if (fsi->discard_check_folio) {
+		ssdfs_dev_bdev_free_folio(fsi->discard_check_folio);
+		fsi->discard_check_folio = NULL;
+	}
+}
+
+/*
+ * ssdfs_bdev_is_block_erased() - check that block reads as erased
+ * @sb: superblock object
+ * @folio: folio of fsi->pagesize bytes to read the block into
+ * @offset: offset in bytes from partition's begin
+ * @is_erased: is block uniformly 0x00 or uniformly 0xFF? [out]
+ */
+static int ssdfs_bdev_is_block_erased(struct super_block *sb,
+				      struct folio *folio, loff_t offset,
+				      bool *is_erased)
+{
+	u32 block_size = SSDFS_FS_I(sb)->pagesize;
+	bool all_zeros = true, all_ones = true;
+	u32 processed;
+	void *kaddr;
+	int err;
+
+	ssdfs_folio_lock(folio);
+	/* ssdfs_bdev_read_block() unlocks the folio */
+	err = ssdfs_bdev_read_block(sb, folio, offset);
+	if (err)
+		return err;
+
+	for (processed = 0; processed < block_size; processed += PAGE_SIZE) {
+		kaddr = kmap_local_folio(folio, processed);
+		all_zeros = all_zeros && !memchr_inv(kaddr, 0x00, PAGE_SIZE);
+		all_ones = all_ones && !memchr_inv(kaddr, 0xff, PAGE_SIZE);
+		kunmap_local(kaddr);
+	}
+
+	*is_erased = all_zeros || all_ones;
+	return 0;
+}
+
+/*
+ * ssdfs_bdev_get_block_state() - check whether block reads as erased
+ * @sb: superblock object
+ * @offset: offset in bytes from partition's begin
+ *
+ * RETURN:
+ * %SSDFS_BLOCK_STATE_ERASED   - the block reads as erased.
+ * %SSDFS_BLOCK_STATE_HAS_DATA - the block contains data.
+ * %SSDFS_BLOCK_STATE_UNKNOWN  - the block couldn't be read.
+ */
+static enum ssdfs_bdev_block_state
+ssdfs_bdev_get_block_state(struct super_block *sb, loff_t offset)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	struct folio *folio;
+	bool is_erased = true;
+	int err = -ENOMEM;
+
+	mutex_lock(&fsi->discard_check_lock);
+	folio = ssdfs_bdev_discard_check_folio(fsi);
+	if (folio)
+		err = ssdfs_bdev_is_block_erased(sb, folio, offset, &is_erased);
+	mutex_unlock(&fsi->discard_check_lock);
+
+	if (err)
+		return SSDFS_BLOCK_STATE_UNKNOWN;
+
+	return is_erased ? SSDFS_BLOCK_STATE_ERASED :
+			   SSDFS_BLOCK_STATE_HAS_DATA;
 }
 
 /*
@@ -1068,6 +1202,97 @@ int ssdfs_bdev_calc_trim_range(loff_t offset, size_t len, u32 erase_size,
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_calc_trim_range);
 
 /*
+ * ssdfs_bdev_stop_trusting_discard() - zero-fill every later erase
+ * @sb: superblock object
+ * @reason: why discard can't be used, for the message
+ * @err: error code of the failed discard (0 if it didn't fail)
+ *
+ * A device whose discard doesn't erase is a property of the device,
+ * not an error, so only log it once, when the state changes.
+ */
+static void ssdfs_bdev_stop_trusting_discard(struct super_block *sb,
+					     const char *reason, int err)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+
+	if (atomic_xchg(&fsi->discard_state, SSDFS_DISCARD_UNTRUSTED) !=
+						SSDFS_DISCARD_UNTRUSTED) {
+		if (err) {
+			SSDFS_INFO("device %s: %s (err %d): "
+				   "zero-fill erased PEBs\n",
+				   sb->s_id, reason, err);
+		} else {
+			SSDFS_INFO("device %s: %s: zero-fill erased PEBs\n",
+				   sb->s_id, reason);
+		}
+	}
+}
+
+/*
+ * ssdfs_bdev_discard_fits_erase_size() - can discard erase whole PEBs?
+ * @sb: superblock object
+ *
+ * A device erases only whole discard granules, and it can silently
+ * ignore the rest of a discarded range. If a PEB isn't made of whole
+ * granules, then a part of it can stay unerased. Checking the PEB's
+ * first block doesn't catch that, so don't use discard at all then.
+ */
+static bool ssdfs_bdev_discard_fits_erase_size(struct super_block *sb)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	unsigned int granularity = bdev_discard_granularity(sb->s_bdev);
+	unsigned int alignment = bdev_discard_alignment(sb->s_bdev);
+
+	if (granularity == 0)
+		return true;
+
+	if (fsi->erasesize % granularity == 0 &&
+	    alignment % granularity == 0)
+		return true;
+
+	SSDFS_INFO("device %s: discard granularity %u (alignment %u) "
+		   "doesn't fit erase size %u\n",
+		   sb->s_id, granularity, alignment, fsi->erasesize);
+	return false;
+}
+
+/*
+ * ssdfs_bdev_discard_is_reliable() - decide whether a discard was enough
+ * @sb: superblock object
+ * @offset: offset of the discarded PEB in bytes from partition's begin
+ * @prev_state: state of the PEB's first block before discard
+ *
+ * RETURN:
+ * [true]  - the discarded PEB can be treated as erased.
+ * [false] - the PEB has to be zero-filled.
+ */
+static bool
+ssdfs_bdev_discard_is_reliable(struct super_block *sb, loff_t offset,
+			       enum ssdfs_bdev_block_state prev_state)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+
+	switch (ssdfs_bdev_get_block_state(sb, offset)) {
+	case SSDFS_BLOCK_STATE_ERASED:
+		if (prev_state == SSDFS_BLOCK_STATE_HAS_DATA) {
+			atomic_cmpxchg(&fsi->discard_state,
+					SSDFS_DISCARD_UNVERIFIED,
+					SSDFS_DISCARD_TRUSTED);
+		}
+		return true;
+
+	case SSDFS_BLOCK_STATE_HAS_DATA:
+		ssdfs_bdev_stop_trusting_discard(sb,
+				"discarded block doesn't read as erased", 0);
+		return false;
+
+	default:
+		/* can't check: zero-fill this PEB only */
+		return false;
+	}
+}
+
+/*
  * ssdfs_bdev_trim() - initiate background erase operation
  * @sb: superblock object
  * @offset: offset in bytes from partition's begin
@@ -1082,7 +1307,7 @@ EXPORT_SYMBOL_IF_KUNIT(ssdfs_bdev_calc_trim_range);
  * %-EROFS       - file system in RO mode.
  * %-EFAULT      - erase operation error.
  */
-static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
+int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	u32 erase_size = fsi->erasesize;
@@ -1111,18 +1336,49 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 	if (unlikely(err))
 		return err;
 
-	if (ssdfs_bdev_support_discard(sb->s_bdev)) {
-		err = blkdev_issue_secure_erase(sb->s_bdev,
-						start_sector, sectors_count,
-						GFP_NOFS);
-		if (err)
-			goto try_zeroout;
-	} else {
-try_zeroout:
-		err = blkdev_issue_zeroout(sb->s_bdev,
+	/*
+	 * Prefer a plain discard (TRIM): it is fast and doesn't wear
+	 * the flash. What a discarded range reads back as is device
+	 * specific, so verify it and fall back to zero-filling when
+	 * it doesn't read as erased (or discard isn't supported).
+	 */
+	if (ssdfs_bdev_support_discard(sb->s_bdev) &&
+	    atomic_read(&fsi->discard_state) != SSDFS_DISCARD_UNTRUSTED) {
+		enum ssdfs_bdev_block_state prev_state =
+						SSDFS_BLOCK_STATE_UNKNOWN;
+
+		if (atomic_read(&fsi->discard_state) ==
+						SSDFS_DISCARD_UNVERIFIED) {
+			if (!ssdfs_bdev_discard_fits_erase_size(sb)) {
+				ssdfs_bdev_stop_trusting_discard(sb,
+					"discard can't erase whole PEBs", 0);
+				goto zero_fill;
+			}
+
+			prev_state = ssdfs_bdev_get_block_state(sb, offset);
+		}
+
+		err = blkdev_issue_discard(sb->s_bdev,
 					   start_sector, sectors_count,
-					   GFP_NOFS, 0);
+					   GFP_NOFS);
+		if (err) {
+			ssdfs_bdev_stop_trusting_discard(sb, "discard failed",
+							 err);
+		} else if (ssdfs_bdev_discard_is_reliable(sb, offset,
+							  prev_state))
+			return 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("discard isn't enough, zero-fill: "
+			  "start_sector %llu, sectors_count %llu, err %d\n",
+			  start_sector, sectors_count, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
+
+zero_fill:
+	err = blkdev_issue_zeroout(sb->s_bdev,
+				   start_sector, sectors_count,
+				   GFP_NOFS, 0);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to discard: "

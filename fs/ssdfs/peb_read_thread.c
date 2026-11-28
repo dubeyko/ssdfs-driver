@@ -6454,7 +6454,13 @@ int ssdfs_peb_read_all_log_headers(struct ssdfs_peb_info *pebi,
 
 	fsi = pebi->pebc->parent_si->fsi;
 
-	if (fsi->device.type == SSDFS_ZNS_DEVICE) {
+	/*
+	 * Conventional zone has no write pointer.
+	 * Use the regular block device logic for such zone.
+	 */
+	if (fsi->device.type == SSDFS_ZNS_DEVICE &&
+	    ssdfs_zns_is_sequential_zone(fsi->sb,
+			(loff_t)pebi->peb_id * fsi->erasesize)) {
 		err = ssdfs_zone_pre_fetch_last_full_log(fsi, pebi, req);
 		if (err == -ENODATA)
 			return 0;

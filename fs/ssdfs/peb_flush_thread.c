@@ -1330,21 +1330,27 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (log->free_data_blocks < log->reserved_blocks) {
-		u32 page_size = si->fsi->pagesize;
 		u32 prev_log_metapages = 0;
 
 		log->free_data_blocks = free_data_blocks;
 
-		prev_log_metapages = log->prev_log.bmap_bytes +
-					log->prev_log.blk2off_bytes +
-					log->prev_log.blk_desc_bytes;
-		prev_log_metapages += page_size - 1;
-		prev_log_metapages /= page_size;
+		/*
+		 * The rest of PEB cannot keep the log of full size.
+		 * Estimate the metadata of the log by the previous one.
+		 * The estimation has to include the partial log header,
+		 * the potential growth of block bitmap, and the log
+		 * footer. Otherwise, the data blocks of the log
+		 * can be accepted beyond the PEB's end.
+		 */
+		prev_log_metapages = ssdfs_peb_prev_log_metadata_pages(pebi);
 
 		if (prev_log_metapages >= log->free_data_blocks) {
+			/* the rest of PEB cannot keep a log: PEB is full */
 			err = -ENOSPC;
-			SSDFS_ERR("free_data_blocks %u < reserved_blocks %u\n",
-				  log->free_data_blocks, log->reserved_blocks);
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("free_data_blocks %u <= metadata blocks %u\n",
+				  log->free_data_blocks, prev_log_metapages);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_log_create;
 		} else {
 			log->reserved_blocks = prev_log_metapages;
@@ -17966,7 +17972,8 @@ void ssdfs_finish_pre_allocate_request(struct ssdfs_peb_container *pebc,
 		thread_state->unfinished_reqs--;
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else {
-		ssdfs_forget_user_data_flush_request(pebc->parent_si, req);
+		ssdfs_forget_user_data_flush_request(pebc->parent_si->fsi,
+						     req);
 		__ssdfs_finish_request(pebc, req, wait, err);
 	}
 }
@@ -18036,7 +18043,8 @@ void ssdfs_finish_create_request(struct ssdfs_peb_container *pebc,
 		thread_state->unfinished_reqs--;
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else {
-		ssdfs_forget_user_data_flush_request(pebc->parent_si, req);
+		ssdfs_forget_user_data_flush_request(pebc->parent_si->fsi,
+						     req);
 		__ssdfs_finish_request(pebc, req, wait, err);
 	}
 }
@@ -18073,11 +18081,13 @@ void ssdfs_finish_update_request(struct ssdfs_peb_container *pebc,
 
 	switch (req->private.cmd) {
 	case SSDFS_COMMIT_LOG_NOW:
-		ssdfs_forget_commit_log_request(pebc->parent_si);
+		ssdfs_forget_commit_log_request(pebc->parent_si->fsi,
+						pebc->parent_si->seg_id);
 		break;
 
 	default:
-		ssdfs_forget_user_data_flush_request(pebc->parent_si, req);
+		ssdfs_forget_user_data_flush_request(pebc->parent_si->fsi,
+						     req);
 		break;
 	};
 
@@ -20841,7 +20851,7 @@ finish_method:
 	/*
 	 * Forget accounted in ssdfs_execute_create_request_state()
 	 */
-	ssdfs_forget_commit_log_request(si);
+	ssdfs_forget_commit_log_request(si->fsi, si->seg_id);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	FORGET_CODE_LINE(pebc);
@@ -21556,7 +21566,7 @@ finish_method:
 	/*
 	 * Forget accounted in ssdfs_execute_update_request_state()
 	 */
-	ssdfs_forget_commit_log_request(si);
+	ssdfs_forget_commit_log_request(si->fsi, si->seg_id);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	FORGET_CODE_LINE(pebc);
@@ -21808,7 +21818,7 @@ finish_method:
 	/*
 	 * Forget accounted in ssdfs_execute_update_request_state()
 	 */
-	ssdfs_forget_commit_log_request(si);
+	ssdfs_forget_commit_log_request(si->fsi, si->seg_id);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	FORGET_CODE_LINE(pebc);

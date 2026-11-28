@@ -121,6 +121,25 @@ static int ssdfs_report_zone(struct blk_zone *zone,
 }
 
 /*
+ * ssdfs_zns_is_sequential_zone() - check that zone requires sequential write
+ * @sb: superblock object
+ * @offset: offset in bytes from partition's begin
+ *
+ * A zoned device can contain conventional zones (for example,
+ * SMR HDD keeps some number of conventional zones at the beginning
+ * of the device). Conventional zone has no write pointer and it can be
+ * written randomly. Such zone cannot be opened, closed, or reset and
+ * it doesn't support the zone append operation. The regular block device
+ * logic is used for conventional zones and the ZNS logic is used for
+ * sequential zones. The check uses the zones' state of the block layer
+ * and it doesn't issue any I/O.
+ */
+bool ssdfs_zns_is_sequential_zone(struct super_block *sb, loff_t offset)
+{
+	return bdev_zone_is_seq(sb->s_bdev, offset >> SECTOR_SHIFT);
+}
+
+/*
  * ssdfs_zns_track_zone_open() - account for a newly opened zone
  * @open_zones: pointer on the counter of currently opened zones
  * @max_open_zones: open zones limitation (upper bound)
@@ -169,6 +188,11 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 		  atomic_read(&fsi->device.zns.open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (!ssdfs_zns_is_sequential_zone(sb, offset)) {
+		/* conventional zone doesn't consume open zones resource */
+		return 0;
+	}
+
 	nofs_flags = memalloc_nofs_save();
 	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_OPEN,
 				zone_sector, zone_size);
@@ -214,6 +238,11 @@ static int ssdfs_zns_reopen_zone(struct super_block *sb, loff_t offset)
 	SSDFS_DBG("sb %p, offset %llu\n",
 		  sb, (unsigned long long)offset);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!ssdfs_zns_is_sequential_zone(sb, offset)) {
+		/* conventional zone is always writable */
+		return 0;
+	}
 
 	err = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
 				  ssdfs_report_zone, &zone);
@@ -355,12 +384,17 @@ static int ssdfs_zns_close_zone(struct super_block *sb, loff_t offset)
 		  sb, (unsigned long long)offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (!ssdfs_zns_is_sequential_zone(sb, offset)) {
+		/* conventional zone hasn't been opened */
+		return 0;
+	}
+
 	nofs_flags = memalloc_nofs_save();
 	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_FINISH,
 				zone_sector, zone_size);
 	memalloc_nofs_restore(nofs_flags);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to open zone: "
+		SSDFS_ERR("fail to finish zone: "
 			  "zone_sector %llu, zone_size %llu, err %d\n",
 			  zone_sector, zone_size, err);
 		return err;
@@ -529,6 +563,7 @@ int ssdfs_zns_sync_folio_request(struct super_block *sb,
 				 unsigned int op, int op_flags)
 {
 	struct bio *bio;
+	sector_t sector;
 #ifdef CONFIG_SSDFS_DEBUG
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	struct blk_zone zone;
@@ -540,7 +575,14 @@ int ssdfs_zns_sync_folio_request(struct super_block *sb,
 				   sb, folio, zone_start, offset,
 				   op, op_flags);
 
-	op |= REQ_OP_ZONE_APPEND | REQ_IDLE;
+	if (ssdfs_zns_is_sequential_zone(sb, offset)) {
+		op = REQ_OP_ZONE_APPEND | REQ_IDLE;
+		sector = zone_start;
+	} else {
+		/* conventional zone: regular write on requested offset */
+		op |= REQ_IDLE;
+		sector = offset >> SECTOR_SHIFT;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -575,7 +617,7 @@ int ssdfs_zns_sync_folio_request(struct super_block *sb,
 		return err;
 	}
 
-	bio->bi_iter.bi_sector = zone_start;
+	bio->bi_iter.bi_sector = sector;
 	bio_set_dev(bio, sb->s_bdev);
 	bio->bi_opf = op | op_flags;
 
@@ -626,6 +668,7 @@ int ssdfs_zns_sync_batch_request(struct super_block *sb,
 				 unsigned int op, int op_flags)
 {
 	struct bio *bio;
+	sector_t sector;
 	int i;
 #ifdef CONFIG_SSDFS_DEBUG
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
@@ -638,7 +681,14 @@ int ssdfs_zns_sync_batch_request(struct super_block *sb,
 				   sb, batch, zone_start, offset,
 				   op, op_flags);
 
-	op |= REQ_OP_ZONE_APPEND | REQ_IDLE;
+	if (ssdfs_zns_is_sequential_zone(sb, offset)) {
+		op = REQ_OP_ZONE_APPEND | REQ_IDLE;
+		sector = zone_start;
+	} else {
+		/* conventional zone: regular write on requested offset */
+		op |= REQ_IDLE;
+		sector = offset >> SECTOR_SHIFT;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!batch);
@@ -679,7 +729,7 @@ int ssdfs_zns_sync_batch_request(struct super_block *sb,
 		return err;
 	}
 
-	bio->bi_iter.bi_sector = zone_start;
+	bio->bi_iter.bi_sector = sector;
 	bio_set_dev(bio, sb->s_bdev);
 	bio->bi_opf = op | op_flags;
 
@@ -1363,6 +1413,7 @@ static int ssdfs_zns_trim(struct super_block *sb, loff_t offset, size_t len)
 	u32 erase_size = fsi->erasesize;
 	sector_t start_sector;
 	sector_t sectors_count;
+	loff_t cur;
 #ifdef CONFIG_SSDFS_DEBUG
 	u32 remainder;
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1382,20 +1433,35 @@ static int ssdfs_zns_trim(struct super_block *sb, loff_t offset, size_t len)
 	if (sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
-	err = ssdfs_zns_calc_trim_range(offset, len, erase_size,
-					&start_sector, &sectors_count);
-	if (unlikely(err))
-		return err;
+	for (cur = offset; cur < (offset + len); cur += erase_size) {
+		if (!ssdfs_zns_is_sequential_zone(sb, cur)) {
+			/* conventional zone: regular block device logic */
+			err = ssdfs_bdev_trim(sb, cur, erase_size);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to erase conventional zone: "
+					  "offset %llu, err %d\n",
+					  (unsigned long long)cur, err);
+				return err;
+			}
 
-	nofs_flags = memalloc_nofs_save();
-	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_RESET,
-				start_sector, sectors_count);
-	memalloc_nofs_restore(nofs_flags);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to reset zone: "
-			  "zone_sector %llu, zone_size %llu, err %d\n",
-			  start_sector, sectors_count, err);
-		return err;
+			continue;
+		}
+
+		err = ssdfs_zns_calc_trim_range(cur, erase_size, erase_size,
+						&start_sector, &sectors_count);
+		if (unlikely(err))
+			return err;
+
+		nofs_flags = memalloc_nofs_save();
+		err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_RESET,
+					start_sector, sectors_count);
+		memalloc_nofs_restore(nofs_flags);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to reset zone: "
+				  "zone_sector %llu, zone_size %llu, err %d\n",
+				  start_sector, sectors_count, err);
+			return err;
+		}
 	}
 
 	return 0;

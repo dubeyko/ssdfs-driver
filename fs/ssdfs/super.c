@@ -245,16 +245,29 @@ void ssdfs_destroy_and_decrement_btree_of_inode(struct inode *inode)
 		BUG();
 }
 
-static void ssdfs_i_callback(struct rcu_head *head)
+/*
+ * This method is called by destroy_inode() in process context.
+ * The inode's b-trees are torn down here rather than in the RCU
+ * callback: b-tree destruction takes locks and may sleep, and must
+ * not run in softirq context. RCU-walk lookups never touch these
+ * trees, so they can go before the grace period ends.
+ */
+static void ssdfs_destroy_inode(struct inode *inode)
 {
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	struct ssdfs_inode_info *ii = SSDFS_I(inode);
-
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %llu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_destroy_btree_of_inode(inode);
+}
+
+/*
+ * This method is called after an RCU grace period to free
+ * the memory of struct inode
+ */
+static void ssdfs_free_inode(struct inode *inode)
+{
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 
 	if (inode->i_ino == SSDFS_SEG_BMAP_INO ||
 	    inode->i_ino == SSDFS_SEG_TREE_INO ||
@@ -268,15 +281,6 @@ static void ssdfs_i_callback(struct rcu_head *head)
 	}
 
 	kmem_cache_free(ssdfs_inode_cachep, ii);
-}
-
-/*
- * This method is called by destroy_inode() to release
- * resources allocated for struct inode
- */
-static void ssdfs_destroy_inode(struct inode *inode)
-{
-	call_rcu(&inode->i_rcu, ssdfs_i_callback);
 }
 
 static void ssdfs_init_inode_once(void *obj)
@@ -485,7 +489,7 @@ void ssdfs_show_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
 			struct ssdfs_segment_request *req;
 
 			req = list_entry(this, struct ssdfs_segment_request,
-					 list);
+					 user_data_requests_list);
 
 			if (!req) {
 				SSDFS_ERR_DBG("empty request ptr\n");
@@ -812,6 +816,7 @@ static const struct export_operations ssdfs_export_ops = {
 static const struct super_operations ssdfs_super_operations = {
 	.alloc_inode	= ssdfs_alloc_inode,
 	.destroy_inode	= ssdfs_destroy_inode,
+	.free_inode	= ssdfs_free_inode,
 	.evict_inode	= ssdfs_evict_inode,
 	.write_inode	= ssdfs_write_inode,
 	.statfs		= ssdfs_statfs,
@@ -2420,7 +2425,34 @@ int ssdfs_write_payload_folios(struct super_block *sb,
 		BUG_ON(!payload_folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		/* ->writepage() calls put_folio() */
+		if (*sb_offset >= (peb_offset + fsi->erasesize)) {
+			SSDFS_ERR("invalid offset: "
+				  "offset %llu, peb_offset %llu, erasesize %u\n",
+				  *sb_offset, peb_offset, fsi->erasesize);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#else
+			return -ERANGE;
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+
+		if (fsi->devops->can_write_block) {
+			err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+							   *sb_offset, true);
+			if (err) {
+				SSDFS_ERR("page already contain data: "
+					  "sb_offset %llu, err %d\n",
+					  (u64)*sb_offset, err);
+				return err;
+			}
+		}
+
+		/*
+		 * Take the reference and mark the folio dirty only
+		 * after the checks: an early return must leave the folio
+		 * as ssdfs_folio_vector_release() expects it.
+		 * ->writepage() calls put_folio().
+		 */
 		ssdfs_folio_get(payload_folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2443,28 +2475,6 @@ int ssdfs_write_payload_folios(struct super_block *sb,
 		folio_mark_uptodate(payload_folio);
 		folio_set_dirty(payload_folio);
 		ssdfs_folio_unlock(payload_folio);
-
-		if (*sb_offset >= (peb_offset + fsi->erasesize)) {
-			SSDFS_ERR("invalid offset: "
-				  "offset %llu, peb_offset %llu, erasesize %u\n",
-				  *sb_offset, peb_offset, fsi->erasesize);
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG();
-#else
-			return -ERANGE;
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
-
-		if (fsi->devops->can_write_block) {
-			err = fsi->devops->can_write_block(sb, PAGE_SIZE,
-							   *sb_offset, true);
-			if (err) {
-				SSDFS_ERR("page already contain data: "
-					  "sb_offset %llu, err %d\n",
-					  (u64)*sb_offset, err);
-				return err;
-			}
-		}
 
 		seg_type = SSDFS_SB_SEG_TYPE;
 		err = fsi->devops->write_block(sb, *sb_offset, payload_folio,
@@ -3601,6 +3611,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 #endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
 	mutex_init(&fs_info->tunefs_request.lock);
+	mutex_init(&fs_info->discard_check_lock);
 	fs_info->tunefs_request.state = SSDFS_IGNORE_OPTION;
 	memset(&fs_info->tunefs_request.new_config, 0,
 		sizeof(struct ssdfs_tunefs_config_request));
@@ -4116,6 +4127,10 @@ out_free:
 	ssdfs_destruct_sb_info(&fs_info->sbi);
 	ssdfs_destruct_sb_info(&fs_info->sbi_backup);
 	ssdfs_destruct_sb_snap_info(&fs_info->sb_snapi);
+
+#ifdef CONFIG_SSDFS_BLOCK_DEVICE
+	ssdfs_bdev_discard_check_release(fs_info);
+#endif /* CONFIG_SSDFS_BLOCK_DEVICE */
 
 	ssdfs_free_workspaces();
 
@@ -4794,6 +4809,10 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_destruct_sb_info(&fsi->sbi);
 	ssdfs_destruct_sb_info(&fsi->sbi_backup);
 	ssdfs_destruct_sb_snap_info(&fsi->sb_snapi);
+
+#ifdef CONFIG_SSDFS_BLOCK_DEVICE
+	ssdfs_bdev_discard_check_release(fsi);
+#endif /* CONFIG_SSDFS_BLOCK_DEVICE */
 
 	ssdfs_free_workspaces();
 

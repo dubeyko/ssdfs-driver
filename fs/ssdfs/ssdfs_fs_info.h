@@ -589,6 +589,9 @@ struct ssdfs_btree_nodes_list {
  * @mtd: MTD info
  * @devops: device access operations
  * @pending_bios: count of pending BIOs (dev_bdev.c ONLY)
+ * @discard_state: whether discarded ranges read back as erased
+ * @discard_check_lock: protects @discard_check_folio
+ * @discard_check_folio: buffer for reading back discarded blocks
  * @device: device features
  * @fsck_priority: define priority of FSCK operations
  * @tunefs_request: tunefs request copy
@@ -718,6 +721,9 @@ struct ssdfs_fs_info {
 	struct mtd_info *mtd;
 	const struct ssdfs_device_ops *devops;
 	atomic_t pending_bios;			/* for dev_bdev.c */
+	atomic_t discard_state;			/* for dev_bdev.c */
+	struct mutex discard_check_lock;	/* for dev_bdev.c */
+	struct folio *discard_check_folio;	/* for dev_bdev.c */
 
 	struct ssdfs_device_features device;
 

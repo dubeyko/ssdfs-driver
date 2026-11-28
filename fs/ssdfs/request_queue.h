@@ -125,7 +125,8 @@ enum {
 #define SSDFS_REQ_READ_ONLY_CACHE			(1 << 1)
 #define SSDFS_REQ_PREPARE_DIFF				(1 << 2)
 #define SSDFS_REQ_PAGECACHE_FOLIOS			(1 << 3)
-#define SSDFS_REQ_FLAGS_MASK				0xF
+#define SSDFS_REQ_USER_DATA_FLUSH_ACCOUNTED		(1 << 4)
+#define SSDFS_REQ_FLAGS_MASK				0x1F
 
 /*
  * Result states

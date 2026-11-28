@@ -263,6 +263,11 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		u64 start_peb;
 		u16 pebs_count;
 
+		if (array->size >= array->capacity) {
+			/* array is full */
+			break;
+		}
+
 		folio = ssdfs_folio_array_get_folio_locked(&fdesc->array,
 							    folio_index);
 		if (IS_ERR_OR_NULL(folio)) {
@@ -345,9 +350,16 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 				continue;
 			}
 
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(array->size >= array->capacity);
-#endif /* CONFIG_SSDFS_DEBUG */
+			/*
+			 * Every stripe can contribute at least one PEB.
+			 * The count of stripes can be bigger than the array's
+			 * capacity (for example, one fragment for the whole
+			 * volume with big zones). The rest of dirty PEBs
+			 * will be collected later. The check has to be done
+			 * before the PEB is marked as under erase.
+			 */
+			if (array->size >= array->capacity)
+				goto finish_folio_processing;
 
 			ptr->state = SSDFS_MAPTBL_UNDER_ERASE_STATE;
 
@@ -473,6 +485,11 @@ int ssdfs_maptbl_collect_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	for (i = 0; i < stripes_per_fragment; i++) {
+		if (array->size >= array->capacity) {
+			/* array is full: the rest will be collected later */
+			break;
+		}
+
 		err = ssdfs_maptbl_collect_stripe_dirty_pebs(tbl, fdesc,
 							     fragment_index,
 							     i,
@@ -565,6 +582,20 @@ int ssdfs_maptbl_erase_peb(struct ssdfs_fs_info *fsi,
 	return 0;
 }
 
+static inline
+bool should_maptbl_thread_postpone_erase(struct ssdfs_fs_info *fsi)
+{
+	/*
+	 * kthread_should_stop() can be called by the mapping
+	 * table's thread only. The dirty PEBs can be erased
+	 * by other threads too (ssdfs_maptbl_erase_dirty_pebs_now()).
+	 */
+	if (!fsi->maptbl || current != fsi->maptbl->thread.task)
+		return false;
+
+	return kthread_should_stop();
+}
+
 /*
  * ssdfs_maptbl_erase_pebs_array() - erase PEBs
  * @fsi: file system info object
@@ -599,6 +630,19 @@ int ssdfs_maptbl_erase_pebs_array(struct ssdfs_fs_info *fsi,
 		return 0;
 
 	for (i = 0; i < array->size; i++) {
+		if (should_maptbl_thread_postpone_erase(fsi)) {
+			/*
+			 * Unmount is waiting for the thread's end.
+			 * Erase of PEB can take a long time (for example,
+			 * zeroing of conventional zone of SMR HDD).
+			 * The rest of PEBs will be erased after
+			 * the next mount.
+			 */
+			for (; i < array->size; i++)
+				array->ptr[i].state = SSDFS_ERASE_POSTPONED;
+			break;
+		}
+
 		err = ssdfs_maptbl_erase_peb(fsi, &array->ptr[i]);
 		if (unlikely(err)) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -686,6 +730,12 @@ int __ssdfs_maptbl_correct_peb_state(struct ssdfs_peb_mapping_table *tbl,
 			  "peb_id %llu, peb_index %u, state %#x\n",
 			  res->peb_id, res->peb_index, ptr->state);
 		return -ERANGE;
+	}
+
+	if (res->state == SSDFS_ERASE_POSTPONED) {
+		/* PEB will be erased later */
+		ptr->state = SSDFS_MAPTBL_PRE_ERASE_STATE;
+		return 0;
 	}
 
 	le32_add_cpu(&ptr->erase_cycles, 1);
@@ -955,8 +1005,16 @@ ssdfs_maptbl_correct_fragment_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_fragment_correction;
 		}
 
-		if (array->ptr[*item_index].state != SSDFS_IGNORE_ERASE)
+		switch (array->ptr[*item_index].state) {
+		case SSDFS_IGNORE_ERASE:
+		case SSDFS_ERASE_POSTPONED:
+			/* PEB hasn't been erased */
+			break;
+
+		default:
 			erased_pebs++;
+			break;
+		}
 
 		++*item_index;
 	} while (*item_index < array->size &&
@@ -1126,7 +1184,8 @@ int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,
 		return err;
 	}
 
-	if (result->state == SSDFS_IGNORE_ERASE) {
+	if (result->state == SSDFS_IGNORE_ERASE ||
+	    result->state == SSDFS_ERASE_POSTPONED) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("ignore erase operation: "
 			  "peb_id %llu\n",

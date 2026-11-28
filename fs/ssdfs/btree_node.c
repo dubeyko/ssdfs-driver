@@ -13812,7 +13812,13 @@ int __ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 
 	search->request.type = SSDFS_BTREE_SEARCH_ADD_RANGE;
 
+	/*
+	 * The find_range() and find_item() methods expect that
+	 * the caller holds node->full_lock.
+	 */
+	down_read(&dst->full_lock);
 	err = dst->node_ops->find_range(dst, search);
+	up_read(&dst->full_lock);
 	if (err == -ENODATA) {
 		err = 0;
 		/*
@@ -15069,7 +15075,7 @@ int __ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 		return err;
 	}
 
-	down_read(&node->full_lock);
+	lockdep_assert_held(&node->full_lock);
 
 	bmap = &node->bmap_array.bmap[SSDFS_BTREE_NODE_LOCK_BMAP];
 
@@ -15437,8 +15443,6 @@ try_lock_extracting_item:
 		err = -EAGAIN;
 
 finish_extract_range:
-	up_read(&node->full_lock);
-
 	if (err == -ENODATA || err == -EAGAIN) {
 		/*
 		 * do nothing

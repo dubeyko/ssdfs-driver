@@ -2851,6 +2851,28 @@ fail_start_threads:
 }
 
 /*
+ * ssdfs_peb_container_publish() - make a built PEB container visible
+ * @si: segment object
+ * @peb_index: PEB index
+ * @pebc: completely built PEB container
+ *
+ * The release store pairs with the acquire load in SEG2PEBC(): whoever
+ * finds the container in si->pebc_array sees it fully initialized.
+ */
+static inline
+void ssdfs_peb_container_publish(struct ssdfs_segment_info *si,
+				 u32 peb_index,
+				 struct ssdfs_peb_container *pebc)
+{
+	smp_store_release(&si->pebc_array.ptr[peb_index], pebc);
+}
+
+static struct lock_class_key ssdfs_segbmap_pebc_lock_key;
+static struct lock_class_key ssdfs_segbmap_pebc_migration_lock_key;
+static struct lock_class_key ssdfs_maptbl_pebc_lock_key;
+static struct lock_class_key ssdfs_maptbl_pebc_migration_lock_key;
+
+/*
  * ssdfs_peb_container_create() - create PEB's container object
  * @fsi: pointer on shared file system object
  * @seg: segment number
@@ -2927,12 +2949,17 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!si->pebc_array.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
-		si->pebc_array.ptr[peb_index] = pebc;
+		/*
+		 * The container is published in si->pebc_array only
+		 * after it has been completely built (see
+		 * ssdfs_peb_container_publish()).
+		 */
 		break;
 
 	default:
 		SSDFS_WARN("PEB container array is absent: "
 			   "seg %llu\n", si->seg_id);
+		ssdfs_peb_container_free(pebc);
 		return -ENOENT;
 	}
 
@@ -2946,6 +2973,24 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	init_waitqueue_head(&pebc->migration_wq);
 	init_rwsem(&pebc->lock);
 	atomic_set(&pebc->dst_peb_refs, 0);
+
+	switch (si->seg_type) {
+	case SSDFS_SEGBMAP_SEG_TYPE:
+		lockdep_set_class(&pebc->lock, &ssdfs_segbmap_pebc_lock_key);
+		lockdep_set_class(&pebc->migration_lock,
+				  &ssdfs_segbmap_pebc_migration_lock_key);
+		break;
+
+	case SSDFS_MAPTBL_SEG_TYPE:
+		lockdep_set_class(&pebc->lock, &ssdfs_maptbl_pebc_lock_key);
+		lockdep_set_class(&pebc->migration_lock,
+				  &ssdfs_maptbl_pebc_migration_lock_key);
+		break;
+
+	default:
+		/* use the default lock classes */
+		break;
+	}
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&pebc->writeback_folios, 0);
@@ -2965,6 +3010,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	pebc->peb_type = peb_type;
 	if (peb_type >= SSDFS_MAPTBL_PEB_TYPE_MAX) {
 		SSDFS_ERR("invalid seg_type %#x\n", si->seg_type);
+		ssdfs_peb_container_free(pebc);
 		return -EINVAL;
 	}
 
@@ -3034,6 +3080,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 				goto fail_init_peb_container;
 			}
 
+			ssdfs_peb_container_publish(si, peb_index, pebc);
 			goto finish_init_peb_container;
 		}
 	} else if (unlikely(err)) {
@@ -3059,7 +3106,8 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_container_lock(pebc);
+	down_read_nested(&pebc->lock, SINGLE_DEPTH_NESTING);
+	mutex_lock_nested(&pebc->migration_lock, SINGLE_DEPTH_NESTING);
 
 	mtblpd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
 
@@ -3182,6 +3230,14 @@ try_process_relation:
 			goto fail_create_peb_objects;
 		}
 
+		if (!SEG2PEBC(si, shared_peb_index)) {
+			SSDFS_ERR("shared destination container is absent: "
+				  "shared_peb_index %u\n",
+				  shared_peb_index);
+			err = -ERANGE;
+			goto fail_create_peb_objects;
+		}
+
 		pebi = &SEG2PEBC(si, shared_peb_index)->items[SSDFS_SEG_PEB2];
 		pebc->dst_peb = pebi;
 		atomic_set(&pebc->items_state,
@@ -3244,7 +3300,10 @@ try_process_relation:
 	atomic_inc(&si->migration.migrating_pebs);
 
 start_container_threads:
-	ssdfs_peb_container_unlock(pebc);
+	mutex_unlock(&pebc->migration_lock);
+	up_read(&pebc->lock);
+
+	ssdfs_peb_container_publish(si, peb_index, pebc);
 
 	err = ssdfs_peb_container_start_threads(pebc, src_peb_state,
 						dst_peb_state,
@@ -3276,12 +3335,13 @@ finish_init_peb_container:
 	return 0;
 
 fail_create_peb_objects:
-	up_write(&pebc->lock);
+	mutex_unlock(&pebc->migration_lock);
+	up_read(&pebc->lock);
 
 fail_init_peb_container:
+	WRITE_ONCE(si->pebc_array.ptr[peb_index], NULL);
 	ssdfs_peb_container_destroy(pebc);
 	ssdfs_peb_container_free(pebc);
-	si->pebc_array.ptr[peb_index] = NULL;
 	return err;
 }
 
